@@ -86,6 +86,35 @@ class ChatOpenAIConfig:
 AgentConfig = ChatOpenAIConfig
 
 
+class _FallbackMessage:
+    """Minimal message used when ``langchain-core`` is not installed.
+
+    Supports only the interface the loop relies on: construction with
+    ``content`` (and an optional ``role``) and a readable ``content`` attribute.
+    Injected models that read message content work unchanged; the default
+    ``ChatOpenAI`` path still requires the provider packages.
+    """
+
+    role = "chat"
+
+    def __init__(self, content: Any = "", role: str | None = None) -> None:
+        self.content = content
+        if role is not None:
+            self.role = role
+
+
+class _FallbackHumanMessage(_FallbackMessage):
+    role = "user"
+
+
+class _FallbackAIMessage(_FallbackMessage):
+    role = "assistant"
+
+
+class _FallbackSystemMessage(_FallbackMessage):
+    role = "system"
+
+
 def _load_message_types() -> tuple[Any, Any, Any, Any]:
     try:
         from langchain_core.messages import (
@@ -94,11 +123,13 @@ def _load_message_types() -> tuple[Any, Any, Any, Any]:
             HumanMessage,
             SystemMessage,
         )
-    except ImportError as exc:
-        raise AgentConfigurationError(
-            "langchain-core is required to run the agent loop; install "
-            "langchain-core or inject a model after installing its message types"
-        ) from exc
+    except ImportError:
+        return (
+            _FallbackHumanMessage,
+            _FallbackAIMessage,
+            _FallbackSystemMessage,
+            _FallbackMessage,
+        )
     return HumanMessage, AIMessage, SystemMessage, ChatMessage
 
 
