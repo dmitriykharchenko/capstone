@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant data-active (&[data-state="active"]);
 
 :root {
   --radius: 0.25rem;
