@@ -7,16 +7,29 @@
   import HistorySearch from "./components/HistorySearch.svelte";
   import PapersList from "./components/PapersList.svelte";
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import { Button } from "$lib/components/ui/button";
+  import SunIcon from "@lucide/svelte/icons/sun";
+  import MoonIcon from "@lucide/svelte/icons/moon";
+  import { applyTheme, resolveTheme, type Theme } from "$lib/theme";
 
   const dispose = store.init();
   onDestroy(dispose);
 
+  let theme = $state<Theme>("light");
+
   onMount(() => {
+    theme = resolveTheme();
+    applyTheme(theme);
     const cancels = appSagas.map((saga) => store.runSaga(saga));
     store.dispatch(loadSessions());
     store.dispatch(loadPapers());
     return () => cancels.forEach((cancel) => cancel());
   });
+
+  function toggleTheme() {
+    theme = theme === "dark" ? "light" : "dark";
+    applyTheme(theme);
+  }
 
   let tab = $state("chat");
 
@@ -28,8 +41,21 @@
 </script>
 
 <div class="flex h-screen flex-col bg-background text-foreground">
-  <header class="border-b px-5 py-3">
+  <header class="flex items-center justify-between border-b px-5 py-3">
     <h1 class="text-base font-semibold tracking-tight">Capstone Research Assistant</h1>
+    <Button
+      variant="ghost"
+      size="icon"
+      onclick={toggleTheme}
+      aria-label="Toggle theme"
+      title="Toggle theme"
+    >
+      {#if theme === "dark"}
+        <SunIcon class="size-4" />
+      {:else}
+        <MoonIcon class="size-4" />
+      {/if}
+    </Button>
   </header>
 
   <Tabs bind:value={tab} class="flex min-h-0 flex-1 flex-col gap-0">

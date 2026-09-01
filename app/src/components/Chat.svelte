@@ -11,7 +11,7 @@
   import { sendMessage, setSessionId, loadSession } from "../slices/chat/chat-slice";
   import { loadSessions } from "../slices/sessions/sessions-slice";
   import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
+  import { Textarea } from "$lib/components/ui/textarea";
   import { Badge } from "$lib/components/ui/badge";
   import { Card } from "$lib/components/ui/card";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
@@ -44,6 +44,12 @@
     }
     store.dispatch(sendMessage(text));
     text = "";
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      submit(event);
+    }
   }
 
   function switchSession(value: string) {
@@ -101,12 +107,14 @@
     </ScrollArea>
   </Card>
 
-  <form class="flex gap-2" onsubmit={submit}>
-    <Input
-      class="flex-1"
-      placeholder="Ask a question…"
+  <form class="flex items-end gap-2" onsubmit={submit}>
+    <Textarea
+      class="max-h-40 min-h-10 flex-1 resize-none"
+      rows={1}
+      placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
       bind:value={text}
       disabled={$pending}
+      onkeydown={onKeydown}
     />
     <Button type="submit" disabled={$pending || !text.trim()}>Send</Button>
   </form>
