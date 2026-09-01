@@ -41,30 +41,26 @@
 </script>
 
 <div class="flex h-screen flex-col bg-background text-foreground">
-  <header class="flex items-center justify-between border-b px-5 py-3">
-    <h1 class="font-mono text-base font-semibold tracking-tight">Capstone Research Assistant</h1>
-    <Button
-      variant="ghost"
-      size="icon"
-      onclick={toggleTheme}
-      aria-label="Toggle theme"
-      title="Toggle theme"
-    >
-      {#if theme === "dark"}
-        <SunIcon class="size-4" />
-      {:else}
-        <MoonIcon class="size-4" />
-      {/if}
-    </Button>
-  </header>
-
   <Tabs bind:value={tab} class="flex min-h-0 flex-1 flex-col gap-0">
-    <div class="border-b px-5 py-2">
+    <div class="flex items-center justify-between border-b px-5 py-2">
       <TabsList>
         {#each tabs as t}
           <TabsTrigger value={t.id} class="font-mono">{t.label}</TabsTrigger>
         {/each}
       </TabsList>
+      <Button
+        variant="ghost"
+        size="icon"
+        onclick={toggleTheme}
+        aria-label="Toggle theme"
+        title="Toggle theme"
+      >
+        {#if theme === "dark"}
+          <SunIcon class="size-4" />
+        {:else}
+          <MoonIcon class="size-4" />
+        {/if}
+      </Button>
     </div>
 
     <TabsContent value="chat" class="min-h-0 overflow-hidden p-5">
