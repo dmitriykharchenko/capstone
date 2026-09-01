@@ -32,6 +32,16 @@ class MessageRecord:
     content: str
 
 
+@dataclass(frozen=True, slots=True)
+class ExchangeRecord:
+    """A completed user/assistant exchange stored for one session."""
+
+    exchange_id: int
+    session_id: str
+    user_message: MessageRecord
+    assistant_message: MessageRecord
+
+
 class SQLiteHistoryStore:
     """Append and read ordered conversation messages in a SQLite database.
 
@@ -48,21 +58,49 @@ class SQLiteHistoryStore:
         self._database_path = _validate_database_path(database_path)
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(self._database_path)
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL
+        self._connection.execute("PRAGMA foreign_keys = ON")
+        self._initialize_schema()
+
+    def _initialize_schema(self) -> None:
+        """Create the current schema and migrate legacy message-only databases."""
+
+        with self._connection:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS exchanges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL
+                )
+                """
             )
-            """
-        )
-        self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_messages_session_id "
-            "ON messages (session_id, id)"
-        )
-        self._connection.commit()
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    exchange_id INTEGER REFERENCES exchanges(id) ON DELETE CASCADE
+                )
+                """
+            )
+            columns = {
+                row[1]
+                for row in self._connection.execute("PRAGMA table_info(messages)")
+            }
+            if "exchange_id" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE messages ADD COLUMN exchange_id INTEGER "
+                    "REFERENCES exchanges(id) ON DELETE CASCADE"
+                )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_session_id "
+                "ON messages (session_id, id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_exchange_id "
+                "ON messages (exchange_id, id)"
+            )
 
     def append_message(self, session_id: str, role: str, content: str) -> None:
         """Append one message to ``session_id``.
@@ -85,6 +123,66 @@ class SQLiteHistoryStore:
                 "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
                 (session, normalized_role, message),
             )
+
+    def append_exchange(
+        self, session_id: str, user_content: str, assistant_content: str
+    ) -> int:
+        """Atomically store a completed turn and return its stable exchange ID.
+
+        Both message rows are committed in one transaction.  If either insert
+        fails, neither the exchange nor either message is retained.
+        """
+
+        session = _validate_session_id(session_id)
+        user_message = _validate_content(user_content)
+        assistant_message = _validate_content(assistant_content)
+        with self._connection:
+            cursor = self._connection.execute(
+                "INSERT INTO exchanges (session_id) VALUES (?)", (session,)
+            )
+            exchange_id = cursor.lastrowid
+            if exchange_id is None:  # pragma: no cover - guaranteed by SQLite
+                raise RuntimeError("SQLite did not return an exchange ID")
+            self._connection.executemany(
+                "INSERT INTO messages "
+                "(session_id, role, content, exchange_id) VALUES (?, ?, ?, ?)",
+                [
+                    (session, "user", user_message, exchange_id),
+                    (session, "assistant", assistant_message, exchange_id),
+                ],
+            )
+        return exchange_id
+
+    def get_exchange(self, exchange_id: int, session_id: str) -> ExchangeRecord:
+        """Return a completed exchange after validating its owning session.
+
+        Raises:
+            TypeError: If an identifier has the wrong type.
+            ValueError: If an identifier is empty or invalid.
+            KeyError: If the exchange does not exist for ``session_id``.
+            RuntimeError: If stored rows do not form one complete exchange.
+        """
+
+        identity = _validate_exchange_id(exchange_id)
+        session = _validate_session_id(session_id)
+        owner = self._connection.execute(
+            "SELECT session_id FROM exchanges WHERE id = ?", (identity,)
+        ).fetchone()
+        if owner is None or owner[0] != session:
+            raise KeyError(f"exchange {identity} does not exist for session {session!r}")
+        rows = self._connection.execute(
+            "SELECT role, content FROM messages "
+            "WHERE exchange_id = ? AND session_id = ? ORDER BY id ASC",
+            (identity, session),
+        ).fetchall()
+        if len(rows) != 2 or [row[0] for row in rows] != ["user", "assistant"]:
+            raise RuntimeError(f"exchange {identity} is incomplete or invalid")
+        return ExchangeRecord(
+            exchange_id=identity,
+            session_id=session,
+            user_message=MessageRecord(*rows[0]),
+            assistant_message=MessageRecord(*rows[1]),
+        )
 
     def get_messages(self, session_id: str) -> list[MessageRecord]:
         """Return all messages for ``session_id`` in insertion order.
@@ -160,4 +258,12 @@ def _validate_content(content: str) -> str:
     return content
 
 
-__all__ = ["MessageRecord", "SQLiteHistoryStore"]
+def _validate_exchange_id(exchange_id: int) -> int:
+    if isinstance(exchange_id, bool) or not isinstance(exchange_id, int):
+        raise TypeError("exchange_id must be a positive integer")
+    if exchange_id <= 0:
+        raise ValueError("exchange_id must be a positive integer")
+    return exchange_id
+
+
+__all__ = ["ExchangeRecord", "MessageRecord", "SQLiteHistoryStore"]
