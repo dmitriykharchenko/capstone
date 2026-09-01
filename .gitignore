@@ -25,3 +25,25 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Server runtime data
+data/
+*.sqlite3
+
+# Rust / Tauri build artifacts
+target/
+app/src-tauri/gen/
+
+# Local npm cache (workaround for root-owned global cache)
+.npm-cache/
+
+# Themis-generated AI skill bundles (regenerable via `npx themis install-skills:svelte`)
+.agents/skills/themis/
+.claude/skills/themis
+app/.agents/skills/themis/
+app/.claude/skills/themis
