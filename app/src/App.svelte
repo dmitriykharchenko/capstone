@@ -53,7 +53,7 @@
         {#each tabs as t}
           <TabsTrigger
             value={t.id}
-            class="font-mono text-xs pb-1 data-active:font-semibold data-active:text-primary data-active:after:bg-primary data-active:bg-primary/10"
+            class="font-mono text-xs pb-1 data-active:font-semibold data-active:text-primary data-active:bg-primary/10 data-active:after:hidden"
             >{t.label}</TabsTrigger
           >
         {/each}
