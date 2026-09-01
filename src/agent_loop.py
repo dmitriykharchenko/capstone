@@ -41,6 +41,13 @@ class ChatModel(Protocol):
         """Return a LangChain-compatible response for ``messages``."""
 
 
+class ExchangeIndexer(Protocol):
+    """Minimal interface for indexing a completed SQLite exchange."""
+
+    def index_exchange(self, exchange_id: int, session_id: str) -> None:
+        """Index the exchange after its SQLite transaction commits."""
+
+
 @dataclass(frozen=True)
 class ChatOpenAIConfig:
     """Configuration used when constructing the optional ``ChatOpenAI`` model.
@@ -194,6 +201,7 @@ class AgentLoop:
         model: ChatModel | Any | None = None,
         *,
         history_store: SQLiteHistoryStore | None = None,
+        history_index: ExchangeIndexer | Any | None = None,
         config: ChatOpenAIConfig | None = None,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     ) -> None:
@@ -218,8 +226,13 @@ class AgentLoop:
             raise AgentConfigurationError(
                 "model must provide a synchronous invoke(messages) method"
             )
+        if history_index is not None and not callable(
+            getattr(history_index, "index_exchange", None)
+        ):
+            raise AgentConfigurationError("history_index must provide index_exchange")
         self._config = config or ChatOpenAIConfig()
         self._model = model
+        self._history_index = history_index
         self._system_prompt = system_prompt
 
     @property
@@ -232,8 +245,8 @@ class AgentLoop:
         """Invoke one turn for ``session_id`` and return assistant text.
 
         Existing messages for the session are sent before the current human
-        message.  Messages are persisted only after a successful, non-empty
-        model response, so failed turns do not create partial history.
+        message. The completed exchange is atomically persisted after a
+        successful, non-empty response, then indexed when configured.
         """
 
         _validate_session_id(session_id)
@@ -256,8 +269,9 @@ class AgentLoop:
             raise
         except Exception as exc:
             raise AgentModelError(f"Chat model invocation failed: {exc}") from exc
-        self._history.append_message(session_id, "user", user_text)
-        self._history.append_message(session_id, "assistant", answer)
+        exchange_id = self._history.append_exchange(session_id, user_text, answer)
+        if self._history_index is not None:
+            self._history_index.index_exchange(exchange_id, session_id)
         return answer
 
     def invoke(self, session_id: str, user_text: str) -> str:
@@ -291,4 +305,5 @@ __all__ = [
     "ChatModel",
     "ChatOpenAIConfig",
     "DEFAULT_SYSTEM_PROMPT",
+    "ExchangeIndexer",
 ]

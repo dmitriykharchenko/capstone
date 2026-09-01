@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -76,13 +77,20 @@ def test_run_validates_user_text(tmp_path, user_text):
 
 
 def test_failed_model_does_not_persist_partial_turn(tmp_path):
+    history_index = Mock()
+
     class BrokenModel:
         def invoke(self, _messages):
             raise RuntimeError("offline failure")
 
-    with AgentLoop(tmp_path / "history.sqlite3", BrokenModel()) as loop:
+    with AgentLoop(
+        tmp_path / "history.sqlite3",
+        BrokenModel(),
+        history_index=history_index,
+    ) as loop:
         with pytest.raises(AgentModelError, match="invocation failed"):
             loop.run("session", "question")
+    history_index.index_exchange.assert_not_called()
     with SQLiteHistoryStore(tmp_path / "history.sqlite3") as store:
         assert store.get_messages("session") == []
 
@@ -104,3 +112,45 @@ def test_injected_model_can_return_simple_content_object(tmp_path):
 
     with AgentLoop(tmp_path / "history.sqlite3", SimpleModel()) as loop:
         assert loop.invoke("session", "question") == "plain text"
+
+
+def test_successful_turn_is_atomically_persisted_then_indexed(tmp_path):
+    database = tmp_path / "history.sqlite3"
+    with SQLiteHistoryStore(database) as store:
+        indexed = []
+
+        class FakeIndex:
+            def index_exchange(self, exchange_id, session_id):
+                indexed.append(store.get_exchange(exchange_id, session_id))
+
+        loop = AgentLoop(
+            history_store=store,
+            model=FakeChatModel(["answer"]),
+            history_index=FakeIndex(),
+        )
+        assert loop.run("session", "question") == "answer"
+
+    assert len(indexed) == 1
+    assert indexed[0].user_message.content == "question"
+    assert indexed[0].assistant_message.content == "answer"
+
+
+def test_index_failure_is_explicit_after_sqlite_commit(tmp_path):
+    class BrokenIndex:
+        def index_exchange(self, _exchange_id, _session_id):
+            raise RuntimeError("offline Chroma")
+
+    database = tmp_path / "history.sqlite3"
+    with AgentLoop(
+        database,
+        FakeChatModel(["answer"]),
+        history_index=BrokenIndex(),
+    ) as loop:
+        with pytest.raises(RuntimeError, match="offline Chroma"):
+            loop.run("session", "question")
+
+    with SQLiteHistoryStore(database) as store:
+        assert [(item.role, item.content) for item in store.get_messages("session")] == [
+            ("user", "question"),
+            ("assistant", "answer"),
+        ]
