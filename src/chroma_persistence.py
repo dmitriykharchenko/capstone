@@ -121,7 +121,7 @@ def _validate_records(
     texts: Sequence[str],
     embeddings: Sequence[Sequence[float]],
     metadatas: Sequence[Mapping[str, Any]] | None,
-) -> tuple[list[str], list[str], list[list[float | int]], list[Mapping[str, Any]] | None]:
+) -> tuple[list[str], list[str], list[list[float | int]], list[Mapping[str, Any]]]:
     normalized_ids = _materialize(ids, "ids")
     normalized_texts = _materialize(texts, "texts")
     normalized_embeddings = _materialize(embeddings, "embeddings")
@@ -150,13 +150,28 @@ def _validate_records(
     dimensions = {len(vector) for vector in vectors}
     if len(dimensions) != 1:
         raise ValueError("all embeddings must have the same vector dimension")
-    normalized_metadatas: list[Mapping[str, Any]] | None = None
-    if metadatas is not None:
-        normalized_metadatas = _materialize(metadatas, "metadatas")
-        if len(normalized_metadatas) != len(normalized_ids):
-            raise ValueError("metadatas must have the same length as ids")
-        if any(not isinstance(metadata, Mapping) for metadata in normalized_metadatas):
+    if metadatas is None:
+        raise ValueError("metadatas are required and must include paper_id and chunk_index")
+    normalized_metadatas = _materialize(metadatas, "metadatas")
+    if len(normalized_metadatas) != len(normalized_ids):
+        raise ValueError("metadatas must have the same length as ids")
+    for index, metadata in enumerate(normalized_metadatas):
+        if not isinstance(metadata, Mapping):
             raise TypeError("metadatas must contain mappings")
+        if "paper_id" not in metadata:
+            raise ValueError(f"metadatas[{index}] must include paper_id")
+        paper_id = metadata["paper_id"]
+        if not isinstance(paper_id, str):
+            raise TypeError(f"metadatas[{index}].paper_id must be a non-empty string")
+        if not paper_id.strip():
+            raise ValueError(f"metadatas[{index}].paper_id must be a non-empty string")
+        if "chunk_index" not in metadata:
+            raise ValueError(f"metadatas[{index}] must include chunk_index")
+        chunk_index = metadata["chunk_index"]
+        if isinstance(chunk_index, bool) or not isinstance(chunk_index, int):
+            raise TypeError(f"metadatas[{index}].chunk_index must be a non-negative integer")
+        if chunk_index < 0:
+            raise ValueError(f"metadatas[{index}].chunk_index must be a non-negative integer")
     return normalized_ids, normalized_texts, vectors, normalized_metadatas
 
 
@@ -167,7 +182,7 @@ def upsert_records(
     embeddings: Sequence[Sequence[float]],
     metadatas: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
-    """Insert or update text records and their caller-supplied embeddings."""
+    """Insert or update embedded text records with required paper provenance."""
 
     if collection is None or not hasattr(collection, "upsert"):
         raise TypeError("collection must expose an upsert method")
