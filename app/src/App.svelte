@@ -42,15 +42,12 @@
 
 <div class="flex h-screen flex-col bg-background text-foreground">
   <Tabs bind:value={tab} class="flex min-h-0 flex-1 flex-col gap-0">
-    <div class="flex items-center justify-between gap-4 border-b px-5 py-2">
-      <div class="flex items-center gap-4">
-        <span class="font-mono text-sm font-semibold tracking-tight">Research assistant</span>
-        <TabsList>
-          {#each tabs as t}
-            <TabsTrigger value={t.id} class="font-mono">{t.label}</TabsTrigger>
-          {/each}
-        </TabsList>
-      </div>
+    <div class="flex items-center justify-between border-b px-5 py-2">
+      <TabsList>
+        {#each tabs as t}
+          <TabsTrigger value={t.id} class="font-mono">{t.label}</TabsTrigger>
+        {/each}
+      </TabsList>
       <Button
         variant="ghost"
         size="icon"
