@@ -49,9 +49,9 @@
 }
 
 @theme inline {
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Source Code Pro",
     Menlo, Consolas, "Liberation Mono", monospace;
-  --font-sans: var(--font-mono);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -88,6 +88,6 @@
   }
   body {
     margin: 0;
-    @apply bg-background text-foreground font-mono;
+    @apply bg-background text-foreground font-sans;
   }
 }

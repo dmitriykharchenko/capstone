@@ -58,7 +58,7 @@
       {#each $matches as match}
         <Card>
           <CardContent>
-            <div class="text-xs uppercase text-muted-foreground">
+            <div class="font-mono text-xs uppercase text-muted-foreground">
               session {match.session_id} · exchange {match.exchange_id}
             </div>
             <p class="mt-1.5 mb-1 font-medium">{match.user_message}</p>

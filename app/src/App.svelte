@@ -42,7 +42,7 @@
 
 <div class="flex h-screen flex-col bg-background text-foreground">
   <header class="flex items-center justify-between border-b px-5 py-3">
-    <h1 class="text-base font-semibold tracking-tight">Capstone Research Assistant</h1>
+    <h1 class="font-mono text-base font-semibold tracking-tight">Capstone Research Assistant</h1>
     <Button
       variant="ghost"
       size="icon"
@@ -62,7 +62,7 @@
     <div class="border-b px-5 py-2">
       <TabsList>
         {#each tabs as t}
-          <TabsTrigger value={t.id}>{t.label}</TabsTrigger>
+          <TabsTrigger value={t.id} class="font-mono">{t.label}</TabsTrigger>
         {/each}
       </TabsList>
     </div>

@@ -73,7 +73,7 @@
       </SelectContent>
     </Select>
     {#if $chatMode}
-      <Badge variant="secondary">mode: {$chatMode}</Badge>
+      <Badge variant="secondary" class="font-mono">mode: {$chatMode}</Badge>
     {/if}
   </div>
 
@@ -89,7 +89,7 @@
                 : "self-start bg-muted",
             )}
           >
-            <span class="text-[0.7rem] font-medium uppercase opacity-70">{m.role}</span>
+            <span class="font-mono text-[0.7rem] font-medium uppercase opacity-70">{m.role}</span>
             <p class="m-0 whitespace-pre-wrap text-sm">{m.content}</p>
           </div>
         {/each}
