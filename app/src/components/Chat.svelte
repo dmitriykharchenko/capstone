@@ -107,15 +107,15 @@
     </ScrollArea>
   </Card>
 
-  <form class="flex items-end gap-2" onsubmit={submit}>
+  <form class="flex flex-col gap-2" onsubmit={submit}>
     <Textarea
-      class="max-h-40 min-h-10 flex-1 resize-none"
-      rows={1}
+      class="max-h-60 min-h-28 w-full resize-none"
+      rows={3}
       placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
       bind:value={text}
       disabled={$pending}
       onkeydown={onKeydown}
     />
-    <Button type="submit" disabled={$pending || !text.trim()}>Send</Button>
+    <Button type="submit" class="self-end" disabled={$pending || !text.trim()}>Send</Button>
   </form>
 </div>
