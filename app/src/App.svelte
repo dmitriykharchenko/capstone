@@ -42,8 +42,11 @@
 
 <div class="flex h-screen flex-col bg-background text-foreground">
   <Tabs bind:value={tab} class="flex min-h-0 flex-1 flex-col gap-0">
-    <div class="flex items-center justify-between border-b px-5 py-2">
-      <TabsList>
+    <div
+      data-tauri-drag-region
+      class="flex items-center justify-between gap-4 border-b py-1.5 pr-3 pl-20"
+    >
+      <TabsList variant="line">
         {#each tabs as t}
           <TabsTrigger value={t.id} class="font-mono">{t.label}</TabsTrigger>
         {/each}
