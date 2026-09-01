@@ -51,7 +51,11 @@
         class="translate-x-[10px] translate-y-[3px] gap-4 group-data-horizontal/tabs:h-6"
       >
         {#each tabs as t}
-          <TabsTrigger value={t.id} class="font-mono text-xs pb-1">{t.label}</TabsTrigger>
+          <TabsTrigger
+            value={t.id}
+            class="font-mono text-xs pb-1 data-active:font-semibold data-active:text-primary data-active:after:bg-primary"
+            >{t.label}</TabsTrigger
+          >
         {/each}
       </TabsList>
       <Button
