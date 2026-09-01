@@ -46,7 +46,10 @@
       data-tauri-drag-region
       class="flex h-[30px] items-center justify-between gap-4 border-b pr-3 pl-20"
     >
-      <TabsList variant="line" class="gap-4 group-data-horizontal/tabs:h-6">
+      <TabsList
+        variant="line"
+        class="translate-x-[10px] translate-y-[3px] gap-4 group-data-horizontal/tabs:h-6"
+      >
         {#each tabs as t}
           <TabsTrigger value={t.id} class="font-mono text-xs">{t.label}</TabsTrigger>
         {/each}
