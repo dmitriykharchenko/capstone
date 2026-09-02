@@ -20,9 +20,14 @@ export const paperSearchFailed = createAction<[error: string]>(
 export const clearPaperSearch = createAction("paperSearch/clear");
 
 export const runPaperIndex = createAction("paperSearch/runIndex");
-export const paperIndexStarted = createAction("paperSearch/indexStarted");
+export const paperIndexStarted = createAction<[total: number]>(
+  "paperSearch/indexStarted",
+);
+export const paperIndexProgress = createAction<
+  [completed: number, total: number, currentFile: string]
+>("paperSearch/indexProgress");
 export const paperIndexSucceeded = createAction<
-  [indexed: number, enabled: boolean, reason: string | null]
+  [indexed: number, empty: number, failed: number]
 >("paperSearch/indexSucceeded");
 export const paperIndexFailed = createAction<[error: string]>(
   "paperSearch/indexFailed",
@@ -66,22 +71,44 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
       ...initialPaperSearchState,
       indexedCount: state.indexedCount,
     }))
-    .with(paperIndexStarted, (state: PaperSearchState) => ({
-      ...state,
-      indexing: true,
-      indexError: null,
-    }))
+    .with(
+      paperIndexStarted,
+      (state: PaperSearchState, action: StoreAction<[number]>) => ({
+        ...state,
+        indexing: true,
+        indexError: null,
+        indexCompleted: 0,
+        indexTotal: action.payload[0],
+        indexCurrentFile: null,
+        indexFailedCount: 0,
+        indexEmptyCount: 0,
+      }),
+    )
+    .with(
+      paperIndexProgress,
+      (
+        state: PaperSearchState,
+        action: StoreAction<[number, number, string]>,
+      ) => ({
+        ...state,
+        indexCompleted: action.payload[0],
+        indexTotal: action.payload[1],
+        indexCurrentFile: action.payload[2],
+      }),
+    )
     .with(
       paperIndexSucceeded,
       (
         state: PaperSearchState,
-        action: StoreAction<[number, boolean, string | null]>,
+        action: StoreAction<[number, number, number]>,
       ) => ({
         ...state,
         indexing: false,
         indexedCount: action.payload[0],
-        enabled: action.payload[1],
-        indexError: action.payload[2],
+        indexEmptyCount: action.payload[1],
+        indexFailedCount: action.payload[2],
+        indexCurrentFile: null,
+        enabled: true,
       }),
     )
     .with(
@@ -89,6 +116,7 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
       (state: PaperSearchState, action: StoreAction<[string]>) => ({
         ...state,
         indexing: false,
+        indexCurrentFile: null,
         indexError: action.payload[0],
       }),
     );

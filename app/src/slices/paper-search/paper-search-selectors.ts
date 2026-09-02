@@ -30,3 +30,18 @@ export const selectPaperIndexedCount = store.createSelector(
 export const selectPaperIndexError = store.createSelector(
   (state) => state.paperSearch.indexError,
 );
+export const selectPaperIndexCompleted = store.createSelector(
+  (state) => state.paperSearch.indexCompleted,
+);
+export const selectPaperIndexTotal = store.createSelector(
+  (state) => state.paperSearch.indexTotal,
+);
+export const selectPaperIndexCurrentFile = store.createSelector(
+  (state) => state.paperSearch.indexCurrentFile,
+);
+export const selectPaperIndexFailedCount = store.createSelector(
+  (state) => state.paperSearch.indexFailedCount,
+);
+export const selectPaperIndexEmptyCount = store.createSelector(
+  (state) => state.paperSearch.indexEmptyCount,
+);

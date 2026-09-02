@@ -68,6 +68,31 @@ export type ChatStreamEvent =
   | { event: "done"; reply: string; chatMode: string; indexed: boolean }
   | { event: "error"; message: string };
 
+// Discriminated union mirroring the Rust `index_papers_stream` Channel events
+// (internally tagged on `event`): a `start` with the total paper count,
+// per-paper `progress`, a terminal `done` summary, or an `error`.
+export type IndexStreamEvent =
+  | { event: "start"; completed: number; total: number }
+  | {
+      event: "progress";
+      completed: number;
+      total: number;
+      paperId: string;
+      filename: string;
+      status: string;
+      chunkCount: number;
+      error: string | null;
+    }
+  | {
+      event: "done";
+      completed: number;
+      total: number;
+      indexed: number;
+      empty: number;
+      failed: number;
+    }
+  | { event: "error"; message: string };
+
 export const api = {
   listPapers: () => invoke<PaperInfo[]>("list_papers"),
   getPaper: (paperId: string) => invoke<PaperInfo>("get_paper", { paperId }),
@@ -110,6 +135,14 @@ export const api = {
     invoke<{ enabled: boolean; indexed: number; reason?: string }>(
       "index_papers",
     ),
+  // Streaming index: each `start`/`progress`/`done`/`error` event is delivered
+  // to `onEvent` via a Tauri Channel so the UI can show determinate progress;
+  // the returned promise settles when the backend command finishes.
+  indexPapersStream: (onEvent: (event: IndexStreamEvent) => void) => {
+    const channel = new Channel<IndexStreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("index_papers_stream", { onEvent: channel });
+  },
 };
 
 // Turn raw PDF bytes returned by the backend into an object URL a webview can

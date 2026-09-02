@@ -17,6 +17,11 @@
     selectPaperIndexing,
     selectPaperIndexedCount,
     selectPaperIndexError,
+    selectPaperIndexCompleted,
+    selectPaperIndexTotal,
+    selectPaperIndexCurrentFile,
+    selectPaperIndexFailedCount,
+    selectPaperIndexEmptyCount,
   } from "../slices/paper-search/paper-search-selectors";
   import {
     runPaperSearch,
@@ -43,8 +48,18 @@
   const indexing = selectPaperIndexing();
   const indexedCount = selectPaperIndexedCount();
   const indexError = selectPaperIndexError();
+  const indexCompleted = selectPaperIndexCompleted();
+  const indexTotal = selectPaperIndexTotal();
+  const indexCurrentFile = selectPaperIndexCurrentFile();
+  const indexFailedCount = selectPaperIndexFailedCount();
+  const indexEmptyCount = selectPaperIndexEmptyCount();
 
   let query = $state("");
+
+  // Determinate progress percentage while indexing (0 when total unknown).
+  const indexPercent = $derived(
+    $indexTotal > 0 ? Math.round(($indexCompleted / $indexTotal) * 100) : 0,
+  );
 
   function formatSize(bytes: number): string {
     if (bytes < 1024) return `${bytes} B`;
@@ -96,29 +111,48 @@
       {/if}
     </form>
 
-    <div
-      class="flex items-center justify-between gap-2 border-b px-2 py-1.5 text-xs text-muted-foreground"
-    >
-      <span>
-        {#if $indexing}
-          Indexing papers…
-        {:else if $indexError}
-          <span class="text-destructive">Indexing failed: {$indexError}</span>
-        {:else if $indexedCount !== null}
-          Indexed {$indexedCount} paper{$indexedCount === 1 ? "" : "s"}.
-        {:else}
-          Index papers to enable semantic search.
-        {/if}
-      </span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onclick={indexPapers}
-        disabled={$indexing}
+    <div class="flex flex-col gap-1 border-b px-2 py-1.5 text-xs">
+      <div
+        class="flex items-center justify-between gap-2 text-muted-foreground"
       >
-        {$indexing ? "Indexing…" : "Index"}
-      </Button>
+        <span>
+          {#if $indexing}
+            {#if $indexTotal > 0}
+              Indexing {$indexCompleted}/{$indexTotal} ({indexPercent}%)…
+            {:else}
+              Indexing papers…
+            {/if}
+          {:else if $indexError}
+            <span class="text-destructive">Indexing failed: {$indexError}</span>
+          {:else if $indexedCount !== null}
+            Indexed {$indexedCount} paper{$indexedCount === 1 ? "" : "s"}{$indexEmptyCount
+              ? `, ${$indexEmptyCount} empty`
+              : ""}{$indexFailedCount ? `, ${$indexFailedCount} failed` : ""}.
+          {:else}
+            Index papers to enable semantic search.
+          {/if}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onclick={indexPapers}
+          disabled={$indexing}
+        >
+          {$indexing ? "Indexing…" : "Index"}
+        </Button>
+      </div>
+      {#if $indexing}
+        <div class="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            class="h-full bg-primary transition-all"
+            style={`width: ${$indexTotal > 0 ? indexPercent : 0}%`}
+          ></div>
+        </div>
+        {#if $indexCurrentFile}
+          <span class="truncate text-muted-foreground">{$indexCurrentFile}</span>
+        {/if}
+      {/if}
     </div>
 
     <ScrollArea class="h-full">
