@@ -181,7 +181,7 @@
       {/if}
     </div>
 
-    <ScrollArea class="h-full">
+    <ScrollArea class="min-h-0 flex-1">
       <div class="flex flex-col gap-1 p-2">
         {#if $searchError}
           <p class="p-2 text-sm text-destructive">{$searchError}</p>
