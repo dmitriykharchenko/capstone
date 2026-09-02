@@ -32,6 +32,7 @@
     clearPaperSearch,
   } from "../slices/paper-search/paper-search-slice";
   import PdfViewer from "./PdfViewer.svelte";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { Button } from "$lib/components/ui/button";
   import { Card } from "$lib/components/ui/card";
   import { Input } from "$lib/components/ui/input";
@@ -111,7 +112,12 @@
         disabled={$searching}
       />
       <Button type="submit" size="sm" disabled={$searching || !query.trim()}>
-        Search
+        {#if $searching}
+          <LoaderCircle class="size-4 animate-spin" />
+          Searching…
+        {:else}
+          Search
+        {/if}
       </Button>
       {#if $hasSearched}
         <Button type="button" variant="ghost" size="sm" onclick={clearResults}>
@@ -192,6 +198,15 @@
               ? `: ${$searchReason}`
               : ""}.
           </p>
+        {/if}
+        {#if $searching}
+          <div
+            class="flex items-center gap-2 p-2 text-sm text-muted-foreground"
+            aria-live="polite"
+          >
+            <LoaderCircle class="size-4 animate-spin" />
+            <span>Searching papers…</span>
+          </div>
         {/if}
 
         {#if $hasSearched && $searchEnabled}

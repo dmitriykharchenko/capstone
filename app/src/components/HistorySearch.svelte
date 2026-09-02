@@ -9,6 +9,7 @@
     selectHasSearched,
   } from "../slices/search/search-selectors";
   import { runSearch } from "../slices/search/search-slice";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { Card, CardContent } from "$lib/components/ui/card";
@@ -40,7 +41,14 @@
       bind:value={query}
       disabled={$searching}
     />
-    <Button type="submit" disabled={$searching || !query.trim()}>Search</Button>
+    <Button type="submit" disabled={$searching || !query.trim()}>
+      {#if $searching}
+        <LoaderCircle class="size-4 animate-spin" />
+        Searching…
+      {:else}
+        Search
+      {/if}
+    </Button>
   </form>
 
   {#if $error}
@@ -55,6 +63,15 @@
 
   <ScrollArea class="min-h-0 flex-1">
     <div class="flex flex-col gap-3">
+      {#if $searching}
+        <div
+          class="flex items-center gap-2 text-sm text-muted-foreground"
+          aria-live="polite"
+        >
+          <LoaderCircle class="size-4 animate-spin" />
+          <span>Searching chat history…</span>
+        </div>
+      {/if}
       {#each $matches as match}
         <Card>
           <CardContent>
