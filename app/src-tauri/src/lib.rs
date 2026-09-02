@@ -164,125 +164,152 @@ fn repository() -> PaperRepository {
     PaperRepository::new(papers::papers_directory(&project_root()))
 }
 
-#[tauri::command]
-fn list_papers() -> Result<Vec<PaperInfo>, CommandError> {
-    repository().list_papers()
+/// Run a blocking command body on Tauri's blocking thread pool so a slow Python
+/// subprocess or filesystem read never stalls the UI event loop. Every command
+/// stays `async` and awaits the result, so its invoke promise (and any streaming
+/// `Channel`) settles only once the work finishes.
+async fn run_blocking<T, F>(work: F) -> Result<T, CommandError>
+where
+    F: FnOnce() -> Result<T, CommandError> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| CommandError::Bridge(format!("background task failed: {error}")))?
 }
 
 #[tauri::command]
-fn get_paper(paper_id: String) -> Result<PaperInfo, CommandError> {
-    repository().get_paper(&paper_id)
+async fn list_papers() -> Result<Vec<PaperInfo>, CommandError> {
+    run_blocking(|| repository().list_papers()).await
 }
 
 #[tauri::command]
-fn read_pdf(paper_id: String) -> Result<PdfData, CommandError> {
-    repository().read_pdf(&paper_id)
+async fn get_paper(paper_id: String) -> Result<PaperInfo, CommandError> {
+    run_blocking(move || repository().get_paper(&paper_id)).await
 }
 
 #[tauri::command]
-fn health() -> Result<Value, CommandError> {
-    bridge::call(&project_root(), serde_json::json!({ "command": "health" }))
+async fn read_pdf(paper_id: String) -> Result<PdfData, CommandError> {
+    run_blocking(move || repository().read_pdf(&paper_id)).await
 }
 
 #[tauri::command]
-fn chat(session_id: String, message: String) -> Result<Value, CommandError> {
-    bridge::call(
-        &project_root(),
-        serde_json::json!({
-            "command": "chat",
-            "session_id": session_id,
-            "message": message,
-        }),
-    )
+async fn health() -> Result<Value, CommandError> {
+    let root = project_root();
+    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "health" }))).await
 }
 
 #[tauri::command]
-fn chat_stream(
+async fn chat(session_id: String, message: String) -> Result<Value, CommandError> {
+    let root = project_root();
+    run_blocking(move || {
+        bridge::call(
+            &root,
+            serde_json::json!({
+                "command": "chat",
+                "session_id": session_id,
+                "message": message,
+            }),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn chat_stream(
     session_id: String,
     message: String,
     on_event: Channel<ChatStreamEvent>,
 ) -> Result<(), CommandError> {
-    let request = serde_json::json!({
-        "command": "chat",
-        "session_id": session_id,
-        "message": message,
-        "stream": true,
-    });
-    bridge::call_streaming(&project_root(), request, |value| {
-        let event = if let Some(delta) = value.get("delta").and_then(Value::as_str) {
-            ChatStreamEvent::Delta {
-                delta: delta.to_string(),
-            }
-        } else if value.get("ok").and_then(Value::as_bool) == Some(false) {
-            ChatStreamEvent::Error {
-                message: value
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown error")
-                    .to_string(),
-            }
-        } else if value.get("done").and_then(Value::as_bool) == Some(true) {
-            ChatStreamEvent::Done {
-                reply: value
-                    .get("reply")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                chat_mode: value
-                    .get("chat_mode")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                indexed: value
-                    .get("indexed")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            }
-        } else {
-            return;
-        };
-        let _ = on_event.send(event);
+    let root = project_root();
+    run_blocking(move || {
+        let request = serde_json::json!({
+            "command": "chat",
+            "session_id": session_id,
+            "message": message,
+            "stream": true,
+        });
+        bridge::call_streaming(&root, request, |value| {
+            let event = if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                ChatStreamEvent::Delta {
+                    delta: delta.to_string(),
+                }
+            } else if value.get("ok").and_then(Value::as_bool) == Some(false) {
+                ChatStreamEvent::Error {
+                    message: value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown error")
+                        .to_string(),
+                }
+            } else if value.get("done").and_then(Value::as_bool) == Some(true) {
+                ChatStreamEvent::Done {
+                    reply: value
+                        .get("reply")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    chat_mode: value
+                        .get("chat_mode")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    indexed: value
+                        .get("indexed")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                }
+            } else {
+                return;
+            };
+            let _ = on_event.send(event);
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn list_sessions() -> Result<Value, CommandError> {
-    bridge::call(
-        &project_root(),
-        serde_json::json!({ "command": "sessions" }),
-    )
+async fn list_sessions() -> Result<Value, CommandError> {
+    let root = project_root();
+    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "sessions" }))).await
 }
 
 #[tauri::command]
-fn get_messages(session_id: String) -> Result<Value, CommandError> {
-    bridge::call(
-        &project_root(),
-        serde_json::json!({ "command": "messages", "session_id": session_id }),
-    )
+async fn get_messages(session_id: String) -> Result<Value, CommandError> {
+    let root = project_root();
+    run_blocking(move || {
+        bridge::call(
+            &root,
+            serde_json::json!({ "command": "messages", "session_id": session_id }),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-fn search(
+async fn search(
     query: String,
     limit: Option<u32>,
     session_id: Option<String>,
 ) -> Result<Value, CommandError> {
-    let mut request = serde_json::json!({ "command": "search", "query": query });
-    if let Some(limit) = limit {
-        request["limit"] = serde_json::json!(limit);
-    }
-    if let Some(session_id) = session_id {
-        request["session_id"] = serde_json::json!(session_id);
-    }
-    bridge::call(&project_root(), request)
+    let root = project_root();
+    run_blocking(move || {
+        let mut request = serde_json::json!({ "command": "search", "query": query });
+        if let Some(limit) = limit {
+            request["limit"] = serde_json::json!(limit);
+        }
+        if let Some(session_id) = session_id {
+            request["session_id"] = serde_json::json!(session_id);
+        }
+        bridge::call(&root, request)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn search_papers(query: String, limit: Option<u32>) -> Result<Value, CommandError> {
     let root = project_root();
-    // Query embedding + Chroma lookup run through the blocking Python subprocess;
-    // run them on the blocking thread pool so the UI stays responsive.
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         let mut request = serde_json::json!({ "command": "search_papers", "query": query });
         if let Some(limit) = limit {
             request["limit"] = serde_json::json!(limit);
@@ -290,15 +317,12 @@ async fn search_papers(query: String, limit: Option<u32>) -> Result<Value, Comma
         bridge::call(&root, request)
     })
     .await
-    .map_err(|error| CommandError::Bridge(format!("search task failed: {error}")))?
 }
 
 #[tauri::command]
-fn index_papers() -> Result<Value, CommandError> {
-    bridge::call(
-        &project_root(),
-        serde_json::json!({ "command": "index_papers" }),
-    )
+async fn index_papers() -> Result<Value, CommandError> {
+    let root = project_root();
+    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "index_papers" }))).await
 }
 
 #[tauri::command]
@@ -306,11 +330,7 @@ async fn index_papers_stream(
     on_event: Channel<PaperIndexStreamEvent>,
 ) -> Result<(), CommandError> {
     let root = project_root();
-    // Indexing spawns Python and blocks on its stdout for the whole run (minutes
-    // for a large corpus). Run it on the blocking thread pool instead of the main
-    // thread so the UI stays responsive; await it so the invoke promise (and thus
-    // the frontend event channel) settles only after the terminal event.
-    tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         let request = serde_json::json!({ "command": "index_papers", "stream": true });
         let mut sent_error = false;
         let result = bridge::call_streaming(&root, request, |value| {
@@ -329,7 +349,6 @@ async fn index_papers_stream(
         Ok(())
     })
     .await
-    .map_err(|error| CommandError::Bridge(format!("indexing task failed: {error}")))?
 }
 
 /// Build and run the Tauri application, registering every command handler.
