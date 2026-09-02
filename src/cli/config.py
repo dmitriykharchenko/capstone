@@ -17,6 +17,7 @@ DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "chat_history.sqlite3"
 DEFAULT_PAPERS_DIRECTORY = PROJECT_ROOT / "ResearchPapers"
 DEFAULT_CHROMA_DIRECTORY = PROJECT_ROOT / "data" / "chroma"
 DEFAULT_LOG_PATH = PROJECT_ROOT / "data" / "chat_logs.txt"
+DEFAULT_RETRIEVAL_LOG_PATH = PROJECT_ROOT / "data" / "retrieval_logs.txt"
 DEFAULT_CHAT_BASE_URL = "https://api.openai.com/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_CHAT_MODEL = "openai/gpt-5.4-mini"
@@ -36,6 +37,7 @@ class CLIConfig:
     api_key: str | None
     system_prompt: str | None
     log_path: Path = DEFAULT_LOG_PATH
+    retrieval_log_path: Path = DEFAULT_RETRIEVAL_LOG_PATH
     chat_max_tokens: int | None = None
 
     def __post_init__(self) -> None:
@@ -93,6 +95,11 @@ class CLIConfig:
             api_key=api_key,
             system_prompt=system_prompt or None,
             log_path=Path(os.getenv("CAPSTONE_LOG_PATH", str(DEFAULT_LOG_PATH))),
+            retrieval_log_path=Path(
+                os.getenv(
+                    "CAPSTONE_RETRIEVAL_LOG_PATH", str(DEFAULT_RETRIEVAL_LOG_PATH)
+                )
+            ),
             chat_max_tokens=_optional_positive_int("CAPSTONE_CHAT_MAX_TOKENS"),
         )
 

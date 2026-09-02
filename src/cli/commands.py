@@ -12,6 +12,7 @@ import sqlite3
 from typing import Any, Iterator
 
 from ..chat_logger import log_chat
+from ..retrieval_logger import log_retrieval
 from ..sqlite_history import SQLiteHistoryStore
 from .config import CLIConfig
 from .models import (
@@ -52,6 +53,12 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
     finally:
         store.close()
     chat_mode = "real" if config.has_api_key else "mock"
+    log_retrieval(
+        config.retrieval_log_path,
+        retrieval_type="chat_context",
+        query=message,
+        results=sources,
+    )
     log_chat(
         config.log_path,
         session_id=session_id,
@@ -94,6 +101,12 @@ def handle_chat_stream(
         reply = "".join(parts)
         sources = [_source_payload(source) for source in loop.last_sources]
         chat_mode = "real" if config.has_api_key else "mock"
+        log_retrieval(
+            config.retrieval_log_path,
+            retrieval_type="chat_context",
+            query=message,
+            results=sources,
+        )
         log_chat(
             config.log_path,
             session_id=session_id,
@@ -322,20 +335,24 @@ def handle_search_papers(config: CLIConfig, request: dict[str, Any]) -> dict[str
         matches = index.search(query, n_results=limit)
     except Exception as exc:  # noqa: BLE001 - surfaced to the caller as a reason
         return {"enabled": True, "matches": [], "reason": str(exc)}
-    return {
-        "enabled": True,
-        "matches": [
-            {
-                "paper_id": match.paper_id,
-                "title": match.title,
-                "filename": match.filename,
-                "page": match.page,
-                "snippet": match.snippet,
-                "score": match.score,
-            }
-            for match in matches
-        ],
-    }
+    match_payloads = [
+        {
+            "paper_id": match.paper_id,
+            "title": match.title,
+            "filename": match.filename,
+            "page": match.page,
+            "snippet": match.snippet,
+            "score": match.score,
+        }
+        for match in matches
+    ]
+    log_retrieval(
+        config.retrieval_log_path,
+        retrieval_type="paper_search",
+        query=query,
+        results=match_payloads,
+    )
+    return {"enabled": True, "matches": match_payloads}
 
 
 def dispatch(command: Any, config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:

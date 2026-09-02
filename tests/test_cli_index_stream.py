@@ -10,12 +10,14 @@ from src.cli.commands import (
     handle_chat_stream,
     handle_index_papers_stream,
     handle_messages,
+    handle_search_papers,
 )
 from src.cli.config import CLIConfig
 from src.cli.models import build_agent_loop, build_paper_indexer
 from src.agent_loop import AgentIncompleteResponseError
 from src.embeddings import EmbeddingConfig
 from src.paper_indexer import PaperIndexOutcome, PaperIndexProgress
+from src.paper_search import PaperMatch
 from src.sqlite_history import SQLiteHistoryStore, SourceRecord
 
 
@@ -31,6 +33,7 @@ def config(tmp_path: Path, chat_max_tokens: int | None = None) -> CLIConfig:
         api_key="test-key",
         system_prompt=None,
         log_path=tmp_path / "chat_logs.txt",
+        retrieval_log_path=tmp_path / "retrieval_logs.txt",
         chat_max_tokens=chat_max_tokens,
     )
 
@@ -276,6 +279,46 @@ def test_handle_chat_logs_model_response_and_retrieved_documents(monkeypatch, tm
     assert "Paper Title" in logged
     assert "paper_id=paper" in logged
     assert "score=0.75" in logged
+
+    retrieval_logged = settings.retrieval_log_path.read_text(encoding="utf-8")
+    assert "retrieval_type: chat_context" in retrieval_logged
+    assert "query: the question" in retrieval_logged
+    assert "retrieved_documents: 1" in retrieval_logged
+    assert "Paper Title" in retrieval_logged
+    assert "paper_id=paper" in retrieval_logged
+
+
+def test_handle_search_papers_logs_retrieval(monkeypatch, tmp_path):
+    match = PaperMatch(
+        paper_id="attn",
+        title="Attention Is All You Need",
+        filename="attention.pdf",
+        page=3,
+        snippet="evidence",
+        score=0.81,
+    )
+
+    class FakeIndex:
+        def count(self):
+            return 5
+
+        def search(self, _query, n_results=5):
+            return [match]
+
+    monkeypatch.setattr("src.cli.commands.chromadb_available", lambda: True)
+    monkeypatch.setattr(
+        "src.cli.commands.build_paper_search_index", lambda cfg: FakeIndex()
+    )
+
+    settings = config(tmp_path)
+    result = handle_search_papers(settings, {"query": "transformers", "limit": 5})
+
+    assert result["matches"][0]["paper_id"] == "attn"
+    retrieval_logged = settings.retrieval_log_path.read_text(encoding="utf-8")
+    assert "retrieval_type: paper_search" in retrieval_logged
+    assert "query: transformers" in retrieval_logged
+    assert "Attention Is All You Need" in retrieval_logged
+    assert "paper_id=attn" in retrieval_logged
 
 
 def test_messages_handler_restores_sources_on_the_assistant(tmp_path):
