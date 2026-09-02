@@ -106,30 +106,41 @@
 
 <div class="grid h-full grid-cols-[320px_1fr] gap-4">
   <Card class="min-h-0 gap-0 overflow-hidden py-0">
-    <form class="flex gap-2 border-b bg-transparent px-4 py-2" onsubmit={submitSearch}>
-      <Input
-        class="flex-1"
-        placeholder="Search papers…"
-        bind:value={query}
-        disabled={$searching}
-      />
-      <Button type="submit" size="sm" disabled={$searching || !query.trim()}>
-        {#if $searching}
-          <LoaderCircle class="size-4 animate-spin" />
-          Searching…
-        {:else}
-          Search
-        {/if}
-      </Button>
-      {#if $hasSearched}
-        <Button type="button" variant="ghost" size="sm" onclick={clearResults}>
-          Clear
+    <div class="flex items-center gap-3 border-b bg-background px-4 py-2">
+      <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
+        <Input
+          class="flex-1"
+          placeholder="Search papers…"
+          bind:value={query}
+          disabled={$searching}
+        />
+        <Button type="submit" size="sm" disabled={$searching || !query.trim()}>
+          {#if $searching}
+            <LoaderCircle class="size-4 animate-spin" />
+            Searching…
+          {:else}
+            Search
+          {/if}
         </Button>
-      {/if}
-    </form>
+        {#if $hasSearched}
+          <Button type="button" variant="ghost" size="sm" onclick={clearResults}>
+            Clear
+          </Button>
+        {/if}
+      </form>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onclick={indexPapers}
+        disabled={$indexing}
+      >
+        {$indexing ? "Indexing…" : "Index papers"}
+      </Button>
+    </div>
 
     <div
-      class="flex flex-col gap-1 border-b bg-transparent px-4 py-1.5 text-xs"
+      class="flex flex-col gap-1 border-b bg-background px-4 py-1.5 text-xs"
       aria-live="polite"
       aria-atomic="true"
     >
@@ -154,15 +165,6 @@
             Index papers to enable semantic search.
           {/if}
         </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onclick={indexPapers}
-          disabled={$indexing}
-        >
-          {$indexing ? "Indexing…" : "Index papers"}
-        </Button>
       </div>
       {#if $indexing}
         <div

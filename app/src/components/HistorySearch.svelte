@@ -62,8 +62,8 @@
   }
 </script>
 
-<div class="flex h-full flex-col gap-3 bg-transparent px-4">
-  <form class="flex gap-2 bg-transparent" onsubmit={submit}>
+<div class="flex h-full flex-col gap-3 bg-background px-4">
+  <form class="flex items-center gap-2 bg-background" onsubmit={submit}>
     <Input
       class="flex-1"
       placeholder="Search chat history…"
