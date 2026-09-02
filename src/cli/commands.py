@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Iterator
 
+from ..chat_logger import log_chat
 from ..sqlite_history import SQLiteHistoryStore
 from .config import CLIConfig
 from .models import (
@@ -50,11 +51,21 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
         sources = [_source_payload(source) for source in loop.last_sources]
     finally:
         store.close()
+    chat_mode = "real" if config.has_api_key else "mock"
+    log_chat(
+        config.log_path,
+        session_id=session_id,
+        model=config.chat_model,
+        chat_mode=chat_mode,
+        message=message,
+        response=reply,
+        sources=sources,
+    )
     return {
         "session_id": session_id,
         "reply": reply,
         "sources": sources,
-        "chat_mode": "real" if config.has_api_key else "mock",
+        "chat_mode": chat_mode,
         "indexed": index is not None,
     }
 
@@ -80,13 +91,25 @@ def handle_chat_stream(
         for delta in loop.stream(session_id, message):
             parts.append(delta)
             yield {"delta": delta}
+        reply = "".join(parts)
+        sources = [_source_payload(source) for source in loop.last_sources]
+        chat_mode = "real" if config.has_api_key else "mock"
+        log_chat(
+            config.log_path,
+            session_id=session_id,
+            model=config.chat_model,
+            chat_mode=chat_mode,
+            message=message,
+            response=reply,
+            sources=sources,
+        )
         yield {
             "ok": True,
             "done": True,
             "session_id": session_id,
-            "reply": "".join(parts),
-            "sources": [_source_payload(source) for source in loop.last_sources],
-            "chat_mode": "real" if config.has_api_key else "mock",
+            "reply": reply,
+            "sources": sources,
+            "chat_mode": chat_mode,
             "indexed": index is not None,
         }
     finally:

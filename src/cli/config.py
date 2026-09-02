@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "chat_history.sqlite3"
 DEFAULT_PAPERS_DIRECTORY = PROJECT_ROOT / "ResearchPapers"
 DEFAULT_CHROMA_DIRECTORY = PROJECT_ROOT / "data" / "chroma"
+DEFAULT_LOG_PATH = PROJECT_ROOT / "data" / "chat_logs.txt"
 DEFAULT_CHAT_BASE_URL = "https://api.openai.com/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_CHAT_MODEL = "openai/gpt-5.4-mini"
@@ -34,6 +35,16 @@ class CLIConfig:
     embedding_base_url: str
     api_key: str | None
     system_prompt: str | None
+    log_path: Path = DEFAULT_LOG_PATH
+    chat_max_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.chat_max_tokens is not None and (
+            isinstance(self.chat_max_tokens, bool)
+            or not isinstance(self.chat_max_tokens, int)
+            or self.chat_max_tokens < 1
+        ):
+            raise ValueError("chat_max_tokens must be a positive integer")
 
     @property
     def has_api_key(self) -> bool:
@@ -81,7 +92,22 @@ class CLIConfig:
             embedding_base_url=embedding_base_url,
             api_key=api_key,
             system_prompt=system_prompt or None,
+            log_path=Path(os.getenv("CAPSTONE_LOG_PATH", str(DEFAULT_LOG_PATH))),
+            chat_max_tokens=_optional_positive_int("CAPSTONE_CHAT_MAX_TOKENS"),
         )
+
+
+def _optional_positive_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 def _find_dotenv() -> Path | None:
