@@ -166,7 +166,7 @@
   </Card>
 
   <form
-    class="absolute inset-x-0 bottom-0 z-10 border-t border-border/60 bg-background/50 p-4 backdrop-blur-md"
+    class="absolute inset-x-0 bottom-0 z-10 bg-transparent p-4 backdrop-blur-md"
     onsubmit={submit}
   >
     <Textarea
