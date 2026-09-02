@@ -60,7 +60,7 @@
   >
     <div
       data-tauri-drag-region
-      class="flex h-[30px] items-center justify-between gap-4 border-b bg-background pr-3 pl-20"
+      class="flex h-[30px] items-center justify-between gap-4 border-b bg-background/80 backdrop-blur-md pr-3 pl-20"
     >
       <TabsList
         variant="line"
