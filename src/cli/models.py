@@ -188,8 +188,10 @@ def build_paper_indexer(config: CLIConfig):
         return None
 
 
-def build_agent_loop(config: CLIConfig, history_store, history_index) -> AgentLoop:
-    """Construct the agent loop with a real or mock model per configuration."""
+def build_agent_loop(
+    config: CLIConfig, history_store, history_index, paper_retriever=None
+) -> AgentLoop:
+    """Construct the agent loop with chat history and required paper retrieval."""
 
     if config.has_api_key:
         model = None
@@ -208,6 +210,7 @@ def build_agent_loop(config: CLIConfig, history_store, history_index) -> AgentLo
         history_store=history_store,
         model=model,
         history_index=history_index,
+        paper_retriever=paper_retriever,
         config=chat_config,
         **kwargs,
     )

@@ -44,7 +44,8 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
     store = build_history_store(config)
     try:
         index = build_index(config, store)
-        loop = build_agent_loop(config, store, index)
+        paper_retriever = build_paper_search_index(config)
+        loop = build_agent_loop(config, store, index, paper_retriever)
         reply = loop.run(session_id, message)
     finally:
         store.close()
@@ -71,7 +72,8 @@ def handle_chat_stream(
     store = build_history_store(config)
     try:
         index = build_index(config, store)
-        loop = build_agent_loop(config, store, index)
+        paper_retriever = build_paper_search_index(config)
+        loop = build_agent_loop(config, store, index, paper_retriever)
         parts: list[str] = []
         for delta in loop.stream(session_id, message):
             parts.append(delta)

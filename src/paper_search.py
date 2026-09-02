@@ -35,6 +35,20 @@ class PaperMatch:
     score: float
 
 
+@dataclass(frozen=True)
+class PaperChunkMatch:
+    """One raw indexed chunk with complete paper provenance and stable rank."""
+
+    rank: int
+    text: str
+    score: float
+    paper_id: str
+    chunk_index: int
+    filename: str
+    title: str
+    page: int
+
+
 class PaperSearchIndex:
     """Embed a query and rank papers by their most similar indexed chunk."""
 
@@ -117,6 +131,35 @@ class PaperSearchIndex:
             raise PaperSearchError("paper search failed") from exc
         return _group_by_paper(result, n_results)
 
+    def retrieve_chunks(
+        self, query: str, n_results: int = 5
+    ) -> list[PaperChunkMatch]:
+        """Return at most ``n_results`` raw chunks in Chroma similarity order."""
+
+        _validate_query(query, n_results)
+        try:
+            result = self._collection.query(
+                query_embeddings=[self._embed(query)],
+                n_results=n_results,
+                include=["metadatas", "documents", "distances"],
+            )
+        except PaperSearchError:
+            raise
+        except Exception as exc:
+            raise PaperSearchError("paper chunk retrieval failed") from exc
+        return _raw_chunks(result, n_results)
+
+
+def _validate_query(query: str, n_results: int) -> None:
+    if not isinstance(query, str):
+        raise TypeError("query must be a non-empty string")
+    if not query.strip():
+        raise ValueError("query must not be empty")
+    if isinstance(n_results, bool) or not isinstance(n_results, int):
+        raise TypeError("n_results must be an integer")
+    if n_results < 1:
+        raise ValueError("n_results must be at least 1")
+
 
 def _first_row(result: Mapping[str, Any], key: str) -> list[Any]:
     value = result.get(key) if isinstance(result, Mapping) else None
@@ -135,6 +178,66 @@ def _similarity(distance: Any) -> float:
     if not math.isfinite(number) or number < 0:
         return 0.0
     return round(1.0 / (1.0 + number), 4)
+
+
+def _raw_chunks(
+    result: Mapping[str, Any], n_results: int
+) -> list[PaperChunkMatch]:
+    metadatas = _first_row(result, "metadatas")
+    documents = _first_row(result, "documents")
+    distances = _first_row(result, "distances")
+    if not metadatas and not documents and not distances:
+        return []
+    if len(metadatas) != len(documents) or len(documents) != len(distances):
+        raise PaperSearchError("paper chunk retrieval returned incomplete records")
+
+    chunks: list[PaperChunkMatch] = []
+    for index, (metadata, document, distance) in enumerate(
+        zip(metadatas, documents, distances), start=1
+    ):
+        if not isinstance(metadata, Mapping):
+            raise PaperSearchError("paper chunk metadata is missing")
+        paper_id = _required_text(metadata, "paper_id")
+        chunk_index = _required_int(metadata, "chunk_index", minimum=0)
+        filename = _required_text(metadata, "filename")
+        title = _required_text(metadata, "title")
+        page = _required_int(metadata, "page", minimum=1)
+        if not isinstance(document, str) or not document.strip():
+            raise PaperSearchError("paper chunk text is missing")
+        if (
+            isinstance(distance, bool)
+            or not isinstance(distance, Real)
+            or not math.isfinite(float(distance))
+            or float(distance) < 0
+        ):
+            raise PaperSearchError("paper chunk distance is invalid")
+        chunks.append(
+            PaperChunkMatch(
+                rank=index,
+                text=document,
+                score=_similarity(distance),
+                paper_id=paper_id,
+                chunk_index=chunk_index,
+                filename=filename,
+                title=title,
+                page=page,
+            )
+        )
+    return chunks[:n_results]
+
+
+def _required_text(metadata: Mapping[str, Any], field: str) -> str:
+    value = metadata.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise PaperSearchError(f"paper chunk {field} is missing")
+    return value
+
+
+def _required_int(metadata: Mapping[str, Any], field: str, *, minimum: int) -> int:
+    value = metadata.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise PaperSearchError(f"paper chunk {field} is invalid")
+    return value
 
 
 def _snippet(document: Any, limit: int = 240) -> str:
@@ -175,6 +278,7 @@ def _group_by_paper(result: Mapping[str, Any], n_results: int) -> list[PaperMatc
 
 
 __all__ = [
+    "PaperChunkMatch",
     "PaperMatch",
     "PaperSearchError",
     "PaperSearchIndex",
