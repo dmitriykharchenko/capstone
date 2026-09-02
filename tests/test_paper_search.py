@@ -34,19 +34,55 @@ def test_retrieve_chunks_preserves_rank_full_text_and_provenance():
 
     chunks = index.retrieve_chunks("question")
 
+    # No candidate shares terms with the query, so BM25 contributes nothing and
+    # the hybrid rank falls back to the vector-similarity order.
     assert [chunk.rank for chunk in chunks] == [1, 2, 3, 4, 5]
     assert chunks[0].text == "full text 0\nwith formatting"
-    assert chunks[1].score == 0.9091
+    assert chunks[0].score == 0.5
+    assert [chunk.score for chunk in chunks] == sorted(
+        (chunk.score for chunk in chunks), reverse=True
+    )
     assert chunks[2].paper_id == "paper-2"
     assert chunks[2].chunk_index == 2
     assert chunks[2].filename == "paper-2.pdf"
     assert chunks[2].title == "Paper 2"
     assert chunks[2].page == 3
+    # The candidate budget is widened past n_results so BM25 can resurface
+    # lexically strong chunks that vector search ranked lower.
     assert collection.queries == [{
         "query_embeddings": [[1.0, 2.0]],
-        "n_results": 5,
+        "n_results": 25,
         "include": ["metadatas", "documents", "distances"],
     }]
+
+
+def test_retrieve_chunks_hybrid_ranks_strong_lexical_match_above_vector():
+    result = {
+        "metadatas": [[
+            {"paper_id": "paper-a", "chunk_index": 0, "filename": "paper-a.pdf",
+             "title": "Paper A", "page": 1},
+            {"paper_id": "paper-b", "chunk_index": 1, "filename": "paper-b.pdf",
+             "title": "Paper B", "page": 2},
+            {"paper_id": "paper-c", "chunk_index": 2, "filename": "paper-c.pdf",
+             "title": "Paper C", "page": 3},
+        ]],
+        "documents": [[
+            "graph neural network survey",
+            "transformer attention transformer attention model",
+            "clustering methods overview",
+        ]],
+        "distances": [[0.05, 0.4, 0.8]],
+    }
+    collection = FakeCollection(result)
+    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
+
+    chunks = index.retrieve_chunks("transformer attention")
+
+    # paper-b has a weaker vector score than paper-a but a strong lexical match,
+    # so the hybrid blend lifts it to the top and re-numbers the ranks.
+    assert [chunk.paper_id for chunk in chunks] == ["paper-b", "paper-a", "paper-c"]
+    assert [chunk.rank for chunk in chunks] == [1, 2, 3]
+    assert chunks[0].score > chunks[1].score > chunks[2].score
 
 
 def test_retrieve_chunks_honors_limit_and_empty_results():

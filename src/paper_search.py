@@ -2,8 +2,9 @@
 
 Companion read-side to :mod:`src.paper_indexer`.  The indexer writes per-chunk
 records into the shared ``documents`` collection; this module embeds a query,
-ranks chunks by similarity, and collapses them to one best match per paper so
-the UI can list relevant papers rather than raw chunks.
+ranks chunks by a hybrid of vector similarity and BM25 lexical score, and
+collapses them to one best match per paper so the UI can list relevant papers
+rather than raw chunks.
 """
 
 from __future__ import annotations
@@ -15,8 +16,13 @@ from numbers import Real
 from pathlib import Path
 from typing import Any
 
+from .bm25 import bm25_scores
 from .chroma_persistence import DEFAULT_COLLECTION_NAME, open_collection
 from .embeddings import EmbeddingBackend, EmbeddingConfig, create_embedding
+
+# Weight of the (normalized) vector-similarity signal when blended with the
+# (normalized) BM25 lexical signal; the lexical signal takes the remainder.
+HYBRID_VECTOR_WEIGHT = 0.5
 
 
 class PaperSearchError(RuntimeError):
@@ -129,25 +135,26 @@ class PaperSearchIndex:
             raise
         except Exception as exc:
             raise PaperSearchError("paper search failed") from exc
-        return _group_by_paper(result, n_results)
+        return _group_by_paper(result, query, n_results)
 
     def retrieve_chunks(
         self, query: str, n_results: int = 5
     ) -> list[PaperChunkMatch]:
-        """Return at most ``n_results`` raw chunks in Chroma similarity order."""
+        """Return at most ``n_results`` raw chunks by hybrid vector + BM25 rank."""
 
         _validate_query(query, n_results)
+        chunk_budget = min(max(n_results * 5, n_results), 50)
         try:
             result = self._collection.query(
                 query_embeddings=[self._embed(query)],
-                n_results=n_results,
+                n_results=chunk_budget,
                 include=["metadatas", "documents", "distances"],
             )
         except PaperSearchError:
             raise
         except Exception as exc:
             raise PaperSearchError("paper chunk retrieval failed") from exc
-        return _raw_chunks(result, n_results)
+        return _raw_chunks(result, query, n_results)
 
 
 def _validate_query(query: str, n_results: int) -> None:
@@ -180,8 +187,46 @@ def _similarity(distance: Any) -> float:
     return round(1.0 / (1.0 + number), 4)
 
 
+def _min_max_normalize(values: Sequence[float]) -> list[float]:
+    """Scale ``values`` into ``[0, 1]``; all-equal inputs map to ``1.0``."""
+
+    if not values:
+        return []
+    low = min(values)
+    high = max(values)
+    spread = high - low
+    if spread <= 0:
+        return [1.0 for _ in values]
+    return [(value - low) / spread for value in values]
+
+
+def _max_normalize(values: Sequence[float]) -> list[float]:
+    """Scale ``values`` by their maximum; a non-positive maximum maps to ``0``."""
+
+    if not values:
+        return []
+    high = max(values)
+    if high <= 0:
+        return [0.0 for _ in values]
+    return [value / high for value in values]
+
+
+def _hybrid_scores(
+    similarities: Sequence[float], lexical: Sequence[float]
+) -> list[float]:
+    """Blend normalized vector similarity with normalized BM25 lexical scores."""
+
+    vector_norm = _min_max_normalize(similarities)
+    lexical_norm = _max_normalize(lexical)
+    weight = HYBRID_VECTOR_WEIGHT
+    return [
+        round(weight * vector + (1.0 - weight) * keyword, 4)
+        for vector, keyword in zip(vector_norm, lexical_norm)
+    ]
+
+
 def _raw_chunks(
-    result: Mapping[str, Any], n_results: int
+    result: Mapping[str, Any], query: str, n_results: int
 ) -> list[PaperChunkMatch]:
     metadatas = _first_row(result, "metadatas")
     documents = _first_row(result, "documents")
@@ -191,10 +236,8 @@ def _raw_chunks(
     if len(metadatas) != len(documents) or len(documents) != len(distances):
         raise PaperSearchError("paper chunk retrieval returned incomplete records")
 
-    chunks: list[PaperChunkMatch] = []
-    for index, (metadata, document, distance) in enumerate(
-        zip(metadatas, documents, distances), start=1
-    ):
+    candidates: list[dict[str, Any]] = []
+    for metadata, document, distance in zip(metadatas, documents, distances):
         if not isinstance(metadata, Mapping):
             raise PaperSearchError("paper chunk metadata is missing")
         paper_id = _required_text(metadata, "paper_id")
@@ -211,19 +254,41 @@ def _raw_chunks(
             or float(distance) < 0
         ):
             raise PaperSearchError("paper chunk distance is invalid")
+        candidates.append(
+            {
+                "text": document,
+                "similarity": _similarity(distance),
+                "paper_id": paper_id,
+                "chunk_index": chunk_index,
+                "filename": filename,
+                "title": title,
+                "page": page,
+            }
+        )
+    if not candidates:
+        return []
+
+    scores = _hybrid_scores(
+        [candidate["similarity"] for candidate in candidates],
+        bm25_scores(query, [candidate["text"] for candidate in candidates]),
+    )
+    order = sorted(range(len(candidates)), key=lambda index: scores[index], reverse=True)
+    chunks: list[PaperChunkMatch] = []
+    for rank, index in enumerate(order[:n_results], start=1):
+        candidate = candidates[index]
         chunks.append(
             PaperChunkMatch(
-                rank=index,
-                text=document,
-                score=_similarity(distance),
-                paper_id=paper_id,
-                chunk_index=chunk_index,
-                filename=filename,
-                title=title,
-                page=page,
+                rank=rank,
+                text=candidate["text"],
+                score=scores[index],
+                paper_id=candidate["paper_id"],
+                chunk_index=candidate["chunk_index"],
+                filename=candidate["filename"],
+                title=candidate["title"],
+                page=candidate["page"],
             )
         )
-    return chunks[:n_results]
+    return chunks
 
 
 def _required_text(metadata: Mapping[str, Any], field: str) -> str:
@@ -249,28 +314,49 @@ def _snippet(document: Any, limit: int = 240) -> str:
     return text[:limit].rstrip() + "\u2026"
 
 
-def _group_by_paper(result: Mapping[str, Any], n_results: int) -> list[PaperMatch]:
+def _group_by_paper(
+    result: Mapping[str, Any], query: str, n_results: int
+) -> list[PaperMatch]:
     metadatas = _first_row(result, "metadatas")
     documents = _first_row(result, "documents")
     distances = _first_row(result, "distances")
-    best: dict[str, PaperMatch] = {}
+    candidates: list[dict[str, Any]] = []
     for index, metadata in enumerate(metadatas):
         if not isinstance(metadata, Mapping):
             continue
         paper_id = metadata.get("paper_id")
         if not isinstance(paper_id, str) or not paper_id.strip():
             continue
-        score = _similarity(distances[index] if index < len(distances) else None)
-        if paper_id in best and best[paper_id].score >= score:
-            continue
         document = documents[index] if index < len(documents) else ""
         page = metadata.get("page")
+        candidates.append(
+            {
+                "paper_id": paper_id,
+                "title": str(metadata.get("title") or paper_id),
+                "filename": str(metadata.get("filename") or f"{paper_id}.pdf"),
+                "page": page if isinstance(page, int) and not isinstance(page, bool) else None,
+                "document": document if isinstance(document, str) else "",
+                "similarity": _similarity(distances[index] if index < len(distances) else None),
+            }
+        )
+    if not candidates:
+        return []
+
+    scores = _hybrid_scores(
+        [candidate["similarity"] for candidate in candidates],
+        bm25_scores(query, [candidate["document"] for candidate in candidates]),
+    )
+    best: dict[str, PaperMatch] = {}
+    for candidate, score in zip(candidates, scores):
+        paper_id = candidate["paper_id"]
+        if paper_id in best and best[paper_id].score >= score:
+            continue
         best[paper_id] = PaperMatch(
             paper_id=paper_id,
-            title=str(metadata.get("title") or paper_id),
-            filename=str(metadata.get("filename") or f"{paper_id}.pdf"),
-            page=page if isinstance(page, int) and not isinstance(page, bool) else None,
-            snippet=_snippet(document),
+            title=candidate["title"],
+            filename=candidate["filename"],
+            page=candidate["page"],
+            snippet=_snippet(candidate["document"]),
             score=score,
         )
     ranked = sorted(best.values(), key=lambda match: match.score, reverse=True)
