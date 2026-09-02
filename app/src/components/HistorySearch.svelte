@@ -62,8 +62,8 @@
   }
 </script>
 
-<div class="flex h-full flex-col gap-3 bg-transparent px-4 backdrop-blur-md">
-  <form class="flex items-center gap-2 bg-transparent backdrop-blur-md" onsubmit={submit}>
+<div class="relative flex h-full min-h-0 flex-col gap-3 bg-transparent px-4">
+  <form class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-transparent px-4 backdrop-blur-md" onsubmit={submit}>
     <Input
       class="flex-1"
       placeholder="Search chat history…"
@@ -83,18 +83,19 @@
     {/if}
   </form>
 
-  {#if $error}
-    <p class="text-sm text-destructive">{$error}</p>
-  {/if}
+  <div class="flex min-h-0 flex-1 flex-col gap-3 pt-12">
+    {#if $error}
+      <p class="text-sm text-destructive">{$error}</p>
+    {/if}
 
-  {#if $hasSearched && !$enabled}
-    <p class="text-sm text-muted-foreground">
-      Semantic search is unavailable{$reason ? `: ${$reason}` : ""}.
-    </p>
-  {/if}
+    {#if $hasSearched && !$enabled}
+      <p class="text-sm text-muted-foreground">
+        Semantic search is unavailable{$reason ? `: ${$reason}` : ""}.
+      </p>
+    {/if}
 
-  <ScrollArea class="min-h-0 flex-1">
-    <div class="flex flex-col gap-3">
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col gap-3">
       {#if $searching}
         <div
           class="flex items-center gap-2 text-sm text-muted-foreground"
@@ -126,6 +127,7 @@
       {#if $hasSearched && $enabled && $matches.length === 0 && !$searching}
         <p class="text-sm text-muted-foreground">No matching exchanges.</p>
       {/if}
-    </div>
-  </ScrollArea>
+      </div>
+    </ScrollArea>
+  </div>
 </div>

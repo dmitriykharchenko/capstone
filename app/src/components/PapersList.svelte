@@ -104,8 +104,8 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col gap-3">
-  <div class="flex items-center gap-3 bg-transparent px-4 py-2 backdrop-blur-md">
+<div class="relative flex h-full min-h-0 flex-col gap-3">
+  <div class="absolute inset-x-0 top-0 z-20 flex items-center gap-3 bg-transparent px-4 py-2 backdrop-blur-md">
     <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
       <Input
         class="flex-1"
@@ -138,7 +138,7 @@
     </Button>
   </div>
 
-  <div class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4">
+  <div class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4 pt-12">
   <Card class="min-h-0 gap-0 overflow-hidden py-0">
     <div
       class="flex flex-col gap-1 bg-transparent px-4 py-1.5 text-xs backdrop-blur-md"
