@@ -166,11 +166,11 @@
   </Card>
 
   <form
-    class="absolute inset-x-0 bottom-0 z-10 bg-transparent p-4 backdrop-blur-md"
+    class="absolute inset-x-0 bottom-0 z-10 bg-transparent p-4"
     onsubmit={submit}
   >
     <Textarea
-      class="max-h-60 min-h-28 w-full resize-none pr-20 pb-16"
+      class="max-h-60 min-h-28 w-full resize-none bg-background/50 pr-20 pb-16 backdrop-blur-md"
       rows={3}
       placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
       bind:value={text}
