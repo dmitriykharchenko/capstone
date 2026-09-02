@@ -295,23 +295,34 @@ fn index_papers() -> Result<Value, CommandError> {
 }
 
 #[tauri::command]
-fn index_papers_stream(on_event: Channel<PaperIndexStreamEvent>) -> Result<(), CommandError> {
-    let request = serde_json::json!({ "command": "index_papers", "stream": true });
-    let mut sent_error = false;
-    let result = bridge::call_streaming(&project_root(), request, |value| {
-        let event = paper_index_stream_event(&value);
-        sent_error |= matches!(event, PaperIndexStreamEvent::Error { .. });
-        let _ = on_event.send(event);
-    });
-    if let Err(error) = result {
-        if !sent_error {
-            let _ = on_event.send(PaperIndexStreamEvent::Error {
-                message: error.to_string(),
-            });
+async fn index_papers_stream(
+    on_event: Channel<PaperIndexStreamEvent>,
+) -> Result<(), CommandError> {
+    let root = project_root();
+    // Indexing spawns Python and blocks on its stdout for the whole run (minutes
+    // for a large corpus). Run it on the blocking thread pool instead of the main
+    // thread so the UI stays responsive; await it so the invoke promise (and thus
+    // the frontend event channel) settles only after the terminal event.
+    tauri::async_runtime::spawn_blocking(move || {
+        let request = serde_json::json!({ "command": "index_papers", "stream": true });
+        let mut sent_error = false;
+        let result = bridge::call_streaming(&root, request, |value| {
+            let event = paper_index_stream_event(&value);
+            sent_error |= matches!(event, PaperIndexStreamEvent::Error { .. });
+            let _ = on_event.send(event);
+        });
+        if let Err(error) = result {
+            if !sent_error {
+                let _ = on_event.send(PaperIndexStreamEvent::Error {
+                    message: error.to_string(),
+                });
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|error| CommandError::Bridge(format!("indexing task failed: {error}")))?
 }
 
 /// Build and run the Tauri application, registering every command handler.
