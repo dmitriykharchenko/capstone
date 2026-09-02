@@ -143,7 +143,17 @@
         </Button>
       </div>
       {#if $indexing}
-        <div class="h-1 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          class="h-1 w-full overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label="Paper indexing progress"
+          aria-valuemin={0}
+          aria-valuemax={$indexTotal > 0 ? $indexTotal : undefined}
+          aria-valuenow={$indexTotal > 0 ? $indexCompleted : undefined}
+          aria-valuetext={$indexTotal > 0
+            ? `${$indexCompleted} of ${$indexTotal} papers (${indexPercent}%)`
+            : "Indexing papers"}
+        >
           <div
             class="h-full bg-primary transition-all"
             style={`width: ${$indexTotal > 0 ? indexPercent : 0}%`}
