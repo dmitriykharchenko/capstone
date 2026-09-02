@@ -278,12 +278,19 @@ fn search(
 }
 
 #[tauri::command]
-fn search_papers(query: String, limit: Option<u32>) -> Result<Value, CommandError> {
-    let mut request = serde_json::json!({ "command": "search_papers", "query": query });
-    if let Some(limit) = limit {
-        request["limit"] = serde_json::json!(limit);
-    }
-    bridge::call(&project_root(), request)
+async fn search_papers(query: String, limit: Option<u32>) -> Result<Value, CommandError> {
+    let root = project_root();
+    // Query embedding + Chroma lookup run through the blocking Python subprocess;
+    // run them on the blocking thread pool so the UI stays responsive.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut request = serde_json::json!({ "command": "search_papers", "query": query });
+        if let Some(limit) = limit {
+            request["limit"] = serde_json::json!(limit);
+        }
+        bridge::call(&root, request)
+    })
+    .await
+    .map_err(|error| CommandError::Bridge(format!("search task failed: {error}")))?
 }
 
 #[tauri::command]
