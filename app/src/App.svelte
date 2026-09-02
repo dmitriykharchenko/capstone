@@ -90,15 +90,15 @@
     </div>
 
     {#if $activeRoute.name === "chat"}
-      <TabsContent value="chat" class="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
+      <TabsContent value="chat" class="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-5 pb-0">
         <Chat />
       </TabsContent>
     {:else if $activeRoute.name === "history"}
-      <TabsContent value="history" class="min-h-0 overflow-hidden p-5">
+      <TabsContent value="history" class="min-h-0 overflow-hidden px-5 pt-5 pb-0">
         <HistorySearch />
       </TabsContent>
     {:else}
-      <TabsContent value="papers" class="min-h-0 overflow-hidden p-5">
+      <TabsContent value="papers" class="min-h-0 overflow-hidden px-5 pt-5 pb-0">
         <PapersList />
       </TabsContent>
     {/if}

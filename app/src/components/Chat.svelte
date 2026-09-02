@@ -170,7 +170,7 @@
     onsubmit={submit}
   >
     <Textarea
-      class="max-h-60 min-h-28 w-full resize-none bg-background/50 pr-20 pb-16 backdrop-blur-md"
+      class="max-h-60 min-h-28 w-full resize-none pr-20 pb-16"
       rows={3}
       placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
       bind:value={text}
