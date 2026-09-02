@@ -207,6 +207,7 @@ def test_sync_and_stream_chat_return_the_same_source_schema(monkeypatch, tmp_pat
 
     class FakeLoop:
         last_sources = (source,)
+        last_context = "untrusted context"
 
         def run(self, _session_id, _message):
             return "answer"
@@ -254,6 +255,10 @@ def test_handle_chat_logs_model_response_and_retrieved_documents(monkeypatch, tm
 
     class FakeLoop:
         last_sources = (source,)
+        last_context = (
+            '<<<BEGIN_UNTRUSTED_PAPER_CONTEXT>>>\n[{"rank": 1, '
+            '"text": "full chunk evidence text"}]\n<<<END_UNTRUSTED_PAPER_CONTEXT>>>'
+        )
 
         def run(self, _session_id, _message):
             return "the answer"
@@ -286,6 +291,8 @@ def test_handle_chat_logs_model_response_and_retrieved_documents(monkeypatch, tm
     assert "retrieved_documents: 1" in retrieval_logged
     assert "Paper Title" in retrieval_logged
     assert "paper_id=paper" in retrieval_logged
+    assert "context_provided_to_model:" in retrieval_logged
+    assert "full chunk evidence text" in retrieval_logged
 
 
 def test_handle_search_papers_logs_retrieval(monkeypatch, tmp_path):

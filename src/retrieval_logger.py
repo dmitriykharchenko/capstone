@@ -42,9 +42,15 @@ def format_retrieval_entry(
     retrieval_type: str,
     query: str,
     results: Sequence[Mapping[str, Any]],
+    context: str | None = None,
     timestamp: str | None = None,
 ) -> str:
-    """Return the text block logged for one retrieval operation."""
+    """Return the text block logged for one retrieval operation.
+
+    When ``context`` is provided it is appended verbatim as the full text that
+    will be handed to the model — the complete retrieved evidence, not just the
+    per-document metadata summary above it.
+    """
 
     stamp = timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds")
     lines = [
@@ -57,6 +63,9 @@ def format_retrieval_entry(
     lines.extend(
         _format_result(rank, result) for rank, result in enumerate(results, start=1)
     )
+    if context is not None:
+        lines.append("context_provided_to_model:")
+        lines.append(context)
     lines.append("")
     return "\n".join(lines)
 
@@ -67,6 +76,7 @@ def log_retrieval(
     retrieval_type: str,
     query: str,
     results: Sequence[Mapping[str, Any]],
+    context: str | None = None,
 ) -> bool:
     """Append one retrieval operation to ``log_path``; return ``True`` on success.
 
@@ -80,6 +90,7 @@ def log_retrieval(
             retrieval_type=retrieval_type,
             query=query,
             results=results,
+            context=context,
         )
         with open(log_path, "a", encoding="utf-8") as handle:
             handle.write(entry + "\n")

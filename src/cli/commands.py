@@ -50,6 +50,7 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
         loop = build_agent_loop(config, store, index, paper_retriever)
         reply = loop.run(session_id, message)
         sources = [_source_payload(source) for source in loop.last_sources]
+        context = loop.last_context
     finally:
         store.close()
     chat_mode = "real" if config.has_api_key else "mock"
@@ -58,6 +59,7 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
         retrieval_type="chat_context",
         query=message,
         results=sources,
+        context=context,
     )
     log_chat(
         config.log_path,
@@ -100,12 +102,14 @@ def handle_chat_stream(
             yield {"delta": delta}
         reply = "".join(parts)
         sources = [_source_payload(source) for source in loop.last_sources]
+        context = loop.last_context
         chat_mode = "real" if config.has_api_key else "mock"
         log_retrieval(
             config.retrieval_log_path,
             retrieval_type="chat_context",
             query=message,
             results=sources,
+            context=context,
         )
         log_chat(
             config.log_path,
