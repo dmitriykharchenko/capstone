@@ -84,7 +84,7 @@
 </script>
 
 <div class="relative flex h-full min-h-0 flex-col gap-3">
-  <div class="flex items-center gap-3 bg-background/80 px-4 backdrop-blur-md">
+  <div class="flex items-center gap-3 bg-transparent px-4 backdrop-blur-md">
     <Select type="single" value={$sessionId} onValueChange={switchSession}>
       <SelectTrigger
         class="w-[320px] max-w-full"

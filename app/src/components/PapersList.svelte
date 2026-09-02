@@ -105,7 +105,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col gap-3">
-  <div class="flex items-center gap-3 border-b bg-background/80 px-4 py-2 backdrop-blur-md">
+  <div class="flex items-center gap-3 bg-transparent px-4 py-2 backdrop-blur-md">
     <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
       <Input
         class="flex-1"
@@ -141,7 +141,7 @@
   <div class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4">
   <Card class="min-h-0 gap-0 overflow-hidden py-0">
     <div
-      class="flex flex-col gap-1 border-b bg-background/80 px-4 py-1.5 text-xs backdrop-blur-md"
+      class="flex flex-col gap-1 bg-transparent px-4 py-1.5 text-xs backdrop-blur-md"
       aria-live="polite"
       aria-atomic="true"
     >
