@@ -256,11 +256,10 @@ class PaperIndexer:
     def index_directory(self) -> PaperIndexReport:
         """Index top-level PDFs in filename order, isolating paper failures."""
 
-        outcomes = [
-            progress.outcome
-            for progress in self.iter_directory()
-            if progress.outcome is not None
-        ]
+        outcomes: list[PaperIndexOutcome] = []
+        for progress in self.iter_directory():
+            if progress.outcome is not None:
+                outcomes.append(progress.outcome)
         return PaperIndexReport(self.papers_directory, tuple(outcomes))
 
 
