@@ -5,8 +5,20 @@
     selectPapersLoading,
     selectPapersError,
     selectSelectedPaperId,
+    selectPaperIndexing,
+    selectPaperIndexedCount,
+    selectPaperIndexError,
+    selectPaperIndexCompleted,
+    selectPaperIndexTotal,
+    selectPaperIndexCurrentFile,
+    selectPaperIndexCurrentStatus,
+    selectPaperIndexFailedCount,
+    selectPaperIndexEmptyCount,
   } from "../slices/papers/papers-selectors";
-  import { openPaper } from "../slices/papers/papers-slice";
+  import {
+    openPaper,
+    runPaperIndex,
+  } from "../slices/papers/papers-slice";
   import {
     selectPaperSearchMatches,
     selectPaperSearching,
@@ -14,19 +26,10 @@
     selectPaperSearchReason,
     selectPaperSearchError,
     selectPaperHasSearched,
-    selectPaperIndexing,
-    selectPaperIndexedCount,
-    selectPaperIndexError,
-    selectPaperIndexCompleted,
-    selectPaperIndexTotal,
-    selectPaperIndexCurrentFile,
-    selectPaperIndexFailedCount,
-    selectPaperIndexEmptyCount,
   } from "../slices/paper-search/paper-search-selectors";
   import {
     runPaperSearch,
     clearPaperSearch,
-    runPaperIndex,
   } from "../slices/paper-search/paper-search-slice";
   import PdfViewer from "./PdfViewer.svelte";
   import { Button } from "$lib/components/ui/button";
@@ -51,6 +54,7 @@
   const indexCompleted = selectPaperIndexCompleted();
   const indexTotal = selectPaperIndexTotal();
   const indexCurrentFile = selectPaperIndexCurrentFile();
+  const indexCurrentStatus = selectPaperIndexCurrentStatus();
   const indexFailedCount = selectPaperIndexFailedCount();
   const indexEmptyCount = selectPaperIndexEmptyCount();
 
@@ -58,7 +62,12 @@
 
   // Determinate progress percentage while indexing (0 when total unknown).
   const indexPercent = $derived(
-    $indexTotal > 0 ? Math.round(($indexCompleted / $indexTotal) * 100) : 0,
+    $indexTotal > 0
+      ? Math.min(
+          100,
+          Math.max(0, Math.round(($indexCompleted / $indexTotal) * 100)),
+        )
+      : 0,
   );
 
   function formatSize(bytes: number): string {
@@ -111,7 +120,11 @@
       {/if}
     </form>
 
-    <div class="flex flex-col gap-1 border-b px-2 py-1.5 text-xs">
+    <div
+      class="flex flex-col gap-1 border-b px-2 py-1.5 text-xs"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <div
         class="flex items-center justify-between gap-2 text-muted-foreground"
       >
@@ -125,9 +138,10 @@
           {:else if $indexError}
             <span class="text-destructive">Indexing failed: {$indexError}</span>
           {:else if $indexedCount !== null}
-            Indexed {$indexedCount} paper{$indexedCount === 1 ? "" : "s"}{$indexEmptyCount
-              ? `, ${$indexEmptyCount} empty`
-              : ""}{$indexFailedCount ? `, ${$indexFailedCount} failed` : ""}.
+            <span class={$indexFailedCount > 0 ? "text-destructive" : ""}>
+              Indexing finished: {$indexedCount} indexed, {$indexEmptyCount} empty,
+              {$indexFailedCount} failed.
+            </span>
           {:else}
             Index papers to enable semantic search.
           {/if}
@@ -139,7 +153,7 @@
           onclick={indexPapers}
           disabled={$indexing}
         >
-          {$indexing ? "Indexing…" : "Index"}
+          {$indexing ? "Indexing…" : "Index papers"}
         </Button>
       </div>
       {#if $indexing}
@@ -148,11 +162,11 @@
           role="progressbar"
           aria-label="Paper indexing progress"
           aria-valuemin={0}
-          aria-valuemax={$indexTotal > 0 ? $indexTotal : undefined}
-          aria-valuenow={$indexTotal > 0 ? $indexCompleted : undefined}
+          aria-valuemax={100}
+          aria-valuenow={indexPercent}
           aria-valuetext={$indexTotal > 0
             ? `${$indexCompleted} of ${$indexTotal} papers (${indexPercent}%)`
-            : "Indexing papers"}
+            : "Preparing paper index (0%)"}
         >
           <div
             class="h-full bg-primary transition-all"
@@ -160,7 +174,9 @@
           ></div>
         </div>
         {#if $indexCurrentFile}
-          <span class="truncate text-muted-foreground">{$indexCurrentFile}</span>
+          <span class="truncate text-muted-foreground">
+            {$indexCurrentFile} — {$indexCurrentStatus ?? "processing"}
+          </span>
         {/if}
       {/if}
     </div>

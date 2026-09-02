@@ -19,20 +19,6 @@ export const paperSearchFailed = createAction<[error: string]>(
 );
 export const clearPaperSearch = createAction("paperSearch/clear");
 
-export const runPaperIndex = createAction("paperSearch/runIndex");
-export const paperIndexStarted = createAction<[total: number]>(
-  "paperSearch/indexStarted",
-);
-export const paperIndexProgress = createAction<
-  [completed: number, total: number, currentFile: string]
->("paperSearch/indexProgress");
-export const paperIndexSucceeded = createAction<
-  [indexed: number, empty: number, failed: number]
->("paperSearch/indexSucceeded");
-export const paperIndexFailed = createAction<[error: string]>(
-  "paperSearch/indexFailed",
-);
-
 export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
   createReducer<PaperSearchState>(initialPaperSearchState)
     .with(
@@ -67,56 +53,4 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
         error: action.payload[0],
       }),
     )
-    .with(clearPaperSearch, (state: PaperSearchState) => ({
-      ...initialPaperSearchState,
-      indexedCount: state.indexedCount,
-    }))
-    .with(
-      paperIndexStarted,
-      (state: PaperSearchState, action: StoreAction<[number]>) => ({
-        ...state,
-        indexing: true,
-        indexError: null,
-        indexCompleted: 0,
-        indexTotal: action.payload[0],
-        indexCurrentFile: null,
-        indexFailedCount: 0,
-        indexEmptyCount: 0,
-      }),
-    )
-    .with(
-      paperIndexProgress,
-      (
-        state: PaperSearchState,
-        action: StoreAction<[number, number, string]>,
-      ) => ({
-        ...state,
-        indexCompleted: action.payload[0],
-        indexTotal: action.payload[1],
-        indexCurrentFile: action.payload[2],
-      }),
-    )
-    .with(
-      paperIndexSucceeded,
-      (
-        state: PaperSearchState,
-        action: StoreAction<[number, number, number]>,
-      ) => ({
-        ...state,
-        indexing: false,
-        indexedCount: action.payload[0],
-        indexEmptyCount: action.payload[1],
-        indexFailedCount: action.payload[2],
-        indexCurrentFile: null,
-        enabled: true,
-      }),
-    )
-    .with(
-      paperIndexFailed,
-      (state: PaperSearchState, action: StoreAction<[string]>) => ({
-        ...state,
-        indexing: false,
-        indexCurrentFile: null,
-        indexError: action.payload[0],
-      }),
-    );
+    .with(clearPaperSearch, () => initialPaperSearchState);

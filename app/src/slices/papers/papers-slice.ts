@@ -2,7 +2,14 @@ import { createAction } from "@augmentcode/themis/utils/store/create-action";
 import { createReducer } from "@augmentcode/themis/utils/store/create-reducer";
 import type { StoreAction, StoreReducerFunction } from "@augmentcode/themis/types";
 import type { PaperInfo } from "../../lib/api";
-import { initialPapersState, type PapersState } from "./papers-types";
+import {
+  beginPaperIndex,
+  completePaperIndex,
+  initialPapersState,
+  recordPaperIndexProgress,
+  rejectPaperIndex,
+  type PapersState,
+} from "./papers-types";
 
 export const loadPapers = createAction("papers/load");
 export const papersLoading = createAction("papers/loading");
@@ -17,6 +24,20 @@ export const setPdfUrl = createAction<[paperId: string, url: string]>(
 );
 export const pdfFailed = createAction<[error: string]>("papers/pdfFailed");
 export const closePaper = createAction("papers/close");
+
+export const runPaperIndex = createAction("papers/runIndex");
+export const paperIndexStarted = createAction<[total: number]>(
+  "papers/indexStarted",
+);
+export const paperIndexProgress = createAction<
+  [completed: number, total: number, currentFile: string, status: string]
+>("papers/indexProgress");
+export const paperIndexSucceeded = createAction<
+  [completed: number, total: number, indexed: number, empty: number, failed: number]
+>("papers/indexSucceeded");
+export const paperIndexFailed = createAction<[error: string]>(
+  "papers/indexFailed",
+);
 
 export const papersReducer: StoreReducerFunction<PapersState> =
   createReducer<PapersState>(initialPapersState)
@@ -61,4 +82,28 @@ export const papersReducer: StoreReducerFunction<PapersState> =
       selectedId: null,
       pdfUrl: null,
       pdfLoading: false,
-    }));
+    }))
+    .with(
+      paperIndexStarted,
+      (state: PapersState, action: StoreAction<[number]>) =>
+        beginPaperIndex(state, action.payload[0]),
+    )
+    .with(
+      paperIndexProgress,
+      (
+        state: PapersState,
+        action: StoreAction<[number, number, string, string]>,
+      ) => recordPaperIndexProgress(state, ...action.payload),
+    )
+    .with(
+      paperIndexSucceeded,
+      (
+        state: PapersState,
+        action: StoreAction<[number, number, number, number, number]>,
+      ) => completePaperIndex(state, ...action.payload),
+    )
+    .with(
+      paperIndexFailed,
+      (state: PapersState, action: StoreAction<[string]>) =>
+        rejectPaperIndex(state, action.payload[0]),
+    );
