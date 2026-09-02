@@ -36,8 +36,15 @@
   let text = $state("");
 
   const sessionIds = $derived.by(() => {
-    const ids = [$sessionId, ...$sessions.map((s) => s.session_id)];
-    return Array.from(new Set(ids.filter((id): id is string => Boolean(id))));
+    // Preserve the backend list order; only append the current session at the
+    // end when it isn't persisted yet (e.g. a freshly created session).
+    const ids = $sessions
+      .map((s) => s.session_id)
+      .filter((id): id is string => Boolean(id));
+    if ($sessionId && !ids.includes($sessionId)) {
+      ids.push($sessionId);
+    }
+    return Array.from(new Set(ids));
   });
 
   // Label sessions by the first few words of their first user message, falling
