@@ -47,11 +47,13 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
         paper_retriever = build_paper_search_index(config)
         loop = build_agent_loop(config, store, index, paper_retriever)
         reply = loop.run(session_id, message)
+        sources = [_source_payload(source) for source in loop.last_sources]
     finally:
         store.close()
     return {
         "session_id": session_id,
         "reply": reply,
+        "sources": sources,
         "chat_mode": "real" if config.has_api_key else "mock",
         "indexed": index is not None,
     }
@@ -83,6 +85,7 @@ def handle_chat_stream(
             "done": True,
             "session_id": session_id,
             "reply": "".join(parts),
+            "sources": [_source_payload(source) for source in loop.last_sources],
             "chat_mode": "real" if config.has_api_key else "mock",
             "indexed": index is not None,
         }
@@ -91,7 +94,12 @@ def handle_chat_stream(
 
 
 def handle_sessions(config: CLIConfig) -> dict[str, Any]:
-    """Return every known session with message and exchange counts."""
+    """Return every known session with a title, message and exchange counts.
+
+    The ``title`` is derived from the first few words of the session's first
+    user message so the UI can label sessions meaningfully instead of showing
+    the opaque session identifier.
+    """
 
     path = config.database_path
     if not path.exists():
@@ -103,6 +111,13 @@ def handle_sessions(config: CLIConfig) -> dict[str, Any]:
         message_counts = dict(
             connection.execute(
                 "SELECT session_id, COUNT(*) FROM messages GROUP BY session_id"
+            ).fetchall()
+        )
+        first_user_messages = dict(
+            connection.execute(
+                "SELECT session_id, content FROM messages WHERE id IN ("
+                "SELECT MIN(id) FROM messages WHERE role = 'user' GROUP BY session_id"
+                ")"
             ).fetchall()
         )
         exchange_counts: dict[str, int] = {}
@@ -117,6 +132,7 @@ def handle_sessions(config: CLIConfig) -> dict[str, Any]:
     sessions = [
         {
             "session_id": session_id,
+            "title": _session_title(first_user_messages.get(session_id)),
             "message_count": int(count),
             "exchange_count": int(exchange_counts.get(session_id, 0)),
         }
@@ -136,9 +152,7 @@ def handle_messages(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any
         records = store.get_messages(session_id)
     return {
         "session_id": session_id,
-        "messages": [
-            {"role": record.role, "content": record.content} for record in records
-        ],
+        "messages": [_message_payload(record) for record in records],
     }
 
 
@@ -325,11 +339,48 @@ def _require_str(value: Any, name: str) -> str:
     return value
 
 
+def _source_payload(source: Any) -> dict[str, Any]:
+    return {
+        "rank": source.rank,
+        "paper_id": source.paper_id,
+        "chunk_index": source.chunk_index,
+        "filename": source.filename,
+        "title": source.title,
+        "page": source.page,
+        "score": source.score,
+        "snippet": source.snippet,
+    }
+
+
+def _message_payload(record: Any) -> dict[str, Any]:
+    payload = {"role": record.role, "content": record.content}
+    if record.sources:
+        payload["sources"] = [_source_payload(source) for source in record.sources]
+    return payload
+
+
 def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
     row = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
     ).fetchone()
     return row is not None
+
+
+SESSION_TITLE_WORD_LIMIT = 6
+
+
+def _session_title(content: Any, *, word_limit: int = SESSION_TITLE_WORD_LIMIT) -> str:
+    """Derive a short session label from the first few words of ``content``."""
+
+    if not isinstance(content, str):
+        return ""
+    words = content.split()
+    if not words:
+        return ""
+    title = " ".join(words[:word_limit])
+    if len(words) > word_limit:
+        title += "\u2026"
+    return title
 
 
 __all__ = [

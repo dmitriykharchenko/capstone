@@ -20,6 +20,7 @@ export interface PdfData {
 
 export interface SessionInfo {
   session_id: string;
+  title: string;
   message_count: number;
   exchange_count: number;
 }
@@ -27,6 +28,18 @@ export interface SessionInfo {
 export interface ChatMessage {
   role: string;
   content: string;
+  sources?: ChatSource[];
+}
+
+export interface ChatSource {
+  rank: number;
+  paper_id: string;
+  chunk_index: number;
+  filename: string;
+  title: string;
+  page: number;
+  score: number;
+  snippet: string;
 }
 
 export interface SearchMatch {
@@ -59,13 +72,20 @@ export interface ChatResult {
   reply: string;
   chat_mode: string;
   indexed: boolean;
+  sources: ChatSource[];
 }
 
 // Discriminated union mirroring the Rust `ChatStreamEvent` (internally tagged
 // on `event`): incremental `delta`s, a terminal `done`, or an `error`.
 export type ChatStreamEvent =
   | { event: "delta"; delta: string }
-  | { event: "done"; reply: string; chatMode: string; indexed: boolean }
+  | {
+      event: "done";
+      reply: string;
+      chatMode: string;
+      indexed: boolean;
+      sources: ChatSource[];
+    }
   | { event: "error"; message: string };
 
 // Discriminated union mirroring the Rust `index_papers_stream` Channel events
