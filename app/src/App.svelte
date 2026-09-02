@@ -11,11 +11,18 @@
   import SunIcon from "@lucide/svelte/icons/sun";
   import MoonIcon from "@lucide/svelte/icons/moon";
   import { applyTheme, resolveTheme, type Theme } from "$lib/theme";
+  import { selectActiveRoute } from "./slices/router/router-selectors";
+  import { navigateTo } from "./slices/router/router-slice";
+  import {
+    routeForName,
+    type RouteName,
+  } from "./slices/router/router-types";
 
   const dispose = store.init();
   onDestroy(dispose);
 
   let theme = $state<Theme>("light");
+  const activeRoute = selectActiveRoute();
 
   onMount(() => {
     theme = resolveTheme();
@@ -31,17 +38,26 @@
     applyTheme(theme);
   }
 
-  let tab = $state("chat");
-
-  const tabs: { id: string; label: string }[] = [
+  const tabs: { id: RouteName; label: string }[] = [
     { id: "chat", label: "Chat" },
-    { id: "search", label: "History Search" },
+    { id: "history", label: "History Search" },
     { id: "papers", label: "Papers" },
   ];
+
+  function navigate(name: string) {
+    const routeName = name as RouteName;
+    if ($activeRoute.name !== routeName) {
+      store.dispatch(navigateTo(routeForName(routeName)));
+    }
+  }
 </script>
 
 <div class="flex h-screen flex-col bg-background text-foreground">
-  <Tabs bind:value={tab} class="flex min-h-0 flex-1 flex-col gap-0">
+  <Tabs
+    value={$activeRoute.name}
+    onValueChange={navigate}
+    class="flex min-h-0 flex-1 flex-col gap-0"
+  >
     <div
       data-tauri-drag-region
       class="flex h-[30px] items-center justify-between gap-4 border-b pr-3 pl-20"
@@ -73,14 +89,18 @@
       </Button>
     </div>
 
-    <TabsContent value="chat" class="min-h-0 overflow-hidden p-5">
-      <Chat />
-    </TabsContent>
-    <TabsContent value="search" class="min-h-0 overflow-hidden p-5">
-      <HistorySearch />
-    </TabsContent>
-    <TabsContent value="papers" class="min-h-0 overflow-hidden p-5">
-      <PapersList />
-    </TabsContent>
+    {#if $activeRoute.name === "chat"}
+      <TabsContent value="chat" class="min-h-0 overflow-hidden p-5">
+        <Chat />
+      </TabsContent>
+    {:else if $activeRoute.name === "history"}
+      <TabsContent value="history" class="min-h-0 overflow-hidden p-5">
+        <HistorySearch />
+      </TabsContent>
+    {:else}
+      <TabsContent value="papers" class="min-h-0 overflow-hidden p-5">
+        <PapersList />
+      </TabsContent>
+    {/if}
   </Tabs>
 </div>
