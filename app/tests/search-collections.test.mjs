@@ -36,11 +36,23 @@ test("chat-history search retains and replaces query-keyed collections", () => {
   let state = search.searchReducer(undefined, search.searchSucceeded("first", first, true, null));
   state = search.searchReducer(state, search.searchSucceeded("second", second, true, null));
   assert.deepEqual(state.collections, {
-    "CHAT_HISTORY_SEARCH:first": { id: "CHAT_HISTORY_SEARCH:first", results: first },
-    "CHAT_HISTORY_SEARCH:second": { id: "CHAT_HISTORY_SEARCH:second", results: second },
+    idField: "id",
+    ids: ["CHAT_HISTORY_SEARCH:first", "CHAT_HISTORY_SEARCH:second"],
+    map: {
+      "CHAT_HISTORY_SEARCH:first": { id: "CHAT_HISTORY_SEARCH:first", results: first },
+      "CHAT_HISTORY_SEARCH:second": { id: "CHAT_HISTORY_SEARCH:second", results: second },
+    },
+    refsCount: {},
   });
   state = search.searchReducer(state, search.searchSucceeded("first", [{ exchange_id: 3 }], true, null));
-  assert.deepEqual(state.collections["CHAT_HISTORY_SEARCH:first"].results, [{ exchange_id: 3 }]);
+  assert.deepEqual(state.collections.map["CHAT_HISTORY_SEARCH:first"].results, [{ exchange_id: 3 }]);
+  assert.deepEqual(
+    searchSelectors.selectSearchCollections.select({ search: state }),
+    [
+      { id: "CHAT_HISTORY_SEARCH:first", results: [{ exchange_id: 3 }] },
+      { id: "CHAT_HISTORY_SEARCH:second", results: second },
+    ],
+  );
   assert.deepEqual(
     searchSelectors.selectSearchMatches.select({
       search: state,
@@ -71,8 +83,13 @@ test("paper search retains and replaces query-keyed collections", () => {
     paperSearch.paperSearchSucceeded("second", second, true, null),
   );
   assert.deepEqual(state.collections, {
-    "PAPERS_SEARCH:first": { id: "PAPERS_SEARCH:first", results: first },
-    "PAPERS_SEARCH:second": { id: "PAPERS_SEARCH:second", results: second },
+    idField: "id",
+    ids: ["PAPERS_SEARCH:first", "PAPERS_SEARCH:second"],
+    map: {
+      "PAPERS_SEARCH:first": { id: "PAPERS_SEARCH:first", results: first },
+      "PAPERS_SEARCH:second": { id: "PAPERS_SEARCH:second", results: second },
+    },
+    refsCount: {},
   });
   assert.deepEqual(
     paperSearchSelectors.selectPaperSearchMatches.select({
@@ -88,6 +105,20 @@ test("paper search retains and replaces query-keyed collections", () => {
     }),
     second,
   );
+  assert.deepEqual(
+    paperSearchSelectors.selectPaperSearchCollections.select({ paperSearch: state }),
+    [
+      { id: "PAPERS_SEARCH:first", results: first },
+      { id: "PAPERS_SEARCH:second", results: second },
+    ],
+  );
+  state = paperSearch.paperSearchReducer(
+    state,
+    paperSearch.paperSearchSucceeded("first", [{ paper_id: "paper-3" }], true, null),
+  );
+  assert.deepEqual(state.collections.map["PAPERS_SEARCH:first"].results, [
+    { paper_id: "paper-3" },
+  ]);
   const cleared = paperSearch.paperSearchReducer(state, paperSearch.clearPaperSearch());
   assert.deepEqual(cleared.collections, state.collections);
 });

@@ -1,4 +1,8 @@
 import type { SearchMatch } from "../../lib/api";
+import {
+  createCollection,
+  type Collection,
+} from "@augmentcode/themis/utils/collections/collection-utils";
 
 export const CHAT_HISTORY_SEARCH_PREFIX = "CHAT_HISTORY_SEARCH";
 
@@ -13,7 +17,7 @@ export interface SearchCollection {
 
 export interface SearchState {
   query: string;
-  collections: Record<string, SearchCollection>;
+  collections: Collection<SearchCollection, "id">;
   searching: boolean;
   enabled: boolean;
   reason: string | null;
@@ -23,7 +27,7 @@ export interface SearchState {
 
 export const initialSearchState: SearchState = {
   query: "",
-  collections: {},
+  collections: createCollection<SearchCollection, "id">("id"),
   searching: false,
   enabled: true,
   reason: null,

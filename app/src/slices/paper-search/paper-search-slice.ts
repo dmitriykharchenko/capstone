@@ -1,5 +1,6 @@
 import { createAction } from "@augmentcode/themis/utils/store/create-action";
 import { createReducer } from "@augmentcode/themis/utils/store/create-reducer";
+import { upsertItem } from "@augmentcode/themis/utils/collections/collection-utils";
 import type { StoreAction, StoreReducerFunction } from "@augmentcode/themis/types";
 import type { PaperMatch } from "../../lib/api";
 import {
@@ -38,14 +39,15 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
         action: StoreAction<[string, PaperMatch[], boolean, string | null]>,
       ) => {
         const id = paperSearchId(action.payload[0]);
+        const collections = upsertItem(state.collections, {
+          id,
+          results: action.payload[1],
+        });
         return {
           ...state,
           searching: false,
           hasSearched: true,
-          collections: {
-            ...state.collections,
-            [id]: { id, results: action.payload[1] },
-          },
+          collections,
           enabled: action.payload[2],
           reason: action.payload[3],
         };

@@ -1,4 +1,8 @@
 import type { PaperMatch } from "../../lib/api";
+import {
+  createCollection,
+  type Collection,
+} from "@augmentcode/themis/utils/collections/collection-utils";
 
 export const PAPERS_SEARCH_PREFIX = "PAPERS_SEARCH";
 
@@ -13,7 +17,7 @@ export interface PaperSearchCollection {
 
 export interface PaperSearchState {
   query: string;
-  collections: Record<string, PaperSearchCollection>;
+  collections: Collection<PaperSearchCollection, "id">;
   searching: boolean;
   enabled: boolean;
   reason: string | null;
@@ -23,7 +27,7 @@ export interface PaperSearchState {
 
 export const initialPaperSearchState: PaperSearchState = {
   query: "",
-  collections: {},
+  collections: createCollection<PaperSearchCollection, "id">("id"),
   searching: false,
   enabled: true,
   reason: null,

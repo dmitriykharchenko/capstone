@@ -1,3 +1,7 @@
+import {
+  getItem,
+  getItems,
+} from "@augmentcode/themis/utils/collections/collection-utils";
 import { store } from "../../store";
 import { chatHistorySearchId } from "./search-types";
 
@@ -10,11 +14,13 @@ export const selectSearchMatches = store.createSelector(
     if (route.name !== "history") {
       return [];
     }
-    return state.search.collections[chatHistorySearchId(route.query ?? "")]?.results ?? [];
+    return (
+      getItem(state.search.collections, chatHistorySearchId(route.query ?? ""))?.results ?? []
+    );
   },
 );
 export const selectSearchCollections = store.createSelector(
-  (state) => state.search.collections,
+  (state) => getItems(state.search.collections),
 );
 export const selectSearching = store.createSelector(
   (state) => state.search.searching,

@@ -1,3 +1,7 @@
+import {
+  getItem,
+  getItems,
+} from "@augmentcode/themis/utils/collections/collection-utils";
 import { store } from "../../store";
 import { paperSearchId } from "./paper-search-types";
 
@@ -10,11 +14,14 @@ export const selectPaperSearchMatches = store.createSelector(
     if (route.name !== "papers") {
       return [];
     }
-    return state.paperSearch.collections[paperSearchId(route.query ?? "")]?.results ?? [];
+    return (
+      getItem(state.paperSearch.collections, paperSearchId(route.query ?? ""))?.results ??
+      []
+    );
   },
 );
 export const selectPaperSearchCollections = store.createSelector(
-  (state) => state.paperSearch.collections,
+  (state) => getItems(state.paperSearch.collections),
 );
 export const selectPaperSearching = store.createSelector(
   (state) => state.paperSearch.searching,

@@ -1,5 +1,6 @@
 import { createAction } from "@augmentcode/themis/utils/store/create-action";
 import { createReducer } from "@augmentcode/themis/utils/store/create-reducer";
+import { upsertItem } from "@augmentcode/themis/utils/collections/collection-utils";
 import type { StoreAction, StoreReducerFunction } from "@augmentcode/themis/types";
 import type { SearchMatch } from "../../lib/api";
 import {
@@ -31,14 +32,15 @@ export const searchReducer: StoreReducerFunction<SearchState> =
         action: StoreAction<[string, SearchMatch[], boolean, string | null]>,
       ) => {
         const id = chatHistorySearchId(action.payload[0]);
+        const collections = upsertItem(state.collections, {
+          id,
+          results: action.payload[1],
+        });
         return {
           ...state,
           searching: false,
           hasSearched: true,
-          collections: {
-            ...state.collections,
-            [id]: { id, results: action.payload[1] },
-          },
+          collections,
           enabled: action.payload[2],
           reason: action.payload[3],
         };
