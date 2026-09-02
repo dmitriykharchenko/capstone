@@ -104,41 +104,42 @@
   }
 </script>
 
-<div class="grid h-full grid-cols-[320px_1fr] gap-4">
-  <Card class="min-h-0 gap-0 overflow-hidden py-0">
-    <div class="flex items-center gap-3 border-b bg-background px-4 py-2">
-      <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
-        <Input
-          class="flex-1"
-          placeholder="Search papers…"
-          bind:value={query}
-          disabled={$searching}
-        />
-        <Button type="submit" size="sm" disabled={$searching || !query.trim()}>
-          {#if $searching}
-            <LoaderCircle class="size-4 animate-spin" />
-            Searching…
-          {:else}
-            Search
-          {/if}
-        </Button>
-        {#if $hasSearched}
-          <Button type="button" variant="ghost" size="sm" onclick={clearResults}>
-            Clear
-          </Button>
+<div class="flex h-full min-h-0 flex-col gap-3">
+  <div class="flex items-center gap-3 border-b bg-background px-4 py-2">
+    <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
+      <Input
+        class="flex-1"
+        placeholder="Search papers…"
+        bind:value={query}
+        disabled={$searching}
+      />
+      <Button type="submit" size="sm" disabled={$searching || !query.trim()}>
+        {#if $searching}
+          <LoaderCircle class="size-4 animate-spin" />
+          Searching…
+        {:else}
+          Search
         {/if}
-      </form>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onclick={indexPapers}
-        disabled={$indexing}
-      >
-        {$indexing ? "Indexing…" : "Index papers"}
       </Button>
-    </div>
+      {#if $hasSearched}
+        <Button type="button" variant="ghost" size="sm" onclick={clearResults}>
+          Clear
+        </Button>
+      {/if}
+    </form>
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onclick={indexPapers}
+      disabled={$indexing}
+    >
+      {$indexing ? "Indexing…" : "Index papers"}
+    </Button>
+  </div>
 
+  <div class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4">
+  <Card class="min-h-0 gap-0 overflow-hidden py-0">
     <div
       class="flex flex-col gap-1 border-b bg-background px-4 py-1.5 text-xs"
       aria-live="polite"
@@ -265,5 +266,6 @@
 
   <div class="min-h-0">
     <PdfViewer />
+  </div>
   </div>
 </div>
