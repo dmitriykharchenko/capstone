@@ -2,7 +2,7 @@
 // backend. Every call goes through `invoke`; papers/PDF are served natively,
 // while chat/sessions/messages/search/health are proxied to the Python CLI.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 
 export interface PaperInfo {
   id: string;
@@ -36,6 +36,15 @@ export interface SearchMatch {
   assistant_message: string;
 }
 
+export interface PaperMatch {
+  paper_id: string;
+  title: string;
+  filename: string;
+  page: number | null;
+  snippet: string;
+  score: number;
+}
+
 export interface HealthInfo {
   ok: boolean;
   chat_mode: string;
@@ -52,6 +61,13 @@ export interface ChatResult {
   indexed: boolean;
 }
 
+// Discriminated union mirroring the Rust `ChatStreamEvent` (internally tagged
+// on `event`): incremental `delta`s, a terminal `done`, or an `error`.
+export type ChatStreamEvent =
+  | { event: "delta"; delta: string }
+  | { event: "done"; reply: string; chatMode: string; indexed: boolean }
+  | { event: "error"; message: string };
+
 export const api = {
   listPapers: () => invoke<PaperInfo[]>("list_papers"),
   getPaper: (paperId: string) => invoke<PaperInfo>("get_paper", { paperId }),
@@ -59,6 +75,18 @@ export const api = {
   health: () => invoke<HealthInfo>("health"),
   chat: (sessionId: string, message: string) =>
     invoke<ChatResult>("chat", { sessionId, message }),
+  // Stream a chat turn: each token delta and the terminal event are delivered
+  // to `onEvent` via a Tauri Channel; the returned promise settles when the
+  // backend command finishes (or throws on a bridge/spawn failure).
+  chatStream: (
+    sessionId: string,
+    message: string,
+    onEvent: (event: ChatStreamEvent) => void,
+  ) => {
+    const channel = new Channel<ChatStreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("chat_stream", { sessionId, message, onEvent: channel });
+  },
   listSessions: () =>
     invoke<{ sessions: SessionInfo[] }>("list_sessions"),
   getMessages: (sessionId: string) =>
@@ -69,6 +97,18 @@ export const api = {
     invoke<{ enabled: boolean; matches: SearchMatch[]; reason?: string }>(
       "search",
       { query, limit, sessionId },
+    ),
+  // Rank indexed papers by semantic similarity via the Chroma `documents`
+  // collection (Python CLI). Returns enabled=false when chromadb is missing.
+  searchPapers: (query: string, limit?: number) =>
+    invoke<{ enabled: boolean; matches: PaperMatch[]; reason?: string }>(
+      "search_papers",
+      { query, limit },
+    ),
+  // Index (or re-index) every PDF in the papers directory into Chroma.
+  indexPapers: () =>
+    invoke<{ enabled: boolean; indexed: number; reason?: string }>(
+      "index_papers",
     ),
 };
 

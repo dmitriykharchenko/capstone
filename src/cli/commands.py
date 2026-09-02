@@ -1,0 +1,344 @@
+"""Command handlers for the CLI bridge.
+
+Each handler takes the parsed request and returns a JSON-serializable dict.
+Chat routes through the agent loop (persisting to SQLite and best-effort
+indexing to Chroma); sessions/messages port the read logic from the retired
+REST server; search queries the Chroma-backed chat-history index.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from typing import Any, Iterator
+
+from ..sqlite_history import SQLiteHistoryStore
+from .config import CLIConfig
+from .models import (
+    build_agent_loop,
+    build_history_store,
+    build_index,
+    build_paper_indexer,
+    build_paper_search_index,
+    chromadb_available,
+)
+
+
+def handle_health(config: CLIConfig) -> dict[str, Any]:
+    """Report chat mode, search availability, and resolved data locations."""
+
+    return {
+        "ok": True,
+        "chat_mode": "real" if config.has_api_key else "mock",
+        "search_enabled": chromadb_available(),
+        "database_path": str(config.database_path),
+        "papers_directory": str(config.papers_directory),
+        "chroma_directory": str(config.chroma_directory),
+    }
+
+
+def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+    """Run one chat turn for a session and return the assistant reply."""
+
+    session_id = _require_str(request.get("session_id"), "session_id")
+    message = _require_str(request.get("message"), "message")
+    store = build_history_store(config)
+    try:
+        index = build_index(config, store)
+        loop = build_agent_loop(config, store, index)
+        reply = loop.run(session_id, message)
+    finally:
+        store.close()
+    return {
+        "session_id": session_id,
+        "reply": reply,
+        "chat_mode": "real" if config.has_api_key else "mock",
+        "indexed": index is not None,
+    }
+
+
+def handle_chat_stream(
+    config: CLIConfig, request: dict[str, Any]
+) -> Iterator[dict[str, Any]]:
+    """Stream one chat turn, yielding ``{delta}`` events then a final ``{done}``.
+
+    Each yielded dict is emitted as its own JSON line by the bridge entrypoint.
+    The terminating event carries the full reply and metadata so the caller can
+    reconcile the streamed text with the authoritative persisted answer.
+    """
+
+    session_id = _require_str(request.get("session_id"), "session_id")
+    message = _require_str(request.get("message"), "message")
+    store = build_history_store(config)
+    try:
+        index = build_index(config, store)
+        loop = build_agent_loop(config, store, index)
+        parts: list[str] = []
+        for delta in loop.stream(session_id, message):
+            parts.append(delta)
+            yield {"delta": delta}
+        yield {
+            "ok": True,
+            "done": True,
+            "session_id": session_id,
+            "reply": "".join(parts),
+            "chat_mode": "real" if config.has_api_key else "mock",
+            "indexed": index is not None,
+        }
+    finally:
+        store.close()
+
+
+def handle_sessions(config: CLIConfig) -> dict[str, Any]:
+    """Return every known session with message and exchange counts."""
+
+    path = config.database_path
+    if not path.exists():
+        return {"sessions": []}
+    connection = sqlite3.connect(str(path))
+    try:
+        if not _table_exists(connection, "messages"):
+            return {"sessions": []}
+        message_counts = dict(
+            connection.execute(
+                "SELECT session_id, COUNT(*) FROM messages GROUP BY session_id"
+            ).fetchall()
+        )
+        exchange_counts: dict[str, int] = {}
+        if _table_exists(connection, "exchanges"):
+            exchange_counts = dict(
+                connection.execute(
+                    "SELECT session_id, COUNT(*) FROM exchanges GROUP BY session_id"
+                ).fetchall()
+            )
+    finally:
+        connection.close()
+    sessions = [
+        {
+            "session_id": session_id,
+            "message_count": int(count),
+            "exchange_count": int(exchange_counts.get(session_id, 0)),
+        }
+        for session_id, count in sorted(message_counts.items())
+    ]
+    return {"sessions": sessions}
+
+
+def handle_messages(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+    """Return the ordered transcript for one session (empty if unknown)."""
+
+    session_id = _require_str(request.get("session_id"), "session_id")
+    path = config.database_path
+    if not path.exists():
+        return {"session_id": session_id, "messages": []}
+    with SQLiteHistoryStore(path) as store:
+        records = store.get_messages(session_id)
+    return {
+        "session_id": session_id,
+        "messages": [
+            {"role": record.role, "content": record.content} for record in records
+        ],
+    }
+
+
+def handle_search(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+    """Return chat-history exchanges ranked by semantic similarity."""
+
+    query = _require_str(request.get("query"), "query")
+    limit = request.get("limit", 5)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        limit = 5
+    session_id = request.get("session_id")
+    if session_id is not None and (
+        not isinstance(session_id, str) or not session_id.strip()
+    ):
+        session_id = None
+    store = build_history_store(config)
+    try:
+        index = build_index(config, store)
+        if index is None:
+            return {
+                "enabled": False,
+                "matches": [],
+                "reason": "chromadb not installed or index unavailable",
+            }
+        records = index.search(query, n_results=limit, session_id=session_id)
+        matches = [
+            {
+                "exchange_id": record.exchange_id,
+                "session_id": record.session_id,
+                "user_message": record.user_message.content,
+                "assistant_message": record.assistant_message.content,
+            }
+            for record in records
+        ]
+    finally:
+        store.close()
+    return {"enabled": True, "matches": matches}
+
+
+def handle_index_papers(config: CLIConfig) -> dict[str, Any]:
+    """Index (or replace) every PDF in the papers directory into Chroma."""
+
+    if not chromadb_available():
+        return {
+            "enabled": False,
+            "indexed": 0,
+            "papers": [],
+            "reason": "chromadb not installed or index unavailable",
+        }
+    indexer = build_paper_indexer(config)
+    if indexer is None:
+        return {
+            "enabled": False,
+            "indexed": 0,
+            "papers": [],
+            "reason": "paper indexer unavailable",
+        }
+    try:
+        report = indexer.index_directory()
+    except NotADirectoryError as exc:
+        return {"enabled": True, "indexed": 0, "papers": [], "reason": str(exc)}
+    papers = [
+        {
+            "paper_id": outcome.paper_id,
+            "filename": outcome.filename,
+            "status": outcome.status,
+            "chunk_count": outcome.chunk_count,
+            "error": outcome.error,
+        }
+        for outcome in report.outcomes
+    ]
+    indexed = sum(1 for outcome in report.outcomes if outcome.status == "indexed")
+    return {"enabled": True, "indexed": indexed, "papers": papers}
+
+
+def handle_index_papers_stream(config: CLIConfig) -> Iterator[dict[str, Any]]:
+    """Stream determinate progress while indexing the configured PDF directory."""
+
+    indexer = build_paper_indexer(config)
+    if indexer is None:
+        raise RuntimeError("paper indexer unavailable")
+
+    counts = {"indexed": 0, "empty": 0, "failed": 0}
+    total = 0
+    completed = 0
+    for progress in indexer.iter_directory():
+        total = progress.total
+        completed = progress.completed
+        outcome = progress.outcome
+        if outcome is None:
+            yield {"event": "start", "completed": 0, "total": total}
+            continue
+        counts[outcome.status] += 1
+        yield {
+            "event": "progress",
+            "completed": completed,
+            "total": total,
+            "paper_id": outcome.paper_id,
+            "filename": outcome.filename,
+            "status": outcome.status,
+            "chunk_count": outcome.chunk_count,
+            "error": outcome.error,
+        }
+    yield {
+        "ok": True,
+        "event": "done",
+        "completed": completed,
+        "total": total,
+        **counts,
+    }
+
+
+def handle_search_papers(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+    """Return indexed papers ranked by semantic similarity to a query.
+
+    When the papers collection is empty (nothing indexed yet), the directory is
+    indexed lazily on first use so search works without a manual step.
+    """
+
+    query = _require_str(request.get("query"), "query")
+    limit = request.get("limit", 5)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        limit = 5
+    if not chromadb_available():
+        return {
+            "enabled": False,
+            "matches": [],
+            "reason": "chromadb not installed or index unavailable",
+        }
+    index = build_paper_search_index(config)
+    if index is None:
+        return {
+            "enabled": False,
+            "matches": [],
+            "reason": "paper search index unavailable",
+        }
+    if index.count() == 0:
+        return {
+            "enabled": True,
+            "matches": [],
+            "reason": "no papers indexed yet; run indexing first",
+        }
+    try:
+        matches = index.search(query, n_results=limit)
+    except Exception as exc:  # noqa: BLE001 - surfaced to the caller as a reason
+        return {"enabled": True, "matches": [], "reason": str(exc)}
+    return {
+        "enabled": True,
+        "matches": [
+            {
+                "paper_id": match.paper_id,
+                "title": match.title,
+                "filename": match.filename,
+                "page": match.page,
+                "snippet": match.snippet,
+                "score": match.score,
+            }
+            for match in matches
+        ],
+    }
+
+
+def dispatch(command: Any, config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+    """Route ``command`` to its handler, raising ``ValueError`` when unknown."""
+
+    handlers = {
+        "health": lambda: handle_health(config),
+        "chat": lambda: handle_chat(config, request),
+        "sessions": lambda: handle_sessions(config),
+        "messages": lambda: handle_messages(config, request),
+        "search": lambda: handle_search(config, request),
+        "search_papers": lambda: handle_search_papers(config, request),
+        "index_papers": lambda: handle_index_papers(config),
+    }
+    handler = handlers.get(command)
+    if handler is None:
+        raise ValueError(f"unknown command {command!r}")
+    return handler()
+
+
+def _require_str(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} is required and must be a non-empty string")
+    return value
+
+
+def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+__all__ = [
+    "dispatch",
+    "handle_chat",
+    "handle_chat_stream",
+    "handle_health",
+    "handle_index_papers",
+    "handle_index_papers_stream",
+    "handle_messages",
+    "handle_search",
+    "handle_search_papers",
+    "handle_sessions",
+]

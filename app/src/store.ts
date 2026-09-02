@@ -10,12 +10,15 @@ import { papersReducer } from "./slices/papers/papers-slice";
 import { papersSaga } from "./slices/papers/sagas/papers-saga";
 import { searchReducer } from "./slices/search/search-slice";
 import { searchSaga } from "./slices/search/sagas/search-saga";
+import { paperSearchReducer } from "./slices/paper-search/paper-search-slice";
+import { paperSearchSaga } from "./slices/paper-search/sagas/paper-search-saga";
 
 const reducers = {
   chat: chatReducer,
   sessions: sessionsReducer,
   papers: papersReducer,
   search: searchReducer,
+  paperSearch: paperSearchReducer,
 };
 
 // Single application store instance. Selectors are created against it at module
@@ -28,4 +31,10 @@ export type AppStore = typeof store;
 
 // Every app saga; started explicitly after `store.init()` (the package saga
 // manager does not auto-start app sagas).
-export const appSagas = [chatSaga, sessionsSaga, papersSaga, searchSaga];
+export const appSagas = [
+  chatSaga,
+  sessionsSaga,
+  papersSaga,
+  searchSaga,
+  paperSearchSaga,
+];
