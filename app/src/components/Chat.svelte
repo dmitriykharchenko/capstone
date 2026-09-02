@@ -10,8 +10,7 @@
   } from "../slices/chat/chat-selectors";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { selectSessions } from "../slices/sessions/sessions-selectors";
-  import { sendMessage, setSessionId, loadSession } from "../slices/chat/chat-slice";
-  import { loadSessions } from "../slices/sessions/sessions-slice";
+  import { createSession, selectSession, sendMessage } from "../slices/chat/chat-slice";
   import { Button } from "$lib/components/ui/button";
   import { Textarea } from "$lib/components/ui/textarea";
   import { Badge } from "$lib/components/ui/badge";
@@ -76,17 +75,15 @@
     if (!value) {
       return;
     }
-    store.dispatch(setSessionId(value));
-    store.dispatch(loadSession(value));
-    store.dispatch(loadSessions());
+    store.dispatch(selectSession(value));
   }
 
   function newSession() {
-    store.dispatch(setSessionId(`session-${crypto.randomUUID()}`));
+    store.dispatch(createSession());
   }
 </script>
 
-<div class="flex h-full flex-col gap-3">
+<div class="relative flex h-full min-h-0 flex-col gap-3">
   <div class="flex items-center gap-3">
     <Select type="single" value={$sessionId} onValueChange={switchSession}>
       <SelectTrigger class="w-[240px]">
@@ -108,9 +105,10 @@
 
   <Card class="min-h-0 flex-1 gap-0 py-0">
     <ScrollArea class="h-full">
-      <div class="flex flex-col gap-3 p-4">
+      <div class="flex flex-col gap-3 p-4 pb-72">
         {#each $messages as m, i}
           <div
+            data-exchange-id={m.exchange_id}
             class={cn(
               "flex max-w-[80%] flex-col gap-1 rounded-lg px-3 py-2",
               m.role === "user"
@@ -167,15 +165,22 @@
     </ScrollArea>
   </Card>
 
-  <form class="flex flex-col gap-2" onsubmit={submit}>
+  <form
+    class="absolute inset-x-0 bottom-0 z-10 border-t border-border/60 bg-background/50 p-4 backdrop-blur-md"
+    onsubmit={submit}
+  >
     <Textarea
-      class="max-h-60 min-h-28 w-full resize-none"
+      class="max-h-60 min-h-28 w-full resize-none pr-20 pb-16"
       rows={3}
       placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
       bind:value={text}
       disabled={$pending}
       onkeydown={onKeydown}
     />
-    <Button type="submit" class="self-end" disabled={$pending || !text.trim()}>Send</Button>
+    <Button
+      type="submit"
+      class="absolute right-7 bottom-7 z-10"
+      disabled={$pending || !text.trim()}
+    >Send</Button>
   </form>
 </div>
