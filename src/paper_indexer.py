@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 from .chroma_persistence import (
     DEFAULT_COLLECTION_NAME,
@@ -51,6 +51,19 @@ class PaperIndexReport:
 
     papers_directory: Path
     outcomes: tuple[PaperIndexOutcome, ...]
+
+
+@dataclass(frozen=True)
+class PaperIndexProgress:
+    """One determinate directory-indexing progress update.
+
+    The first update has ``completed == 0`` and no outcome. Each subsequent
+    update contains the outcome for exactly one paper.
+    """
+
+    completed: int
+    total: int
+    outcome: PaperIndexOutcome | None = None
 
 
 def _pdf_reader_factory(path: Path) -> Any:
@@ -212,8 +225,8 @@ class PaperIndexer:
         upsert_records(self.collection, ids, chunks, embeddings, metadatas)
         return PaperIndexOutcome(paper_id, path.name, "indexed", len(chunks))
 
-    def index_directory(self) -> PaperIndexReport:
-        """Index top-level PDFs in filename order, isolating paper failures."""
+    def iter_directory(self) -> Iterator[PaperIndexProgress]:
+        """Yield a start update then one outcome per top-level PDF."""
 
         directory = self.papers_directory
         if not directory.is_dir():
@@ -226,20 +239,29 @@ class PaperIndexer:
             ),
             key=lambda path: (path.name.casefold(), path.name),
         )
-        outcomes: list[PaperIndexOutcome] = []
-        for path in pdfs:
+        total = len(pdfs)
+        yield PaperIndexProgress(0, total)
+        for completed, path in enumerate(pdfs, start=1):
             try:
-                outcomes.append(self.index_paper(path))
+                outcome = self.index_paper(path)
             except Exception as exc:
-                outcomes.append(
-                    PaperIndexOutcome(
-                        path.stem,
-                        path.name,
-                        "failed",
-                        error=f"{type(exc).__name__}: {exc}",
-                    )
+                outcome = PaperIndexOutcome(
+                    path.stem,
+                    path.name,
+                    "failed",
+                    error=f"{type(exc).__name__}: {exc}",
                 )
-        return PaperIndexReport(directory, tuple(outcomes))
+            yield PaperIndexProgress(completed, total, outcome)
+
+    def index_directory(self) -> PaperIndexReport:
+        """Index top-level PDFs in filename order, isolating paper failures."""
+
+        outcomes = [
+            progress.outcome
+            for progress in self.iter_directory()
+            if progress.outcome is not None
+        ]
+        return PaperIndexReport(self.papers_directory, tuple(outcomes))
 
 
 def index_papers_directory(
@@ -257,6 +279,7 @@ __all__ = [
     "ExtractedPage",
     "PDFExtractionError",
     "PaperIndexOutcome",
+    "PaperIndexProgress",
     "PaperIndexReport",
     "PaperIndexer",
     "extract_pdf_pages",

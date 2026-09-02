@@ -155,6 +155,31 @@ def test_directory_scan_is_top_level_sorted_and_isolates_failures(tmp_path):
     assert len(collection.upserts) == 2
 
 
+def test_directory_iterator_reports_determinate_progress_and_failures(tmp_path):
+    touch_pdf(tmp_path, "b.pdf")
+    touch_pdf(tmp_path, "A.pdf")
+    indexer = PaperIndexer(
+        tmp_path,
+        collection=FakeCollection(),
+        extractor=lambda path: (
+            (_ for _ in ()).throw(RuntimeError("unreadable"))
+            if path.name == "b.pdf"
+            else [ExtractedPage(1, "content")]
+        ),
+        embedder=lambda text: [1.0],
+    )
+
+    progress = list(indexer.iter_directory())
+
+    assert [(item.completed, item.total) for item in progress] == [(0, 2), (1, 2), (2, 2)]
+    assert progress[0].outcome is None
+    assert progress[1].outcome.filename == "A.pdf"
+    assert progress[1].outcome.status == "indexed"
+    assert progress[2].outcome.filename == "b.pdf"
+    assert progress[2].outcome.status == "failed"
+    assert progress[2].outcome.error == "RuntimeError: unreadable"
+
+
 def test_injected_client_opens_existing_paper_collection(tmp_path):
     collection = FakeCollection()
     client = SimpleNamespace(
