@@ -106,7 +106,7 @@
 
 <div class="grid h-full grid-cols-[320px_1fr] gap-4">
   <Card class="min-h-0 gap-0 overflow-hidden py-0">
-    <form class="flex gap-2 border-b p-2" onsubmit={submitSearch}>
+    <form class="flex gap-2 border-b bg-transparent px-4 py-2" onsubmit={submitSearch}>
       <Input
         class="flex-1"
         placeholder="Search papers…"
@@ -129,7 +129,7 @@
     </form>
 
     <div
-      class="flex flex-col gap-1 border-b px-2 py-1.5 text-xs"
+      class="flex flex-col gap-1 border-b bg-transparent px-4 py-1.5 text-xs"
       aria-live="polite"
       aria-atomic="true"
     >
@@ -190,7 +190,7 @@
     </div>
 
     <ScrollArea class="min-h-0 flex-1">
-      <div class="flex flex-col gap-1 p-2">
+      <div class="flex flex-col gap-1 p-4">
         {#if $searchError}
           <p class="p-2 text-sm text-destructive">{$searchError}</p>
         {/if}

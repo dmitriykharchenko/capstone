@@ -84,10 +84,16 @@
 </script>
 
 <div class="relative flex h-full min-h-0 flex-col gap-3">
-  <div class="flex items-center gap-3">
+  <div class="flex items-center gap-3 bg-transparent px-4">
     <Select type="single" value={$sessionId} onValueChange={switchSession}>
-      <SelectTrigger class="w-[240px]">
-        {$sessionId ? sessionLabel($sessionId) : "Select session"}
+      <SelectTrigger
+        class="w-[320px] max-w-full"
+        aria-label={$sessionId ? sessionLabel($sessionId) : "Select session"}
+        title={$sessionId ? sessionLabel($sessionId) : "Select session"}
+      >
+        <span class="min-w-0 truncate">
+          {$sessionId ? sessionLabel($sessionId) : "Select session"}
+        </span>
       </SelectTrigger>
       <SelectContent>
         {#each sessionIds as id}
