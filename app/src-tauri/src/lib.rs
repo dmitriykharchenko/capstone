@@ -338,6 +338,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    fn executable_script(contents: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("capstone-index-stream-{suffix}.sh"));
+        fs::write(&path, contents).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
 
     #[test]
     fn maps_and_serializes_paper_progress_event() {
@@ -384,5 +404,62 @@ mod tests {
                 message: "python failed".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn maps_malformed_progress_event_to_error() {
+        let malformed = paper_index_stream_event(&serde_json::json!({
+            "event": "progress",
+            "completed": 1,
+            "total": 2,
+            "paper_id": "paper-a",
+        }));
+
+        assert_eq!(
+            malformed,
+            PaperIndexStreamEvent::Error {
+                message: "invalid paper indexing progress event".to_string(),
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forwards_nonzero_bridge_failure_to_channel_error() {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let script = executable_script(
+            "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"start\",\"completed\":0,\"total\":0}'\nprintf '%s\\n' 'process failed' >&2\nexit 17\n",
+        );
+        let previous = std::env::var_os("CAPSTONE_PYTHON");
+        std::env::set_var("CAPSTONE_PYTHON", &script);
+        let received = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let received_clone = Arc::clone(&received);
+        let channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                received_clone
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&json).unwrap());
+            }
+            Ok(())
+        });
+
+        let result = index_papers_stream(channel);
+        match previous {
+            Some(value) => std::env::set_var("CAPSTONE_PYTHON", value),
+            None => std::env::remove_var("CAPSTONE_PYTHON"),
+        }
+        let _ = fs::remove_file(script);
+
+        let error = result.expect_err("non-zero bridge process must fail");
+        assert!(error.to_string().contains("python exited"));
+        let events = received.lock().unwrap();
+        assert_eq!(events[0]["event"], "start");
+        assert_eq!(events[1]["event"], "error");
+        assert!(events[1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("python exited"));
     }
 }
