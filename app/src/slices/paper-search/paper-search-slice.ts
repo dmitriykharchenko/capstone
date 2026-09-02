@@ -3,6 +3,7 @@ import { createReducer } from "@augmentcode/themis/utils/store/create-reducer";
 import type { StoreAction, StoreReducerFunction } from "@augmentcode/themis/types";
 import type { PaperMatch } from "../../lib/api";
 import {
+  paperSearchId,
   initialPaperSearchState,
   type PaperSearchState,
 } from "./paper-search-types";
@@ -12,7 +13,7 @@ export const paperSearchStarted = createAction<[query: string]>(
   "paperSearch/started",
 );
 export const paperSearchSucceeded = createAction<
-  [matches: PaperMatch[], enabled: boolean, reason: string | null]
+  [query: string, results: PaperMatch[], enabled: boolean, reason: string | null]
 >("paperSearch/succeeded");
 export const paperSearchFailed = createAction<[error: string]>(
   "paperSearch/failed",
@@ -34,15 +35,21 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
       paperSearchSucceeded,
       (
         state: PaperSearchState,
-        action: StoreAction<[PaperMatch[], boolean, string | null]>,
-      ) => ({
-        ...state,
-        searching: false,
-        hasSearched: true,
-        matches: action.payload[0],
-        enabled: action.payload[1],
-        reason: action.payload[2],
-      }),
+        action: StoreAction<[string, PaperMatch[], boolean, string | null]>,
+      ) => {
+        const id = paperSearchId(action.payload[0]);
+        return {
+          ...state,
+          searching: false,
+          hasSearched: true,
+          collections: {
+            ...state.collections,
+            [id]: { id, results: action.payload[1] },
+          },
+          enabled: action.payload[2],
+          reason: action.payload[3],
+        };
+      },
     )
     .with(
       paperSearchFailed,
@@ -53,4 +60,7 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
         error: action.payload[0],
       }),
     )
-    .with(clearPaperSearch, () => initialPaperSearchState);
+    .with(clearPaperSearch, (state: PaperSearchState) => ({
+      ...initialPaperSearchState,
+      collections: state.collections,
+    }));

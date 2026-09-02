@@ -1,10 +1,20 @@
 import { store } from "../../store";
+import { paperSearchId } from "./paper-search-types";
 
 export const selectPaperSearchQuery = store.createSelector(
   (state) => state.paperSearch.query,
 );
 export const selectPaperSearchMatches = store.createSelector(
-  (state) => state.paperSearch.matches,
+  (state) => {
+    const route = state.router.activeRoute;
+    if (route.name !== "papers") {
+      return [];
+    }
+    return state.paperSearch.collections[paperSearchId(route.query ?? "")]?.results ?? [];
+  },
+);
+export const selectPaperSearchCollections = store.createSelector(
+  (state) => state.paperSearch.collections,
 );
 export const selectPaperSearching = store.createSelector(
   (state) => state.paperSearch.searching,

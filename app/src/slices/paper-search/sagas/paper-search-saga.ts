@@ -1,6 +1,6 @@
 import { all, call, put, select, takeLatest } from "typed-redux-saga";
 import { api } from "../../../lib/api";
-import { navigateTo, routeChanged } from "../../router/router-slice";
+import { navigateTo, replaceWith, routeChanged } from "../../router/router-slice";
 import {
   clearPaperSearch,
   runPaperSearch,
@@ -35,7 +35,7 @@ export function* paperSearchSaga() {
       const query = route.query?.trim() ?? "";
       if (query !== (route.query ?? "")) {
         yield* put(
-          navigateTo(query ? { name: "papers", query } : { name: "papers" }),
+          replaceWith(query ? { name: "papers", query } : { name: "papers" }),
         );
         return;
       }
@@ -48,6 +48,7 @@ export function* paperSearchSaga() {
         const result = yield* call(api.searchPapers, query, 8);
         yield* put(
           paperSearchSucceeded(
+            query,
             result.matches,
             result.enabled,
             result.reason ?? null,

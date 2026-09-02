@@ -1,8 +1,19 @@
 import type { PaperMatch } from "../../lib/api";
 
+export const PAPERS_SEARCH_PREFIX = "PAPERS_SEARCH";
+
+export function paperSearchId(query: string): string {
+  return `${PAPERS_SEARCH_PREFIX}:${query.trim()}`;
+}
+
+export interface PaperSearchCollection {
+  id: string;
+  results: PaperMatch[];
+}
+
 export interface PaperSearchState {
   query: string;
-  matches: PaperMatch[];
+  collections: Record<string, PaperSearchCollection>;
   searching: boolean;
   enabled: boolean;
   reason: string | null;
@@ -12,7 +23,7 @@ export interface PaperSearchState {
 
 export const initialPaperSearchState: PaperSearchState = {
   query: "",
-  matches: [],
+  collections: {},
   searching: false,
   enabled: true,
   reason: null,

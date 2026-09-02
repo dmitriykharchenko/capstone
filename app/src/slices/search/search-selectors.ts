@@ -1,10 +1,20 @@
 import { store } from "../../store";
+import { chatHistorySearchId } from "./search-types";
 
 export const selectSearchQuery = store.createSelector(
   (state) => state.search.query,
 );
 export const selectSearchMatches = store.createSelector(
-  (state) => state.search.matches,
+  (state) => {
+    const route = state.router.activeRoute;
+    if (route.name !== "history") {
+      return [];
+    }
+    return state.search.collections[chatHistorySearchId(route.query ?? "")]?.results ?? [];
+  },
+);
+export const selectSearchCollections = store.createSelector(
+  (state) => state.search.collections,
 );
 export const selectSearching = store.createSelector(
   (state) => state.search.searching,

@@ -14,6 +14,7 @@ let paperSearchSaga;
 let runSearch;
 let runPaperSearch;
 let routeChanged;
+let replaceWith;
 
 before(async () => {
   vite = await createServer({
@@ -33,7 +34,7 @@ before(async () => {
   ({ runPaperSearch } = await vite.ssrLoadModule(
     "/src/slices/paper-search/paper-search-slice.ts",
   ));
-  ({ routeChanged } = await vite.ssrLoadModule(
+  ({ routeChanged, replaceWith } = await vite.ssrLoadModule(
     "/src/slices/router/router-slice.ts",
   ));
 });
@@ -108,6 +109,10 @@ test("route changes clear, canonicalize, and take only the latest history result
 
   running.channel.put(routeChanged({ name: "history", query: "  spaced  " }));
   await settle();
+  assert.deepEqual(running.actions[0], replaceWith({
+    name: "history",
+    query: "spaced",
+  }));
   assert.deepEqual(running.actions[0].payload[0], {
     name: "history",
     query: "spaced",
@@ -124,7 +129,7 @@ test("route changes clear, canonicalize, and take only the latest history result
   await settle();
   const successes = running.actions.filter((action) => action.type === "search/succeeded");
   assert.equal(successes.length, 1);
-  assert.equal(successes[0].payload[0][0].exchange_id, 2);
+  assert.equal(successes[0].payload[1][0].exchange_id, 2);
 
   running.channel.put(routeChanged({ name: "history" }));
   await settle();
@@ -150,6 +155,12 @@ test("paper intents and route changes preserve the paper search limit and errors
     name: "papers",
     query: "vector/graph",
   });
+  running.channel.put(routeChanged({ name: "papers", query: "  vector/graph  " }));
+  await settle();
+  assert.deepEqual(
+    running.actions.at(-1),
+    replaceWith({ name: "papers", query: "vector/graph" }),
+  );
   running.channel.put(routeChanged({ name: "papers", query: "vector/graph" }));
   await settle();
   assert.equal(running.actions.at(-1).type, "paperSearch/failed");
@@ -168,7 +179,7 @@ test("search components dispatch intents without owning APIs or browser history"
   ]);
   assert.match(history, /selectActiveRoute/);
   assert.match(history, /sessionId: match\.session_id/);
-  assert.match(history, /exchangeId: String\(match\.exchange_id\)/);
+  assert.match(history, /exchangeId: match\.exchange_id/);
   assert.match(papers, /selectActiveRoute/);
   assert.match(papers, /runPaperSearch\(""\)/);
   for (const component of [history, papers]) {

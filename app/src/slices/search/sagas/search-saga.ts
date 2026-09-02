@@ -1,6 +1,6 @@
 import { all, call, put, select, takeLatest } from "typed-redux-saga";
 import { api } from "../../../lib/api";
-import { navigateTo, routeChanged } from "../../router/router-slice";
+import { navigateTo, replaceWith, routeChanged } from "../../router/router-slice";
 import {
   clearSearch,
   runSearch,
@@ -35,7 +35,7 @@ export function* searchSaga() {
       const query = route.query?.trim() ?? "";
       if (query !== (route.query ?? "")) {
         yield* put(
-          navigateTo(query ? { name: "history", query } : { name: "history" }),
+          replaceWith(query ? { name: "history", query } : { name: "history" }),
         );
         return;
       }
@@ -47,7 +47,7 @@ export function* searchSaga() {
       try {
         const result = yield* call(api.search, query, 5);
         yield* put(
-          searchSucceeded(result.matches, result.enabled, result.reason ?? null),
+          searchSucceeded(query, result.matches, result.enabled, result.reason ?? null),
         );
       } catch (error) {
         yield* put(searchFailed(String(error)));
