@@ -9,6 +9,9 @@
     selectHasSearched,
   } from "../slices/search/search-selectors";
   import { runSearch } from "../slices/search/search-slice";
+  import { selectActiveRoute } from "../slices/router/router-selectors";
+  import { navigateTo } from "../slices/router/router-slice";
+  import type { SearchMatch } from "../lib/api";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
@@ -21,8 +24,13 @@
   const reason = selectSearchReason();
   const error = selectSearchError();
   const hasSearched = selectHasSearched();
+  const activeRoute = selectActiveRoute();
 
   let query = $state("");
+
+  $effect(() => {
+    query = $activeRoute.name === "history" ? ($activeRoute.query ?? "") : "";
+  });
 
   function submit(event: Event) {
     event.preventDefault();
@@ -30,6 +38,27 @@
       return;
     }
     store.dispatch(runSearch(query));
+  }
+
+  function clearResults() {
+    store.dispatch(runSearch(""));
+  }
+
+  function openMatch(match: SearchMatch) {
+    store.dispatch(
+      navigateTo({
+        name: "chat",
+        sessionId: match.session_id,
+        exchangeId: String(match.exchange_id),
+      }),
+    );
+  }
+
+  function openMatchFromKeyboard(event: KeyboardEvent, match: SearchMatch) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openMatch(match);
+    }
   }
 </script>
 
@@ -49,6 +78,9 @@
         Search
       {/if}
     </Button>
+    {#if $activeRoute.name === "history" && $activeRoute.query}
+      <Button type="button" variant="ghost" onclick={clearResults}>Clear</Button>
+    {/if}
   </form>
 
   {#if $error}
@@ -73,7 +105,13 @@
         </div>
       {/if}
       {#each $matches as match}
-        <Card>
+        <Card
+          class="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring"
+          role="link"
+          tabindex={0}
+          onclick={() => openMatch(match)}
+          onkeydown={(event) => openMatchFromKeyboard(event, match)}
+        >
           <CardContent>
             <div class="font-mono text-xs uppercase text-muted-foreground">
               session {match.session_id} · exchange {match.exchange_id}

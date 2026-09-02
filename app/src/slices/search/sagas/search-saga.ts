@@ -1,6 +1,8 @@
-import { call, put, takeLatest } from "typed-redux-saga";
+import { all, call, put, select, takeLatest } from "typed-redux-saga";
 import { api } from "../../../lib/api";
+import { navigateTo, routeChanged } from "../../router/router-slice";
 import {
+  clearSearch,
   runSearch,
   searchFailed,
   searchStarted,
@@ -11,19 +13,45 @@ import {
 // (Python CLI). When chromadb is unavailable the CLI returns enabled=false, which
 // the reducer surfaces so the UI can explain search is disabled.
 export function* searchSaga() {
-  yield* takeLatest(runSearch, function* (action) {
-    const query = action.payload[0];
-    if (!query.trim()) {
-      return;
-    }
-    yield* put(searchStarted(query));
-    try {
-      const result = yield* call(api.search, query, 5);
-      yield* put(
-        searchSucceeded(result.matches, result.enabled, result.reason ?? null),
-      );
-    } catch (error) {
-      yield* put(searchFailed(String(error)));
-    }
-  });
+  yield* all([
+    takeLatest(runSearch, function* (action) {
+      const query = action.payload[0].trim();
+      const state = yield* select((current) => current);
+      const activeRoute = state.router.activeRoute;
+      if (
+        activeRoute.name === "history" &&
+        (activeRoute.query ?? "") === query &&
+        state.search.error === null
+      ) {
+        return;
+      }
+      yield* put(navigateTo(query ? { name: "history", query } : { name: "history" }));
+    }),
+    takeLatest(routeChanged, function* (action) {
+      const route = action.payload[0];
+      if (route.name !== "history") {
+        return;
+      }
+      const query = route.query?.trim() ?? "";
+      if (query !== (route.query ?? "")) {
+        yield* put(
+          navigateTo(query ? { name: "history", query } : { name: "history" }),
+        );
+        return;
+      }
+      if (!query) {
+        yield* put(clearSearch());
+        return;
+      }
+      yield* put(searchStarted(query));
+      try {
+        const result = yield* call(api.search, query, 5);
+        yield* put(
+          searchSucceeded(result.matches, result.enabled, result.reason ?? null),
+        );
+      } catch (error) {
+        yield* put(searchFailed(String(error)));
+      }
+    }),
+  ]);
 }

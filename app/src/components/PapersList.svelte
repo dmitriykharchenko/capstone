@@ -27,10 +27,8 @@
     selectPaperSearchError,
     selectPaperHasSearched,
   } from "../slices/paper-search/paper-search-selectors";
-  import {
-    runPaperSearch,
-    clearPaperSearch,
-  } from "../slices/paper-search/paper-search-slice";
+  import { runPaperSearch } from "../slices/paper-search/paper-search-slice";
+  import { selectActiveRoute } from "../slices/router/router-selectors";
   import PdfViewer from "./PdfViewer.svelte";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import { Button } from "$lib/components/ui/button";
@@ -58,8 +56,13 @@
   const indexCurrentStatus = selectPaperIndexCurrentStatus();
   const indexFailedCount = selectPaperIndexFailedCount();
   const indexEmptyCount = selectPaperIndexEmptyCount();
+  const activeRoute = selectActiveRoute();
 
   let query = $state("");
+
+  $effect(() => {
+    query = $activeRoute.name === "papers" ? ($activeRoute.query ?? "") : "";
+  });
 
   // Determinate progress percentage while indexing (0 when total unknown).
   const indexPercent = $derived(
@@ -90,8 +93,7 @@
   }
 
   function clearResults() {
-    query = "";
-    store.dispatch(clearPaperSearch());
+    store.dispatch(runPaperSearch(""));
   }
 
   function indexPapers() {
