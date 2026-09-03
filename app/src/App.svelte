@@ -60,7 +60,7 @@
   >
     <div
       data-tauri-drag-region
-      class="absolute inset-x-0 top-0 z-20 flex h-[30px] items-center justify-between gap-4 bg-transparent pr-3 pl-20 backdrop-blur-md"
+      class="absolute inset-x-0 top-0 z-20 flex h-[38px] items-center justify-between gap-4 bg-transparent pr-3 pl-20 backdrop-blur-md"
     >
       <TabsList
         variant="line"
@@ -90,15 +90,15 @@
     </div>
 
     {#if $activeRoute.name === "chat"}
-      <TabsContent value="chat" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[30px] pb-0">
+      <TabsContent value="chat" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
         <Chat />
       </TabsContent>
     {:else if $activeRoute.name === "history"}
-      <TabsContent value="history" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[30px] pb-0">
+      <TabsContent value="history" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
         <HistorySearch />
       </TabsContent>
     {:else}
-      <TabsContent value="papers" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[30px] pb-0">
+      <TabsContent value="papers" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
         <PapersList />
       </TabsContent>
     {/if}

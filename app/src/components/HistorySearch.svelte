@@ -63,7 +63,7 @@
 </script>
 
 <div class="relative flex h-full min-h-0 flex-col gap-3 bg-transparent">
-  <form class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-transparent px-4 py-2 backdrop-blur-md" onsubmit={submit}>
+  <form class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-transparent px-4 py-3 backdrop-blur-md" onsubmit={submit}>
     <Input
       class="flex-1"
       placeholder="Search chat history…"
@@ -83,7 +83,7 @@
     {/if}
   </form>
 
-  <div class="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-12">
+  <div class="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-14">
     {#if $error}
       <p class="text-sm text-destructive">{$error}</p>
     {/if}
