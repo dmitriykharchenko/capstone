@@ -101,7 +101,7 @@
         {/each}
       </SelectContent>
     </Select>
-    <Button type="button" variant="outline" onclick={newSession} disabled={$pending}>
+    <Button type="button" variant="outline" size="lg" onclick={newSession} disabled={$pending}>
       New session
     </Button>
     {#if $chatMode}
@@ -185,6 +185,7 @@
     />
     <Button
       type="submit"
+      size="lg"
       class="absolute right-7 bottom-7 z-10"
       disabled={$pending || !text.trim()}
     >Send</Button>

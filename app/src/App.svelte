@@ -76,7 +76,7 @@
       </TabsList>
       <Button
         variant="ghost"
-        size="icon-sm"
+        size="icon-lg"
         onclick={toggleTheme}
         aria-label="Toggle theme"
         title="Toggle theme"

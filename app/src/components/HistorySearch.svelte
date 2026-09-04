@@ -70,7 +70,7 @@
       bind:value={query}
       disabled={$searching}
     />
-    <Button type="submit" disabled={$searching || !query.trim()}>
+    <Button type="submit" size="lg" disabled={$searching || !query.trim()}>
       {#if $searching}
         <LoaderCircle class="size-4 animate-spin" />
         Searching…
@@ -79,7 +79,7 @@
       {/if}
     </Button>
     {#if $activeRoute.name === "history" && $activeRoute.query}
-      <Button type="button" variant="ghost" onclick={clearResults}>Clear</Button>
+      <Button type="button" variant="ghost" size="lg" onclick={clearResults}>Clear</Button>
     {/if}
   </form>
 

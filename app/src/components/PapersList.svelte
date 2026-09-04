@@ -116,7 +116,7 @@
     <Button
       type="button"
       variant="ghost"
-      size="icon-sm"
+      size="icon-lg"
       onclick={toggleSidebar}
       aria-controls="papers-sidebar"
       aria-expanded={sidebarOpen}
@@ -136,7 +136,7 @@
         bind:value={query}
         disabled={$searching}
       />
-      <Button type="submit" size="sm" disabled={$searching || !query.trim()}>
+      <Button type="submit" size="lg" disabled={$searching || !query.trim()}>
         {#if $searching}
           <LoaderCircle class="size-4 animate-spin" />
           Searching…
@@ -145,7 +145,7 @@
         {/if}
       </Button>
       {#if $hasSearched}
-        <Button type="button" variant="ghost" size="sm" onclick={clearResults}>
+        <Button type="button" variant="ghost" size="lg" onclick={clearResults}>
           Clear
         </Button>
       {/if}
@@ -153,7 +153,7 @@
     <Button
       type="button"
       variant="outline"
-      size="sm"
+      size="lg"
       onclick={indexPapers}
       disabled={$indexing}
     >
