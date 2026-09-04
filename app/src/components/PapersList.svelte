@@ -165,7 +165,7 @@
   {#if sidebarOpen}
   <aside
     id="papers-sidebar"
-    class="absolute inset-y-0 left-0 z-20 flex w-[320px] min-h-0 flex-col overflow-hidden border-r border-border/50 bg-transparent pt-14 backdrop-blur-md"
+    class="absolute top-14 bottom-2 left-2 z-20 flex w-[320px] min-h-0 flex-col overflow-hidden rounded-xl border border-border/50 bg-transparent backdrop-blur-md"
   >
     <div
       class="flex flex-col gap-1 bg-transparent px-4 py-1.5 text-xs backdrop-blur-md"
