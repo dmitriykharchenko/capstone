@@ -98,7 +98,7 @@
         <HistorySearch />
       </TabsContent>
     {:else}
-      <TabsContent value="papers" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
+      <TabsContent value="papers" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-0 pt-[38px] pb-0">
         <PapersList />
       </TabsContent>
     {/if}

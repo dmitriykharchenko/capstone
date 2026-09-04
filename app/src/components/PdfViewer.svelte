@@ -4,14 +4,13 @@
     selectPdfLoading,
     selectSelectedPaperId,
   } from "../slices/papers/papers-selectors";
-  import { Card } from "$lib/components/ui/card";
 
   const pdfUrl = selectPdfUrl();
   const pdfLoading = selectPdfLoading();
   const selectedId = selectSelectedPaperId();
 </script>
 
-<Card class="flex h-full gap-0 overflow-hidden py-0">
+<div class="flex h-full w-full overflow-hidden">
   {#if $pdfLoading}
     <p class="m-auto text-sm text-muted-foreground">Loading PDF…</p>
   {:else if $pdfUrl}
@@ -25,4 +24,4 @@
       Select a paper to preview its PDF.
     </p>
   {/if}
-</Card>
+</div>

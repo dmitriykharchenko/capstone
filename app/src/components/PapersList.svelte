@@ -31,6 +31,8 @@
   import { selectActiveRoute } from "../slices/router/router-selectors";
   import PdfViewer from "./PdfViewer.svelte";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
+  import PanelLeftOpen from "@lucide/svelte/icons/panel-left-open";
   import { Button } from "$lib/components/ui/button";
   import { Card } from "$lib/components/ui/card";
   import { Input } from "$lib/components/ui/input";
@@ -59,6 +61,7 @@
   const activeRoute = selectActiveRoute();
 
   let query = $state("");
+  let sidebarOpen = $state(true);
 
   $effect(() => {
     query = $activeRoute.name === "papers" ? ($activeRoute.query ?? "") : "";
@@ -102,10 +105,30 @@
     }
     store.dispatch(runPaperIndex());
   }
+
+  function toggleSidebar() {
+    sidebarOpen = !sidebarOpen;
+  }
 </script>
 
 <div class="relative flex h-full min-h-0 flex-col gap-3">
-  <div class="absolute inset-x-0 top-0 z-20 flex items-center gap-3 bg-transparent px-4 py-3 backdrop-blur-md">
+  <div class="absolute inset-x-0 top-0 z-30 flex items-center gap-3 bg-transparent px-4 py-3 backdrop-blur-md">
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      onclick={toggleSidebar}
+      aria-controls="papers-sidebar"
+      aria-expanded={sidebarOpen}
+      aria-label={sidebarOpen ? "Hide papers sidebar" : "Show papers sidebar"}
+      title={sidebarOpen ? "Hide papers sidebar" : "Show papers sidebar"}
+    >
+      {#if sidebarOpen}
+        <PanelLeftClose class="size-4" />
+      {:else}
+        <PanelLeftOpen class="size-4" />
+      {/if}
+    </Button>
     <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
       <Input
         class="flex-1"
@@ -138,8 +161,12 @@
     </Button>
   </div>
 
-  <div class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4 pt-14">
-  <Card class="min-h-0 gap-0 overflow-hidden py-0">
+  <div class="absolute inset-0 min-h-0">
+  {#if sidebarOpen}
+  <aside
+    id="papers-sidebar"
+    class="absolute inset-y-0 left-0 z-20 flex w-[320px] min-h-0 flex-col overflow-hidden border-r border-border/50 bg-transparent pt-14 backdrop-blur-md"
+  >
     <div
       class="flex flex-col gap-1 bg-transparent px-4 py-1.5 text-xs backdrop-blur-md"
       aria-live="polite"
@@ -260,9 +287,10 @@
         {/if}
       </div>
     </ScrollArea>
-  </Card>
+  </aside>
+  {/if}
 
-  <div class="min-h-0">
+  <div class="absolute inset-0 min-h-0">
     <PdfViewer />
   </div>
   </div>
