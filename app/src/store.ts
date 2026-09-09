@@ -14,6 +14,8 @@ import { paperSearchReducer } from "./slices/paper-search/paper-search-slice";
 import { paperSearchSaga } from "./slices/paper-search/sagas/paper-search-saga";
 import { routerReducer } from "./slices/router/router-slice";
 import { routerSaga } from "./slices/router/sagas/router-saga";
+import { evaluationReducer } from "./slices/evaluation/evaluation-slice";
+import { evaluationSaga } from "./slices/evaluation/sagas/evaluation-saga";
 
 const reducers = {
   chat: chatReducer,
@@ -22,6 +24,7 @@ const reducers = {
   search: searchReducer,
   paperSearch: paperSearchReducer,
   router: routerReducer,
+  evaluation: evaluationReducer,
 };
 
 // Single application store instance. Selectors are created against it at module
@@ -41,4 +44,5 @@ export const appSagas = [
   searchSaga,
   paperSearchSaga,
   routerSaga,
+  evaluationSaga,
 ];

@@ -19,6 +19,7 @@ from typing import Any, Sequence
 from ..agent_loop import AgentLoop, ChatOpenAIConfig
 from ..chat_history_index import ChatHistoryIndex
 from ..embeddings import EmbeddingConfig
+from ..evaluation_runner import EvaluationRunner
 from ..paper_indexer import PaperIndexer
 from ..paper_search import PaperSearchIndex
 from ..sqlite_history import SQLiteHistoryStore
@@ -188,6 +189,26 @@ def build_paper_indexer(config: CLIConfig):
         return None
 
 
+def build_evaluation_runner(config: CLIConfig) -> EvaluationRunner:
+    """Build the stateless evaluation runner from backend-only configuration."""
+
+    retriever = build_paper_search_index(config)
+    if retriever is None:
+        raise RuntimeError("paper search index unavailable")
+    if config.has_api_key:
+        model = None
+        chat_config = ChatOpenAIConfig(
+            model=config.chat_model,
+            base_url=config.chat_base_url,
+            api_key=config.api_key,
+            max_tokens=config.chat_max_tokens,
+        )
+    else:
+        model = MockChatModel()
+        chat_config = None
+    return EvaluationRunner(retriever, model, config=chat_config)
+
+
 def build_agent_loop(
     config: CLIConfig, history_store, history_index, paper_retriever=None
 ) -> AgentLoop:
@@ -219,6 +240,7 @@ def build_agent_loop(
 __all__ = [
     "MockChatModel",
     "build_agent_loop",
+    "build_evaluation_runner",
     "build_history_store",
     "build_index",
     "build_paper_indexer",

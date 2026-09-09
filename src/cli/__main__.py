@@ -16,7 +16,12 @@ import json
 import sys
 from typing import Any
 
-from .commands import dispatch, handle_chat_stream, handle_index_papers_stream
+from .commands import (
+    dispatch,
+    handle_chat_stream,
+    handle_evaluation_stream,
+    handle_index_papers_stream,
+)
 from .config import CLIConfig, load_dotenv_if_present
 
 
@@ -43,6 +48,8 @@ def main() -> int:
         return _run_stream(handle_chat_stream(config, request))
     if request.get("command") == "index_papers" and request.get("stream"):
         return _run_stream(handle_index_papers_stream(config))
+    if request.get("command") == "evaluate" and request.get("stream"):
+        return _run_stream(handle_evaluation_stream(config, request))
     try:
         result = dispatch(request.get("command"), config, request)
     except Exception as exc:  # noqa: BLE001 - surfaced as JSON to the caller

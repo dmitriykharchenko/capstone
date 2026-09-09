@@ -4,6 +4,23 @@
 
 import { invoke, Channel } from "@tauri-apps/api/core";
 
+import type {
+  EvaluationRetrievalType,
+  EvaluationStreamEvent,
+  EvaluationTestCase,
+} from "./evaluation-types";
+
+export type {
+  EvaluationAggregateScores,
+  EvaluationCaseError,
+  EvaluationCaseResult,
+  EvaluationJudgeScores,
+  EvaluationRetrievalType,
+  EvaluationRetrievedChunk,
+  EvaluationStreamEvent,
+  EvaluationTestCase,
+} from "./evaluation-types";
+
 export interface PaperInfo {
   id: string;
   filename: string;
@@ -162,6 +179,19 @@ export const api = {
     const channel = new Channel<IndexStreamEvent>();
     channel.onmessage = onEvent;
     return invoke<void>("index_papers_stream", { onEvent: channel });
+  },
+  runEvaluation: (
+    retrievalType: EvaluationRetrievalType,
+    testCases: EvaluationTestCase[],
+    onEvent: (event: EvaluationStreamEvent) => void,
+  ) => {
+    const channel = new Channel<EvaluationStreamEvent>();
+    channel.onmessage = onEvent;
+    return invoke<void>("evaluate_stream", {
+      retrievalType,
+      testCases,
+      onEvent: channel,
+    });
   },
 };
 

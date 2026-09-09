@@ -7,9 +7,13 @@
 
 mod bridge;
 mod error;
+mod evaluation;
 mod papers;
 
 use error::CommandError;
+use evaluation::{
+    evaluation_stream_event, EvaluationRequestCase, EvaluationRetrievalType, EvaluationStreamEvent,
+};
 use papers::{PaperInfo, PaperRepository, PdfData};
 use serde_json::Value;
 use tauri::ipc::Channel;
@@ -351,6 +355,54 @@ async fn index_papers_stream(
     .await
 }
 
+#[tauri::command]
+async fn evaluate_stream(
+    retrieval_type: EvaluationRetrievalType,
+    test_cases: Vec<EvaluationRequestCase>,
+    on_event: Channel<EvaluationStreamEvent>,
+) -> Result<(), CommandError> {
+    if test_cases.is_empty() || test_cases.iter().any(|case| !case.validate()) {
+        return Err(CommandError::Bridge(
+            "test cases must be a non-empty array of valid cases".to_string(),
+        ));
+    }
+    let root = project_root();
+    run_blocking(move || {
+        let request = serde_json::json!({
+            "command": "evaluate",
+            "stream": true,
+            "retrieval_type": retrieval_type,
+            "test_cases": test_cases,
+        });
+        let mut terminal_event_seen = false;
+        let result = bridge::call_streaming(&root, request, |value| {
+            let event = evaluation_stream_event(value);
+            terminal_event_seen |= matches!(
+                event,
+                EvaluationStreamEvent::Complete { .. } | EvaluationStreamEvent::Error { .. }
+            );
+            let _ = on_event.send(event);
+        });
+        if let Err(error) = result {
+            if !terminal_event_seen {
+                let _ = on_event.send(EvaluationStreamEvent::Error {
+                    message: error.to_string(),
+                });
+            }
+            return Err(error);
+        }
+        if !terminal_event_seen {
+            let message = "evaluation stream ended before terminal completion".to_string();
+            let _ = on_event.send(EvaluationStreamEvent::Error {
+                message: message.clone(),
+            });
+            return Err(CommandError::InvalidResponse(message));
+        }
+        Ok(())
+    })
+    .await
+}
+
 /// Build and run the Tauri application, registering every command handler.
 pub fn run() {
     tauri::Builder::default()
@@ -367,6 +419,7 @@ pub fn run() {
             search_papers,
             index_papers,
             index_papers_stream,
+            evaluate_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

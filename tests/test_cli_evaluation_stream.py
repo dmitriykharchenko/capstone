@@ -1,0 +1,113 @@
+import io
+import json
+
+from src.cli import __main__ as cli_main
+from src.cli.commands import handle_evaluation_stream
+from src.cli.config import CLIConfig
+from src.evaluation_runner import JUDGE_CRITERIA
+
+
+def config(tmp_path):
+    return CLIConfig(
+        database_path=tmp_path / "history.db",
+        chroma_directory=tmp_path / "chroma",
+        papers_directory=tmp_path / "papers",
+        chat_model="chat-model",
+        chat_base_url="https://example.test/v1",
+        embedding_model="embed-model",
+        embedding_base_url="https://example.test/v1",
+        api_key=None,
+        system_prompt=None,
+        log_path=tmp_path / "chat.log",
+        retrieval_log_path=tmp_path / "retrieval.log",
+    )
+
+
+def test_streams_ordered_success_failure_and_aggregate_scores(tmp_path):
+    cases = [
+        {"question": "first", "grading_notes": "one", "sources": ["a.pdf"]},
+        {"question": "second", "grading_notes": "two", "sources": ["b.pdf"]},
+        {"question": "third", "grading_notes": "three", "sources": []},
+    ]
+
+    class FakeRunner:
+        def run(self, payload, strategy):
+            source = payload[0]
+            index = cases.index(source) + 1
+            error = {"stage": "judge", "message": "invalid judge JSON"} if index == 2 else None
+            scores = None if error else {
+                criterion: {"score": index, "confidence": "high", "reasoning": "ok", "flags": []}
+                for criterion in JUDGE_CRITERIA
+            }
+            return [{
+                "case_index": 1,
+                "input": source,
+                "retrieval_strategy": strategy,
+                "retrieved_chunks": [],
+                "generated_answer": f"answer {index}",
+                "judge_scores": scores,
+                "error": error,
+            }]
+
+    events = list(handle_evaluation_stream(
+        config(tmp_path),
+        {"retrieval_type": "hybrid", "test_cases": cases},
+        FakeRunner(),
+    ))
+
+    assert [event["event"] for event in events] == [
+        "run_start", "case_start", "case_success", "case_start",
+        "case_failure", "case_start", "case_success", "complete",
+    ]
+    assert [event["input"] for event in events if event["event"] == "case_start"] == cases
+    results = [event["result"] for event in events if event["event"].startswith("case_") and "result" in event]
+    assert [result["case_index"] for result in results] == [1, 2, 3]
+    assert results[1]["error"]["stage"] == "judge"
+    done = events[-1]
+    assert (done["total"], done["succeeded"], done["failed"]) == (3, 2, 1)
+    assert list(done["aggregate_scores"]) == list(JUDGE_CRITERIA)
+    assert set(done["aggregate_scores"].values()) == {2.0}
+
+
+def test_case_exception_is_streamed_without_aborting_following_cases(tmp_path):
+    class FakeRunner:
+        calls = 0
+
+        def run(self, payload, strategy):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("backend unavailable")
+            return [{
+                "case_index": 1, "input": payload[0], "retrieval_strategy": strategy,
+                "retrieved_chunks": [], "generated_answer": None, "judge_scores": None,
+                "error": {"stage": "retrieval", "message": "no chunks"},
+            }]
+
+    cases = [
+        {"question": "one", "grading_notes": "a", "sources": []},
+        {"question": "two", "grading_notes": "b", "sources": []},
+    ]
+    events = list(handle_evaluation_stream(
+        config(tmp_path), {"retrieval_type": "vector", "test_cases": cases}, FakeRunner()
+    ))
+    failures = [event["result"] for event in events if event["event"] == "case_failure"]
+    assert [result["case_index"] for result in failures] == [1, 2]
+    assert failures[0]["error"] == {"stage": "evaluation", "message": "backend unavailable"}
+    assert events[-1]["aggregate_scores"] == {criterion: None for criterion in JUDGE_CRITERIA}
+
+
+def test_cli_main_routes_evaluation_stream(monkeypatch, tmp_path):
+    expected = [{"event": "run_start", "retrieval_type": "bm25", "total": 1}]
+    monkeypatch.setattr(cli_main.CLIConfig, "from_env", lambda: config(tmp_path))
+    monkeypatch.setattr(cli_main, "load_dotenv_if_present", lambda: None)
+    monkeypatch.setattr(cli_main, "handle_evaluation_stream", lambda cfg, request: iter(expected))
+    monkeypatch.setattr(
+        cli_main.sys,
+        "stdin",
+        io.StringIO(json.dumps({"command": "evaluate", "stream": True})),
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(cli_main.sys, "stdout", output)
+
+    assert cli_main.main() == 0
+    assert [json.loads(line) for line in output.getvalue().splitlines()] == expected

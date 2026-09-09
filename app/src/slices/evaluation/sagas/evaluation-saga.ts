@@ -1,0 +1,95 @@
+import { call, put, take, takeLeading } from "typed-redux-saga";
+import { END, eventChannel, type EventChannel } from "redux-saga";
+import {
+  api,
+  type EvaluationRetrievalType,
+  type EvaluationStreamEvent,
+  type EvaluationTestCase,
+} from "../../../lib/api";
+import {
+  evaluationCaseFailed,
+  evaluationCaseStarted,
+  evaluationCaseSucceeded,
+  evaluationCompleted,
+  evaluationStarted,
+  evaluationTransportFailed,
+  runEvaluation,
+} from "../evaluation-slice";
+
+export interface EvaluationServices {
+  runEvaluation: typeof api.runEvaluation;
+}
+
+const evaluationServices: EvaluationServices = {
+  runEvaluation: api.runEvaluation,
+};
+
+function createEvaluationChannel(
+  retrievalType: EvaluationRetrievalType,
+  testCases: EvaluationTestCase[],
+  services: EvaluationServices,
+): EventChannel<EvaluationStreamEvent> {
+  return eventChannel<EvaluationStreamEvent>((emit) => {
+    let terminalEventSeen = false;
+    services
+      .runEvaluation(retrievalType, testCases, (event) => {
+        terminalEventSeen ||= event.event === "complete" || event.event === "error";
+        emit(event);
+      })
+      .catch((error: unknown) => {
+        if (!terminalEventSeen) {
+          terminalEventSeen = true;
+          emit({ event: "error", message: String(error) });
+        }
+      })
+      .finally(() => {
+        if (!terminalEventSeen) {
+          emit({
+            event: "error",
+            message: "Evaluation stream ended before terminal completion. Please try again.",
+          });
+        }
+        emit(END);
+      });
+    return () => {};
+  });
+}
+
+export function* evaluationSaga(services: EvaluationServices = evaluationServices) {
+  yield* takeLeading(runEvaluation, function* (action) {
+    const [retrievalType, testCases] = action.payload;
+    const channel = createEvaluationChannel(retrievalType, testCases, services);
+    try {
+      while (true) {
+        const event = yield* take(channel);
+        if (event.event === "runStart") {
+          yield* put(evaluationStarted(event.retrievalType, testCases, event.total));
+        } else if (event.event === "caseStart") {
+          yield* put(evaluationCaseStarted(event.caseIndex));
+        } else if (event.event === "caseSuccess") {
+          yield* put(evaluationCaseSucceeded(event.result, event.completed, event.total));
+        } else if (event.event === "caseFailure") {
+          yield* put(evaluationCaseFailed(event.result, event.completed, event.total));
+        } else if (event.event === "complete") {
+          yield* put(
+            evaluationCompleted(
+              event.completed,
+              event.total,
+              event.succeeded,
+              event.failed,
+              event.aggregateScores,
+            ),
+          );
+          break;
+        } else if (event.event === "error") {
+          yield* put(evaluationTransportFailed(event.message));
+          break;
+        }
+      }
+    } catch (error) {
+      yield* put(evaluationTransportFailed(String(error)));
+    } finally {
+      yield* call([channel, channel.close]);
+    }
+  });
+}

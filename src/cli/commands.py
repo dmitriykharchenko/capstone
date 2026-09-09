@@ -9,14 +9,18 @@ REST server; search queries the Chroma-backed chat-history index.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Any, Iterator
 
 from ..chat_logger import log_chat
+from ..evaluation_runner import JUDGE_CRITERIA, validate_test_cases
+from ..paper_search import EVALUATION_RETRIEVAL_STRATEGIES
 from ..retrieval_logger import log_retrieval
 from ..sqlite_history import SQLiteHistoryStore
 from .config import CLIConfig
 from .models import (
     build_agent_loop,
+    build_evaluation_runner,
     build_history_store,
     build_index,
     build_paper_indexer,
@@ -305,6 +309,86 @@ def handle_index_papers_stream(config: CLIConfig) -> Iterator[dict[str, Any]]:
     }
 
 
+def handle_evaluation_stream(
+    config: CLIConfig,
+    request: dict[str, Any],
+    runner: Any | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Run validated evaluation cases sequentially and stream ordered events."""
+
+    retrieval_type = _require_str(request.get("retrieval_type"), "retrieval_type")
+    if retrieval_type not in EVALUATION_RETRIEVAL_STRATEGIES:
+        allowed = ", ".join(EVALUATION_RETRIEVAL_STRATEGIES)
+        raise ValueError(f"retrieval_type must be one of: {allowed}")
+    cases = validate_test_cases(request.get("test_cases"))
+    evaluator = runner or build_evaluation_runner(config)
+    total = len(cases)
+    succeeded = 0
+    failed = 0
+    score_totals = {criterion: 0.0 for criterion in JUDGE_CRITERIA}
+
+    yield {
+        "event": "run_start",
+        "retrieval_type": retrieval_type,
+        "total": total,
+    }
+    for case_index, case in enumerate(cases, start=1):
+        case_input = case.as_dict()
+        yield {
+            "event": "case_start",
+            "case_index": case_index,
+            "total": total,
+            "retrieval_type": retrieval_type,
+            "input": case_input,
+        }
+        try:
+            result = evaluator.run([case_input], retrieval_type)[0]
+            result = {**result, "case_index": case_index}
+        except Exception as exc:  # noqa: BLE001 - one case must not abort the run
+            result = {
+                "case_index": case_index,
+                "input": case_input,
+                "retrieval_strategy": retrieval_type,
+                "retrieved_chunks": [],
+                "generated_answer": None,
+                "judge_scores": None,
+                "error": {
+                    "stage": "evaluation",
+                    "message": str(exc).strip() or type(exc).__name__,
+                },
+            }
+        completed = case_index
+        scores = result.get("judge_scores")
+        if result.get("error") is None and isinstance(scores, Mapping):
+            succeeded += 1
+            for criterion in JUDGE_CRITERIA:
+                score_totals[criterion] += float(scores[criterion]["score"])
+            event = "case_success"
+        else:
+            failed += 1
+            event = "case_failure"
+        yield {
+            "event": event,
+            "completed": completed,
+            "total": total,
+            "result": result,
+        }
+
+    aggregates = {
+        criterion: (score_totals[criterion] / succeeded if succeeded else None)
+        for criterion in JUDGE_CRITERIA
+    }
+    yield {
+        "event": "complete",
+        "retrieval_type": retrieval_type,
+        "completed": total,
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "aggregate_scores": aggregates,
+    }
+
+
 def handle_search_papers(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
     """Return indexed papers ranked by semantic similarity to a query.
 
@@ -431,6 +515,7 @@ __all__ = [
     "dispatch",
     "handle_chat",
     "handle_chat_stream",
+    "handle_evaluation_stream",
     "handle_health",
     "handle_index_papers",
     "handle_index_papers_stream",
