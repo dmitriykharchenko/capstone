@@ -100,6 +100,10 @@ test("route parsing and serialization safely round-trip parameters", () => {
     parseRoute({ pathname: "/papers", search: "?q=%E0%A4%A" }),
     { name: "papers", query: "�%A" },
   );
+  assert.deepEqual(parseRoute({ pathname: "/evals", search: "?ignored=1" }), {
+    name: "evals",
+  });
+  assert.equal(serializeRoute({ name: "evals" }), "/evals");
 });
 
 test("unknown paths and empty parameters fall back to canonical chat", () => {
@@ -152,6 +156,10 @@ test("saga canonicalizes startup, pushes intents, and consumes popstate", async 
   });
   assert.deepEqual(browser.pushes, ["/papers?q=vector+search"]);
 
+  browser.emit("/evals");
+  await settle();
+  assert.deepEqual(actions.at(-1).payload[0], { name: "evals" });
+
   task.cancel();
   await task.toPromise();
   assert.equal(browser.wasUnsubscribed(), true);
@@ -176,12 +184,36 @@ test("known direct navigation initializes without rewriting history", async () =
   await task.toPromise();
 });
 
+test("direct evaluation navigation survives startup and back-forward events", async () => {
+  const browser = fakeNavigation("/evals");
+  const actions = [];
+  const input = stdChannel();
+  const task = runSaga(
+    { channel: input, dispatch: (action) => actions.push(action), getState: () => ({}) },
+    routerSaga,
+    browser.adapter,
+  );
+  await settle();
+  assert.deepEqual(browser.replacements, []);
+  assert.deepEqual(actions.at(-1).payload[0], { name: "evals" });
+
+  input.put(navigateTo({ name: "chat" }));
+  await settle();
+  assert.deepEqual(browser.pushes, ["/chat"]);
+  browser.emit("/evals");
+  await settle();
+  assert.deepEqual(actions.at(-1).payload[0], { name: "evals" });
+  task.cancel();
+  await task.toPromise();
+});
+
 test("App dispatches route intents and leaves browser APIs to the saga", async () => {
   const componentPaths = [
     "../src/App.svelte",
     "../src/components/Chat.svelte",
     "../src/components/HistorySearch.svelte",
     "../src/components/PapersList.svelte",
+    "../src/components/RagEvals.svelte",
   ];
   const components = await Promise.all(
     componentPaths.map((path) => readFile(new URL(path, import.meta.url), "utf8")),

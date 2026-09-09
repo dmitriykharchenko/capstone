@@ -6,6 +6,7 @@
   import Chat from "./components/Chat.svelte";
   import HistorySearch from "./components/HistorySearch.svelte";
   import PapersList from "./components/PapersList.svelte";
+  import RagEvals from "./components/RagEvals.svelte";
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { Button } from "$lib/components/ui/button";
   import SunIcon from "@lucide/svelte/icons/sun";
@@ -42,6 +43,7 @@
     { id: "chat", label: "Chat" },
     { id: "history", label: "History Search" },
     { id: "papers", label: "Papers" },
+    { id: "evals", label: "RAG Evals" },
   ];
 
   function navigate(name: string) {
@@ -97,9 +99,13 @@
       <TabsContent value="history" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
         <HistorySearch />
       </TabsContent>
-    {:else}
+    {:else if $activeRoute.name === "papers"}
       <TabsContent value="papers" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-0 pt-[38px] pb-0">
         <PapersList />
+      </TabsContent>
+    {:else}
+      <TabsContent value="evals" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
+        <RagEvals />
       </TabsContent>
     {/if}
   </Tabs>

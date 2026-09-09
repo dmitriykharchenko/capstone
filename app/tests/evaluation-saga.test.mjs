@@ -6,7 +6,7 @@ import { createServer } from "vite";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-let vite, evaluationSaga, runEvaluation;
+let vite, evaluationReducer, evaluationSaga, runEvaluation;
 
 before(async () => {
   vite = await createServer({
@@ -18,7 +18,7 @@ before(async () => {
   ({ evaluationSaga } = await vite.ssrLoadModule(
     "/src/slices/evaluation/sagas/evaluation-saga.ts",
   ));
-  ({ runEvaluation } = await vite.ssrLoadModule(
+  ({ evaluationReducer, runEvaluation } = await vite.ssrLoadModule(
     "/src/slices/evaluation/evaluation-slice.ts",
   ));
 });
@@ -50,6 +50,15 @@ function startSaga(service) {
   );
   return { input, actions, task };
 }
+
+test("run intent locks controls immediately before transport events arrive", () => {
+  const state = evaluationReducer(undefined, runEvaluation("vector", testCases));
+  const duplicate = evaluationReducer(state, runEvaluation("hybrid", testCases));
+  assert.equal(state.running, true);
+  assert.equal(state.total, 1);
+  assert.deepEqual(state.testCases, testCases);
+  assert.equal(duplicate, state);
+});
 
 test("takeLeading ignores duplicate evaluation requests until completion", async () => {
   const callbacks = [];

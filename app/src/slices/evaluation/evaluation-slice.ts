@@ -48,6 +48,21 @@ export const evaluationTransportFailed = createAction<[error: string]>(
 export const evaluationReducer: StoreReducerFunction<EvaluationState> =
   createReducer<EvaluationState>(initialEvaluationState)
     .with(
+      runEvaluation,
+      (
+        state: EvaluationState,
+        action: StoreAction<[EvaluationRetrievalType, EvaluationTestCase[]]>,
+      ) =>
+        state.running
+          ? state
+          : beginEvaluation(
+              state,
+              action.payload[0],
+              action.payload[1],
+              action.payload[1].length,
+            ),
+    )
+    .with(
       evaluationStarted,
       (
         state: EvaluationState,

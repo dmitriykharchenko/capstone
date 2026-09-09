@@ -1,4 +1,4 @@
-export type RouteName = "chat" | "history" | "papers";
+export type RouteName = "chat" | "history" | "papers" | "evals";
 
 export interface ChatRoute {
   name: "chat";
@@ -16,7 +16,11 @@ export interface PapersRoute {
   query?: string;
 }
 
-export type AppRoute = ChatRoute | HistoryRoute | PapersRoute;
+export interface EvalsRoute {
+  name: "evals";
+}
+
+export type AppRoute = ChatRoute | HistoryRoute | PapersRoute | EvalsRoute;
 
 export interface RouterState {
   activeRoute: AppRoute;
@@ -53,6 +57,8 @@ export function parseRoute(location: RouteLocation): AppRoute {
       return { name: "history", query: optionalParameter(params, "q") };
     case "/papers":
       return { name: "papers", query: optionalParameter(params, "q") };
+    case "/evals":
+      return { name: "evals" };
     default:
       return defaultRoute;
   }
@@ -63,7 +69,7 @@ export function serializeRoute(route: AppRoute): string {
   if (route.name === "chat") {
     if (route.sessionId) params.set("sessionId", route.sessionId);
     if (route.exchangeId) params.set("exchangeId", route.exchangeId);
-  } else if (route.query) {
+  } else if (route.name !== "evals" && route.query) {
     params.set("q", route.query);
   }
   const search = params.toString();
