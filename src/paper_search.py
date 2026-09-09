@@ -333,6 +333,8 @@ def _query_candidates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
     distances = _first_row(result, "distances")
     ids = _first_row(result, "ids")
     if not metadatas and not documents and not distances:
+        if ids:
+            raise PaperSearchError("paper chunk retrieval returned incomplete records")
         return []
     if len(metadatas) != len(documents) or len(documents) != len(distances):
         raise PaperSearchError("paper chunk retrieval returned incomplete records")
@@ -366,6 +368,8 @@ def _corpus_candidates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
     documents = _flat_values(result, "documents")
     ids = _flat_values(result, "ids")
     if not metadatas and not documents:
+        if ids:
+            raise PaperSearchError("paper chunk corpus returned incomplete records")
         return []
     if len(metadatas) != len(documents):
         raise PaperSearchError("paper chunk corpus returned incomplete records")
