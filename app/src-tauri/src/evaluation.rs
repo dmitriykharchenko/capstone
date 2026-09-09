@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const CHUNK_LIMIT: usize = 5;
+const TRANSPORT_ERROR_MESSAGE: &str =
+    "Evaluation transport failed. Check the backend logs and retry.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -173,6 +175,32 @@ impl JudgeScores {
 pub(crate) struct EvaluationCaseError {
     stage: String,
     message: String,
+}
+
+impl EvaluationCaseError {
+    fn sanitize(mut self) -> Self {
+        let (stage, message) = match self.stage.as_str() {
+            "retrieval" => (
+                "retrieval",
+                "Retrieval failed for this case. Check the paper index and retry.",
+            ),
+            "model" => (
+                "model",
+                "Answer generation failed for this case. Check backend configuration and retry.",
+            ),
+            "judge" => (
+                "judge",
+                "Judge evaluation failed for this case. Check backend configuration and retry.",
+            ),
+            _ => (
+                "evaluation",
+                "Evaluation failed for this case. Check backend configuration and retry.",
+            ),
+        };
+        self.stage = stage.to_string();
+        self.message = message.to_string();
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -359,24 +387,47 @@ impl EvaluationStreamEvent {
             Self::Error { message } => nonempty(message),
         }
     }
+
+    fn sanitize(self) -> Self {
+        match self {
+            Self::CaseFailure {
+                completed,
+                total,
+                mut result,
+            } => {
+                result.error = result.error.map(EvaluationCaseError::sanitize);
+                Self::CaseFailure {
+                    completed,
+                    total,
+                    result,
+                }
+            }
+            Self::Error { .. } => evaluation_transport_error_event(),
+            event => event,
+        }
+    }
 }
 
 pub(crate) fn evaluation_stream_event(value: Value) -> EvaluationStreamEvent {
     if value.get("ok").and_then(Value::as_bool) == Some(false) {
-        return EvaluationStreamEvent::Error {
-            message: value
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown evaluation error")
-                .to_string(),
-        };
+        return evaluation_transport_error_event();
     }
     match serde_json::from_value::<EvaluationStreamEvent>(value) {
-        Ok(event) if event.validate() => event,
+        Ok(event) if event.validate() => event.sanitize(),
         _ => EvaluationStreamEvent::Error {
             message: "invalid evaluation progress event".to_string(),
         },
     }
+}
+
+pub(crate) fn evaluation_transport_error_event() -> EvaluationStreamEvent {
+    EvaluationStreamEvent::Error {
+        message: evaluation_transport_error_message().to_string(),
+    }
+}
+
+pub(crate) fn evaluation_transport_error_message() -> &'static str {
+    TRANSPORT_ERROR_MESSAGE
 }
 
 fn nonempty(value: &str) -> bool {
@@ -405,7 +456,7 @@ mod tests {
                 "retrieved_chunks": [],
                 "generated_answer": null,
                 "judge_scores": null,
-                "error": {"stage": "retrieval", "message": "no chunks"}
+                "error": {"stage": "retrieval", "message": "/private/secret/index unavailable"}
             }
         }));
 
@@ -414,6 +465,22 @@ mod tests {
         assert_eq!(serialized["result"]["case_index"], 1);
         assert_eq!(serialized["result"]["input"]["grading_notes"], "g");
         assert_eq!(serialized["result"]["retrieval_strategy"], "hybrid");
+        assert_eq!(
+            serialized["result"]["error"]["message"],
+            "Retrieval failed for this case. Check the paper index and retry."
+        );
+        assert!(!serialized.to_string().contains("/private/secret"));
+    }
+
+    #[test]
+    fn sanitizes_transport_errors_before_channel_serialization() {
+        let event = evaluation_stream_event(json!({
+            "ok": false,
+            "error": "token=secret at /private/secret/tests/judge.md"
+        }));
+
+        assert_eq!(event, evaluation_transport_error_event());
+        assert!(!serde_json::to_string(&event).unwrap().contains("secret"));
     }
 
     #[test]

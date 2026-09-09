@@ -49,7 +49,10 @@ def main() -> int:
     if request.get("command") == "index_papers" and request.get("stream"):
         return _run_stream(handle_index_papers_stream(config))
     if request.get("command") == "evaluate" and request.get("stream"):
-        return _run_stream(handle_evaluation_stream(config, request))
+        return _run_stream(
+            handle_evaluation_stream(config, request),
+            safe_error="Evaluation transport failed. Check backend logs and retry.",
+        )
     try:
         result = dispatch(request.get("command"), config, request)
     except Exception as exc:  # noqa: BLE001 - surfaced as JSON to the caller
@@ -61,14 +64,17 @@ def main() -> int:
     return 0
 
 
-def _run_stream(events: Any) -> int:
+def _run_stream(events: Any, *, safe_error: str | None = None) -> int:
     """Emit an iterator of newline-delimited JSON events."""
 
     try:
         for event in events:
             _emit(event)
     except Exception as exc:  # noqa: BLE001 - surfaced as JSON to the caller
-        _emit({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
+        if safe_error is None:
+            _emit({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
+        else:
+            _emit({"ok": False, "error": safe_error})
         return 1
     return 0
 

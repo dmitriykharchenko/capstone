@@ -101,7 +101,7 @@ test("takeLeading ignores duplicate evaluation requests until completion", async
 
 test("transport rejection emits one terminal failure action", async () => {
   const run = startSaga(async () => {
-    throw new Error("bridge disconnected");
+    throw new Error("api_key=secret at /private/secret/tests/judge.md");
   });
   await settle();
   run.input.put(runEvaluation("bm25", testCases));
@@ -109,7 +109,11 @@ test("transport rejection emits one terminal failure action", async () => {
   await settle();
 
   assert.equal(run.actions.at(-1).type, "evaluation/transportFailed");
-  assert.match(run.actions.at(-1).payload[0], /bridge disconnected/);
+  assert.equal(
+    run.actions.at(-1).payload[0],
+    "Evaluation transport failed. Check the backend logs and retry.",
+  );
+  assert.doesNotMatch(JSON.stringify(run.actions), /secret|api_key/);
   run.task.cancel();
   await run.task.toPromise();
 });

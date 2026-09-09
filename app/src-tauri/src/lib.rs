@@ -12,7 +12,8 @@ mod papers;
 
 use error::CommandError;
 use evaluation::{
-    evaluation_stream_event, EvaluationRequestCase, EvaluationRetrievalType, EvaluationStreamEvent,
+    evaluation_stream_event, evaluation_transport_error_event, evaluation_transport_error_message,
+    EvaluationRequestCase, EvaluationRetrievalType, EvaluationStreamEvent,
 };
 use papers::{PaperInfo, PaperRepository, PdfData};
 use serde_json::Value;
@@ -383,13 +384,13 @@ async fn evaluate_stream(
             );
             let _ = on_event.send(event);
         });
-        if let Err(error) = result {
+        if result.is_err() {
             if !terminal_event_seen {
-                let _ = on_event.send(EvaluationStreamEvent::Error {
-                    message: error.to_string(),
-                });
+                let _ = on_event.send(evaluation_transport_error_event());
             }
-            return Err(error);
+            return Err(CommandError::Bridge(
+                evaluation_transport_error_message().to_string(),
+            ));
         }
         if !terminal_event_seen {
             let message = "evaluation stream ended before terminal completion".to_string();

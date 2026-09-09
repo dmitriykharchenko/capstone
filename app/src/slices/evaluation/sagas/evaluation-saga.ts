@@ -24,6 +24,9 @@ const evaluationServices: EvaluationServices = {
   runEvaluation: api.runEvaluation,
 };
 
+const EVALUATION_TRANSPORT_ERROR =
+  "Evaluation transport failed. Check the backend logs and retry.";
+
 function createEvaluationChannel(
   retrievalType: EvaluationRetrievalType,
   testCases: EvaluationTestCase[],
@@ -36,10 +39,10 @@ function createEvaluationChannel(
         terminalEventSeen ||= event.event === "complete" || event.event === "error";
         emit(event);
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (!terminalEventSeen) {
           terminalEventSeen = true;
-          emit({ event: "error", message: String(error) });
+          emit({ event: "error", message: EVALUATION_TRANSPORT_ERROR });
         }
       })
       .finally(() => {
@@ -86,8 +89,8 @@ export function* evaluationSaga(services: EvaluationServices = evaluationService
           break;
         }
       }
-    } catch (error) {
-      yield* put(evaluationTransportFailed(String(error)));
+    } catch {
+      yield* put(evaluationTransportFailed(EVALUATION_TRANSPORT_ERROR));
     } finally {
       yield* call([channel, channel.close]);
     }

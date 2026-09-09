@@ -92,8 +92,57 @@ def test_case_exception_is_streamed_without_aborting_following_cases(tmp_path):
     ))
     failures = [event["result"] for event in events if event["event"] == "case_failure"]
     assert [result["case_index"] for result in failures] == [1, 2]
-    assert failures[0]["error"] == {"stage": "evaluation", "message": "backend unavailable"}
+    assert failures[0]["error"] == {
+        "stage": "evaluation",
+        "message": "Evaluation failed for this case. Check backend configuration and retry.",
+    }
+    assert failures[1]["error"] == {
+        "stage": "retrieval",
+        "message": "Retrieval failed for this case. Check the paper index and retry.",
+    }
     assert events[-1]["aggregate_scores"] == {criterion: None for criterion in JUDGE_CRITERIA}
+
+
+def test_sanitizes_path_and_credential_shaped_case_errors(tmp_path):
+    cases = [
+        {"question": "one", "grading_notes": "a", "sources": []},
+        {"question": "two", "grading_notes": "b", "sources": []},
+    ]
+
+    class FakeRunner:
+        calls = 0
+
+        def run(self, payload, strategy):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("api_key=secret at /private/secret/tests/judge.md")
+            return [{
+                "case_index": 1,
+                "input": payload[0],
+                "retrieval_strategy": strategy,
+                "retrieved_chunks": [],
+                "generated_answer": None,
+                "judge_scores": None,
+                "error": {
+                    "stage": "judge",
+                    "message": "token=secret at /private/secret/tests/judge.md",
+                },
+            }]
+
+    events = list(handle_evaluation_stream(
+        config(tmp_path),
+        {"retrieval_type": "vector", "test_cases": cases},
+        FakeRunner(),
+    ))
+    failures = [event for event in events if event["event"] == "case_failure"]
+
+    assert failures[0]["result"]["error"] == {
+        "stage": "judge",
+        "message": "Judge evaluation failed for this case. Check backend configuration and retry.",
+    }
+    assert failures[1]["result"]["error"]["stage"] == "evaluation"
+    assert "/private/secret" not in json.dumps(events)
+    assert "api_key" not in json.dumps(events)
 
 
 def test_cli_main_routes_evaluation_stream(monkeypatch, tmp_path):
@@ -111,3 +160,27 @@ def test_cli_main_routes_evaluation_stream(monkeypatch, tmp_path):
 
     assert cli_main.main() == 0
     assert [json.loads(line) for line in output.getvalue().splitlines()] == expected
+
+
+def test_cli_main_sanitizes_evaluation_transport_exception(monkeypatch, tmp_path):
+    def failing_stream(config, request):
+        raise RuntimeError("api_key=secret at /private/secret/tests/judge.md")
+        yield
+
+    monkeypatch.setattr(cli_main.CLIConfig, "from_env", lambda: config(tmp_path))
+    monkeypatch.setattr(cli_main, "load_dotenv_if_present", lambda: None)
+    monkeypatch.setattr(cli_main, "handle_evaluation_stream", failing_stream)
+    monkeypatch.setattr(
+        cli_main.sys,
+        "stdin",
+        io.StringIO(json.dumps({"command": "evaluate", "stream": True})),
+    )
+    output = io.StringIO()
+    monkeypatch.setattr(cli_main.sys, "stdout", output)
+
+    assert cli_main.main() == 1
+    assert json.loads(output.getvalue()) == {
+        "ok": False,
+        "error": "Evaluation transport failed. Check backend logs and retry.",
+    }
+    assert "secret" not in output.getvalue()

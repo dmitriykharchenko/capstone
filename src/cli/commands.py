@@ -321,7 +321,15 @@ def handle_evaluation_stream(
         allowed = ", ".join(EVALUATION_RETRIEVAL_STRATEGIES)
         raise ValueError(f"retrieval_type must be one of: {allowed}")
     cases = validate_test_cases(request.get("test_cases"))
-    evaluator = runner or build_evaluation_runner(config)
+    if runner is not None:
+        evaluator = runner
+    else:
+        try:
+            evaluator = build_evaluation_runner(config)
+        except Exception as exc:  # noqa: BLE001 - never expose backend details
+            raise RuntimeError(
+                "Evaluation backend is unavailable. Check backend configuration and retry."
+            ) from exc
     total = len(cases)
     succeeded = 0
     failed = 0
@@ -344,7 +352,7 @@ def handle_evaluation_stream(
         try:
             result = evaluator.run([case_input], retrieval_type)[0]
             result = {**result, "case_index": case_index}
-        except Exception as exc:  # noqa: BLE001 - one case must not abort the run
+        except Exception:  # noqa: BLE001 - one case must not abort the run
             result = {
                 "case_index": case_index,
                 "input": case_input,
@@ -354,9 +362,10 @@ def handle_evaluation_stream(
                 "judge_scores": None,
                 "error": {
                     "stage": "evaluation",
-                    "message": str(exc).strip() or type(exc).__name__,
+                    "message": _evaluation_error_message("evaluation"),
                 },
             }
+        result = _sanitize_evaluation_result(result)
         completed = case_index
         scores = result.get("judge_scores")
         if result.get("error") is None and isinstance(scores, Mapping):
@@ -387,6 +396,30 @@ def handle_evaluation_stream(
         "failed": failed,
         "aggregate_scores": aggregates,
     }
+
+
+def _sanitize_evaluation_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace backend exception details with a fixed stage-aware UI message."""
+
+    sanitized = dict(result)
+    error = result.get("error")
+    if error is not None:
+        stage = error.get("stage") if isinstance(error, Mapping) else None
+        safe_stage = stage if stage in {"retrieval", "model", "judge"} else "evaluation"
+        sanitized["error"] = {
+            "stage": safe_stage,
+            "message": _evaluation_error_message(safe_stage),
+        }
+    return sanitized
+
+
+def _evaluation_error_message(stage: str) -> str:
+    return {
+        "retrieval": "Retrieval failed for this case. Check the paper index and retry.",
+        "model": "Answer generation failed for this case. Check backend configuration and retry.",
+        "judge": "Judge evaluation failed for this case. Check backend configuration and retry.",
+        "evaluation": "Evaluation failed for this case. Check backend configuration and retry.",
+    }[stage]
 
 
 def handle_search_papers(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
