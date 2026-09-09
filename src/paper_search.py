@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from .bm25 import bm25_scores
-from .chroma_persistence import DEFAULT_COLLECTION_NAME, open_collection
+from .chroma_persistence import DEFAULT_COLLECTION_NAME, get_records, open_collection
 from .embeddings import EmbeddingBackend, EmbeddingConfig, create_embedding
 
 # Weight of the (normalized) vector-similarity signal when blended with the
 # (normalized) BM25 lexical signal; the lexical signal takes the remainder.
 HYBRID_VECTOR_WEIGHT = 0.5
+EVALUATION_RETRIEVAL_STRATEGIES = ("vector", "bm25", "hybrid")
+EVALUATION_CHUNK_LIMIT = 5
 
 
 class PaperSearchError(RuntimeError):
@@ -138,9 +140,20 @@ class PaperSearchIndex:
         return _group_by_paper(result, query, n_results)
 
     def retrieve_chunks(
-        self, query: str, n_results: int = 5
+        self,
+        query: str,
+        n_results: int = 5,
+        *,
+        strategy: str | None = None,
     ) -> list[PaperChunkMatch]:
-        """Return at most ``n_results`` raw chunks by hybrid vector + BM25 rank."""
+        """Return raw chunks by the existing chat hybrid rank.
+
+        Supplying ``strategy`` opts into the full-corpus evaluation interface;
+        the default keeps the chat candidate budget and ranking unchanged.
+        """
+
+        if strategy is not None:
+            return self.retrieve_evaluation_chunks(query, strategy, n_results)
 
         _validate_query(query, n_results)
         chunk_budget = min(max(n_results * 5, n_results), 50)
@@ -155,6 +168,61 @@ class PaperSearchIndex:
         except Exception as exc:
             raise PaperSearchError("paper chunk retrieval failed") from exc
         return _raw_chunks(result, query, n_results)
+
+    def retrieve_evaluation_chunks(
+        self,
+        query: str,
+        strategy: str = "hybrid",
+        n_results: int = EVALUATION_CHUNK_LIMIT,
+    ) -> list[PaperChunkMatch]:
+        """Retrieve up to five full-provenance chunks using an explicit strategy.
+
+        ``vector`` uses Chroma's similarity query, ``bm25`` scores every indexed
+        chunk returned by ``get()``, and ``hybrid`` combines both signals over
+        the complete corpus.  The unfiltered ``get()`` call is intentional:
+        Chroma returns all records when neither ``ids`` nor ``where`` is set.
+        """
+
+        _validate_query(query, n_results)
+        if not isinstance(strategy, str) or strategy not in EVALUATION_RETRIEVAL_STRATEGIES:
+            allowed = ", ".join(EVALUATION_RETRIEVAL_STRATEGIES)
+            raise ValueError(f"strategy must be one of: {allowed}")
+        limit = min(n_results, EVALUATION_CHUNK_LIMIT)
+        try:
+            if strategy == "vector":
+                result = self._collection.query(
+                    query_embeddings=[self._embed(query)],
+                    n_results=limit,
+                    include=["metadatas", "documents", "distances"],
+                )
+                return _rank_vector_candidates(_query_candidates(result), limit)
+
+            corpus = _corpus_candidates(get_records(self._collection))
+            if strategy == "bm25":
+                scores = bm25_scores(query, [candidate["text"] for candidate in corpus])
+                return _rank_scored_candidates(corpus, scores, limit)
+            if not corpus:
+                return []
+
+            result = self._collection.query(
+                query_embeddings=[self._embed(query)],
+                n_results=len(corpus),
+                include=["metadatas", "documents", "distances"],
+            )
+            vector_candidates = _query_candidates(result)
+            if len(vector_candidates) != len(corpus):
+                raise PaperSearchError("paper chunk retrieval returned incomplete records")
+            lexical = bm25_scores(
+                query, [candidate["text"] for candidate in vector_candidates]
+            )
+            scores = _hybrid_scores(
+                [candidate["similarity"] for candidate in vector_candidates], lexical
+            )
+            return _rank_scored_candidates(vector_candidates, scores, limit)
+        except PaperSearchError:
+            raise
+        except Exception as exc:
+            raise PaperSearchError("paper evaluation retrieval failed") from exc
 
 
 def _validate_query(query: str, n_results: int) -> None:
@@ -222,6 +290,142 @@ def _hybrid_scores(
     return [
         round(weight * vector + (1.0 - weight) * keyword, 4)
         for vector, keyword in zip(vector_norm, lexical_norm)
+    ]
+
+
+def _validated_candidate(
+    metadata: Any,
+    document: Any,
+    distance: Any = 0.0,
+    record_id: Any = "",
+) -> dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        raise PaperSearchError("paper chunk metadata is missing")
+    paper_id = _required_text(metadata, "paper_id")
+    chunk_index = _required_int(metadata, "chunk_index", minimum=0)
+    filename = _required_text(metadata, "filename")
+    title = _required_text(metadata, "title")
+    page = _required_int(metadata, "page", minimum=1)
+    if not isinstance(document, str) or not document.strip():
+        raise PaperSearchError("paper chunk text is missing")
+    if (
+        isinstance(distance, bool)
+        or not isinstance(distance, Real)
+        or not math.isfinite(float(distance))
+        or float(distance) < 0
+    ):
+        raise PaperSearchError("paper chunk distance is invalid")
+    return {
+        "text": document,
+        "similarity": _similarity(distance),
+        "paper_id": paper_id,
+        "chunk_index": chunk_index,
+        "filename": filename,
+        "title": title,
+        "page": page,
+        "id": record_id if isinstance(record_id, str) else "",
+    }
+
+
+def _query_candidates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    metadatas = _first_row(result, "metadatas")
+    documents = _first_row(result, "documents")
+    distances = _first_row(result, "distances")
+    ids = _first_row(result, "ids")
+    if not metadatas and not documents and not distances:
+        return []
+    if len(metadatas) != len(documents) or len(documents) != len(distances):
+        raise PaperSearchError("paper chunk retrieval returned incomplete records")
+    return [
+        _validated_candidate(
+            metadata,
+            document,
+            distance,
+            ids[index] if index < len(ids) else "",
+        )
+        for index, (metadata, document, distance) in enumerate(
+            zip(metadatas, documents, distances)
+        )
+    ]
+
+
+def _flat_values(result: Mapping[str, Any], key: str) -> list[Any]:
+    value = result.get(key) if isinstance(result, Mapping) else None
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    values = list(value)
+    if len(values) == 1 and isinstance(values[0], Sequence) and not isinstance(
+        values[0], (str, bytes)
+    ):
+        return list(values[0])
+    return values
+
+
+def _corpus_candidates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    metadatas = _flat_values(result, "metadatas")
+    documents = _flat_values(result, "documents")
+    ids = _flat_values(result, "ids")
+    if not metadatas and not documents:
+        return []
+    if len(metadatas) != len(documents):
+        raise PaperSearchError("paper chunk corpus returned incomplete records")
+    return [
+        _validated_candidate(
+            metadata,
+            document,
+            0.0,
+            ids[index] if index < len(ids) else "",
+        )
+        for index, (metadata, document) in enumerate(zip(metadatas, documents))
+    ]
+
+
+def _candidate_key(candidate: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        candidate["paper_id"],
+        candidate["chunk_index"],
+        candidate["filename"],
+        candidate["page"],
+        candidate.get("id", ""),
+    )
+
+
+def _to_chunk(candidate: Mapping[str, Any], score: float, rank: int) -> PaperChunkMatch:
+    return PaperChunkMatch(
+        rank=rank,
+        text=candidate["text"],
+        score=score,
+        paper_id=candidate["paper_id"],
+        chunk_index=candidate["chunk_index"],
+        filename=candidate["filename"],
+        title=candidate["title"],
+        page=candidate["page"],
+    )
+
+
+def _rank_vector_candidates(
+    candidates: Sequence[Mapping[str, Any]], limit: int
+) -> list[PaperChunkMatch]:
+    ranked = sorted(
+        candidates,
+        key=lambda candidate: (-candidate["similarity"], _candidate_key(candidate)),
+    )
+    return [
+        _to_chunk(candidate, candidate["similarity"], rank)
+        for rank, candidate in enumerate(ranked[:limit], start=1)
+    ]
+
+
+def _rank_scored_candidates(
+    candidates: Sequence[Mapping[str, Any]], scores: Sequence[float], limit: int
+) -> list[PaperChunkMatch]:
+    ranked = sorted(
+        zip(candidates, scores),
+        key=lambda item: (-item[1], _candidate_key(item[0])),
+    )
+    return [
+        _to_chunk(candidate, float(score), rank)
+        for rank, (candidate, score) in enumerate(ranked[:limit], start=1)
     ]
 
 
@@ -364,6 +568,8 @@ def _group_by_paper(
 
 
 __all__ = [
+    "EVALUATION_CHUNK_LIMIT",
+    "EVALUATION_RETRIEVAL_STRATEGIES",
     "PaperChunkMatch",
     "PaperMatch",
     "PaperSearchError",

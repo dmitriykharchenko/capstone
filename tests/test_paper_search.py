@@ -1,4 +1,6 @@
-from src.paper_search import PaperSearchIndex
+import pytest
+
+from src.paper_search import PaperSearchError, PaperSearchIndex
 
 
 class FakeCollection:
@@ -9,6 +11,53 @@ class FakeCollection:
     def query(self, **kwargs):
         self.queries.append(kwargs)
         return self.result
+
+
+class CorpusCollection:
+    def __init__(self, records, query_result):
+        self.records = records
+        self.query_result = query_result
+        self.queries = []
+        self.get_calls = 0
+
+    def get(self):
+        self.get_calls += 1
+        return {
+            "ids": [record["id"] for record in self.records],
+            "documents": [record["text"] for record in self.records],
+            "metadatas": [
+                {key: record[key] for key in ("paper_id", "chunk_index", "filename", "title", "page")}
+                for record in self.records
+            ],
+        }
+
+    def query(self, **kwargs):
+        self.queries.append(kwargs)
+        return self.query_result
+
+
+def corpus_record(identifier, text, index):
+    return {
+        "id": identifier,
+        "text": text,
+        "paper_id": f"paper-{identifier}",
+        "chunk_index": index,
+        "filename": f"paper-{identifier}.pdf",
+        "title": f"Paper {identifier}",
+        "page": index + 1,
+    }
+
+
+def evaluation_query(records, distances):
+    return {
+        "ids": [[record["id"] for record in records]],
+        "metadatas": [[
+            {key: record[key] for key in ("paper_id", "chunk_index", "filename", "title", "page")}
+            for record in records
+        ]],
+        "documents": [[record["text"] for record in records]],
+        "distances": [distances],
+    }
 
 
 def raw_result(count=7):
@@ -106,3 +155,74 @@ def test_existing_paper_search_still_collapses_to_one_match_per_paper():
 
     assert [match.paper_id for match in matches] == ["paper-0", "paper-2"]
     assert all("snippet" in match.__dataclass_fields__ for match in matches)
+
+
+def test_evaluation_strategies_are_selectable_and_separate_from_chat_retrieval():
+    records = [corpus_record("a", "unrelated text", 0), corpus_record("b", "needle needle", 1)]
+    collection = CorpusCollection(records, evaluation_query(records, [0.1, 0.8]))
+    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
+
+    vector = index.retrieve_evaluation_chunks("needle", "vector")
+    bm25 = index.retrieve_evaluation_chunks("needle", "bm25")
+    assert [match.paper_id for match in vector] == ["paper-a", "paper-b"]
+    assert [match.paper_id for match in bm25] == ["paper-b", "paper-a"]
+    assert collection.get_calls == 1
+    # The existing chat method retains its widened candidate query and hybrid rank.
+    chat_collection = FakeCollection(raw_result(5))
+    PaperSearchIndex(collection=chat_collection, embedder=lambda text: [1.0]).retrieve_chunks("question")
+    assert chat_collection.queries[0]["n_results"] == 25
+
+
+def test_bm25_evaluation_scores_the_complete_corpus():
+    records = [
+        corpus_record("a", "no matching terms", 0),
+        corpus_record("b", "needle appears in a lower vector candidate", 1),
+    ]
+    collection = CorpusCollection(records, evaluation_query(records, [0.1, 0.9]))
+    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
+        "needle", "bm25"
+    )
+    assert matches[0].paper_id == "paper-b"
+    assert collection.queries == []
+    assert collection.get_calls == 1
+
+
+def test_hybrid_fusion_has_deterministic_provenance_tie_breaking():
+    records = [corpus_record("b", "needle", 0), corpus_record("a", "other", 0)]
+    collection = CorpusCollection(records, evaluation_query([records[1], records[0]], [0.1, 0.5]))
+    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
+        "needle", "hybrid"
+    )
+    assert [match.paper_id for match in matches] == ["paper-a", "paper-b"]
+    assert [match.rank for match in matches] == [1, 2]
+    assert matches[0].score == matches[1].score == 0.5
+
+
+@pytest.mark.parametrize("strategy", ["", "dense", "BM25", None])
+def test_evaluation_retrieval_rejects_invalid_strategy(strategy):
+    collection = CorpusCollection([], {"ids": [[]], "metadatas": [[]], "documents": [[]], "distances": [[]]})
+    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
+    with pytest.raises(ValueError, match="strategy must be one of"):
+        index.retrieve_evaluation_chunks("question", strategy)
+
+
+def test_evaluation_retrieval_rejects_incomplete_provenance():
+    collection = CorpusCollection([], {"ids": [[]], "metadatas": [[]], "documents": [[]], "distances": [[]]})
+    collection.get = lambda: {"ids": ["a"], "documents": ["text"], "metadatas": [{"paper_id": "paper-a"}]}
+    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
+    with pytest.raises(PaperSearchError, match="chunk_index"):
+        index.retrieve_evaluation_chunks("question", "bm25")
+
+
+def test_evaluation_matches_include_full_text_and_provenance_and_cap_at_five():
+    records = [corpus_record(str(index), f"text {index}", index) for index in range(6)]
+    collection = CorpusCollection(records, evaluation_query(records[:5], [index / 10 for index in range(5)]))
+    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
+        "question", "bm25", n_results=20
+    )
+    assert len(matches) == 5
+    assert [match.rank for match in matches] == list(range(1, 6))
+    assert matches[0].text == "text 0"
+    assert (matches[0].paper_id, matches[0].filename, matches[0].title, matches[0].page) == (
+        "paper-0", "paper-0.pdf", "Paper 0", 1
+    )
