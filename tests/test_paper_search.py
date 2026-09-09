@@ -173,6 +173,16 @@ def test_evaluation_strategies_are_selectable_and_separate_from_chat_retrieval()
     assert chat_collection.queries[0]["n_results"] == 25
 
 
+def test_vector_evaluation_preserves_chroma_order_for_close_distances():
+    records = [corpus_record("z", "first vector result", 0), corpus_record("a", "second vector result", 1)]
+    collection = CorpusCollection(records, evaluation_query(records, [0.10000, 0.10001]))
+    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
+        "question", "vector"
+    )
+    assert [match.paper_id for match in matches] == ["paper-z", "paper-a"]
+    assert [match.rank for match in matches] == [1, 2]
+
+
 def test_bm25_evaluation_scores_the_complete_corpus():
     records = [
         corpus_record("a", "no matching terms", 0),

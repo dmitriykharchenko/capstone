@@ -410,13 +410,9 @@ def _to_chunk(candidate: Mapping[str, Any], score: float, rank: int) -> PaperChu
 def _rank_vector_candidates(
     candidates: Sequence[Mapping[str, Any]], limit: int
 ) -> list[PaperChunkMatch]:
-    ranked = sorted(
-        candidates,
-        key=lambda candidate: (-candidate["similarity"], _candidate_key(candidate)),
-    )
     return [
         _to_chunk(candidate, candidate["similarity"], rank)
-        for rank, candidate in enumerate(ranked[:limit], start=1)
+        for rank, candidate in enumerate(candidates[:limit], start=1)
     ]
 
 
