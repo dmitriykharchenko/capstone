@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from .config import CLIConfig, load_dotenv_if_present
@@ -63,7 +64,7 @@ def main() -> int:
         return _run_stream(handle_index_papers_stream(config))
     if request.get("command") == "evaluate" and request.get("stream"):
         return _run_stream(
-            handle_evaluation_stream(config, request),
+            _persisted_evaluation_stream(handle_evaluation_stream(config, request)),
             safe_error="Evaluation transport failed. Check backend logs and retry.",
         )
     try:
@@ -90,6 +91,39 @@ def _run_stream(events: Any, *, safe_error: str | None = None) -> int:
             _emit({"ok": False, "error": safe_error})
         return 1
     return 0
+
+
+def _persisted_evaluation_stream(
+    events: Any, *, results_path: str | Path | None = None
+) -> Any:
+    """Forward evaluation events and persist only a terminal completed run."""
+
+    from ..evaluation_results import (
+        DEFAULT_EVALUATION_RESULTS_PATH,
+        persist_evaluation_results,
+    )
+
+    input_cases = []
+    results = []
+    for event in events:
+        event_type = event.get("event")
+        if event_type == "case_start":
+            input_cases.append(event["input"])
+        elif event_type in {"case_success", "case_failure"}:
+            results.append(event["result"])
+        yield event
+        if event_type == "complete":
+            persist_evaluation_results(
+                DEFAULT_EVALUATION_RESULTS_PATH
+                if results_path is None
+                else results_path,
+                input_cases=input_cases,
+                retrieval_strategy=event["retrieval_type"],
+                results=results,
+                aggregate_scores=event["aggregate_scores"],
+                succeeded=event["succeeded"],
+                failed=event["failed"],
+            )
 
 
 def _emit(payload: dict[str, Any]) -> None:

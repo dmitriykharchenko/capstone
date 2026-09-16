@@ -6,7 +6,15 @@ import pytest
 from src.cli import __main__ as cli_main
 from src.cli.commands import handle_evaluation_stream
 from src.cli.config import CLIConfig
-from src.evaluation_runner import JUDGE_CRITERIA
+from src.evaluation_runner import (
+    JUDGE_CRITERIA,
+    EvaluationValidationError,
+)
+
+
+@pytest.fixture
+def evaluation_results_path(tmp_path):
+    return tmp_path / "eval_results.json"
 
 
 def config(tmp_path):
@@ -25,7 +33,9 @@ def config(tmp_path):
     )
 
 
-def test_streams_ordered_success_failure_and_aggregate_scores(tmp_path):
+def test_streams_ordered_success_failure_and_aggregate_scores(
+    tmp_path, evaluation_results_path
+):
     cases = [
         {"question": "first", "grading_notes": "one", "sources": ["a.pdf"]},
         {"question": "second", "grading_notes": "two", "sources": ["b.pdf"]},
@@ -51,11 +61,16 @@ def test_streams_ordered_success_failure_and_aggregate_scores(tmp_path):
                 "error": error,
             }]
 
-    events = list(handle_evaluation_stream(
-        config(tmp_path),
-        {"retrieval_type": "hybrid", "test_cases": cases},
-        FakeRunner(),
-    ))
+    events = list(
+        cli_main._persisted_evaluation_stream(
+            handle_evaluation_stream(
+                config(tmp_path),
+                {"retrieval_type": "hybrid", "test_cases": cases},
+                FakeRunner(),
+            ),
+            results_path=evaluation_results_path,
+        )
+    )
 
     assert [event["event"] for event in events] == [
         "run_start", "case_start", "case_success", "case_start",
@@ -69,6 +84,17 @@ def test_streams_ordered_success_failure_and_aggregate_scores(tmp_path):
     assert (done["total"], done["succeeded"], done["failed"]) == (3, 2, 1)
     assert list(done["aggregate_scores"]) == list(JUDGE_CRITERIA)
     assert set(done["aggregate_scores"].values()) == {2.0}
+    artifact = json.loads(evaluation_results_path.read_text(encoding="utf-8"))
+    assert artifact["schema"] == "rag-evaluation-results"
+    assert artifact["schema_version"] == 1
+    assert artifact["metadata"] == {
+        "retrieval_identifier": "multihop-hybrid",
+        "retrieval_strategy": "hybrid",
+    }
+    assert artifact["input_cases"] == cases
+    assert artifact["results"] == results
+    assert artifact["aggregate_scores"] == done["aggregate_scores"]
+    assert artifact["summary"] == {"total": 3, "succeeded": 2, "failed": 1}
 
 
 def test_case_exception_is_streamed_without_aborting_following_cases(tmp_path):
@@ -103,6 +129,93 @@ def test_case_exception_is_streamed_without_aborting_following_cases(tmp_path):
         "message": "Retrieval failed for this case. Check the paper index and retry.",
     }
     assert events[-1]["aggregate_scores"] == {criterion: None for criterion in JUDGE_CRITERIA}
+
+
+def test_validation_and_backend_transport_failures_preserve_last_artifact(
+    monkeypatch, tmp_path, evaluation_results_path
+):
+    previous = '{"schema":"last-valid"}\n'
+    evaluation_results_path.write_text(previous, encoding="utf-8")
+
+    with pytest.raises(EvaluationValidationError):
+        list(
+            cli_main._persisted_evaluation_stream(
+                handle_evaluation_stream(
+                    config(tmp_path),
+                    {"retrieval_type": "hybrid", "test_cases": []},
+                ),
+                results_path=evaluation_results_path,
+            )
+        )
+    assert evaluation_results_path.read_text(encoding="utf-8") == previous
+
+    def unavailable(_config):
+        raise RuntimeError("process unavailable")
+
+    monkeypatch.setattr("src.cli.commands.build_evaluation_runner", unavailable)
+    with pytest.raises(RuntimeError, match="Evaluation backend is unavailable"):
+        list(
+            cli_main._persisted_evaluation_stream(
+                handle_evaluation_stream(
+                    config(tmp_path),
+                    {
+                        "retrieval_type": "hybrid",
+                        "test_cases": [
+                            {"question": "q", "grading_notes": "g", "sources": []}
+                        ],
+                    },
+                ),
+                results_path=evaluation_results_path,
+            )
+        )
+    assert evaluation_results_path.read_text(encoding="utf-8") == previous
+
+
+def test_persists_only_after_terminal_event_is_successfully_consumed(
+    tmp_path, evaluation_results_path
+):
+    previous = '{"schema":"last-valid"}\n'
+    evaluation_results_path.write_text(previous, encoding="utf-8")
+
+    class FakeRunner:
+        def run(self, payload, strategy):
+            return [
+                {
+                    "case_index": 1,
+                    "input": payload[0],
+                    "retrieval_strategy": strategy,
+                    "retrieved_chunks": [],
+                    "generated_answer": None,
+                    "judge_scores": None,
+                    "error": {"stage": "judge", "message": "failed"},
+                }
+            ]
+
+    events = cli_main._persisted_evaluation_stream(
+        handle_evaluation_stream(
+            config(tmp_path),
+            {
+                "retrieval_type": "hybrid",
+                "test_cases": [
+                    {"question": "q", "grading_notes": "g", "sources": []}
+                ],
+            },
+            FakeRunner(),
+        ),
+        results_path=evaluation_results_path,
+    )
+    terminal = None
+    while terminal is None or terminal["event"] != "complete":
+        terminal = next(events)
+    assert evaluation_results_path.read_text(encoding="utf-8") == previous
+
+    with pytest.raises(StopIteration):
+        next(events)
+    assert json.loads(evaluation_results_path.read_text(encoding="utf-8"))["summary"] == {
+        "failed": 1,
+        "succeeded": 0,
+        "total": 1,
+    }
 
 
 def test_sanitizes_path_and_credential_shaped_case_errors(tmp_path):
