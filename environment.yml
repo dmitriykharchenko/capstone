@@ -1,0 +1,24 @@
+# Conda environment for the capstone research assistant's Python bridge.
+# The Tauri backend spawns this interpreter (`python -m src.cli`) for chat,
+# sessions, messages, search, and health.
+#
+#   conda env create -f environment.yml          # first time
+#   conda env update -n ragcourse -f environment.yml --prune   # sync changes
+#
+# Point the app at this env when launching:
+#   CAPSTONE_PYTHON="$(conda run -n ragcourse which python)" npm run tauri dev
+name: ragcourse
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - python-dotenv
+      - langchain-openai
+      - langchain-core
+      - openai
+      - chromadb
+      - pypdf
+      - pycozo[embedded]==0.7.6
