@@ -954,7 +954,7 @@ mod tests {
             Ok(())
         });
 
-        let result = index_papers_stream(channel);
+        let result = tauri::async_runtime::block_on(index_papers_stream(channel));
         match previous {
             Some(value) => std::env::set_var("CAPSTONE_PYTHON", value),
             None => std::env::remove_var("CAPSTONE_PYTHON"),
