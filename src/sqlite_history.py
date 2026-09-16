@@ -60,7 +60,6 @@ class ExchangeRecord:
     assistant_message: MessageRecord
 
 
-
 class SQLiteHistoryStore:
     """Append and read ordered conversation messages in a SQLite database.
 
@@ -230,7 +229,9 @@ class SQLiteHistoryStore:
             "SELECT session_id FROM exchanges WHERE id = ?", (identity,)
         ).fetchone()
         if owner is None or owner[0] != session:
-            raise KeyError(f"exchange {identity} does not exist for session {session!r}")
+            raise KeyError(
+                f"exchange {identity} does not exist for session {session!r}"
+            )
         rows = self._connection.execute(
             "SELECT role, content FROM messages "
             "WHERE exchange_id = ? AND session_id = ? ORDER BY id ASC",
@@ -341,7 +342,9 @@ class SQLiteHistoryStore:
 
         return self
 
-    def __exit__(self, _exc_type: object, _exc_value: object, _traceback: object) -> None:
+    def __exit__(
+        self, _exc_type: object, _exc_value: object, _traceback: object
+    ) -> None:
         """Close the store when leaving a ``with`` statement."""
 
         self.close()
@@ -396,7 +399,9 @@ def _validate_sources(sources: Sequence[SourceRecord]) -> tuple[SourceRecord, ..
         raise TypeError("sources must be a sequence of SourceRecord values")
     records = tuple(sources)
     if len(records) > MAX_EXCHANGE_SOURCE_COUNT:
-        raise ValueError(f"sources cannot contain more than {MAX_EXCHANGE_SOURCE_COUNT} records")
+        raise ValueError(
+            f"sources cannot contain more than {MAX_EXCHANGE_SOURCE_COUNT} records"
+        )
     for expected_rank, source in enumerate(records, start=1):
         if not isinstance(source, SourceRecord):
             raise TypeError("sources must contain only SourceRecord values")
