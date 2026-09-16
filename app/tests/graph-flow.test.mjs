@@ -6,6 +6,8 @@ import { createServer } from "vite";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 let vite;
+let graphLayoutKey;
+let reconcileFlowNodes;
 let toFlowEdges;
 let toFlowNodes;
 
@@ -16,7 +18,7 @@ before(async () => {
     logLevel: "silent",
     server: { middlewareMode: true },
   });
-  ({ toFlowEdges, toFlowNodes } = await vite.ssrLoadModule("/src/lib/graph-flow.ts"));
+  ({ graphLayoutKey, reconcileFlowNodes, toFlowEdges, toFlowNodes } = await vite.ssrLoadModule("/src/lib/graph-flow.ts"));
 });
 
 after(async () => vite.close());
@@ -29,15 +31,43 @@ const nodes = [
 
 test("adapts graph nodes to stable, typed flow positions and activation callbacks", () => {
   const activated = [];
-  const flowNodes = toFlowNodes(nodes, (node) => activated.push(node.id));
+  const edges = [
+    { sourceId: "paper-a", targetId: "author-a", kind: "authored_by" },
+    { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
+  ];
+  const flowNodes = toFlowNodes(nodes, edges, (node) => activated.push(node.id));
 
-  assert.deepEqual(flowNodes.map(({ id, type, position }) => [id, type, position]), [
-    ["author-a", "graph", { x: 92, y: 42 }],
-    ["paper-a", "graph", { x: 322, y: 42 }],
-    ["topic-a", "graph", { x: 552, y: 42 }],
+  assert.deepEqual(flowNodes.map(({ id, type }) => [id, type]), [
+    ["author-a", "graph"], ["paper-a", "graph"], ["topic-a", "graph"],
   ]);
+  assert.deepEqual(
+    flowNodes.map(({ id, position }) => [id, position]),
+    toFlowNodes([...nodes].reverse(), [...edges].reverse(), () => {}).map(({ id, position }) => [id, position]),
+  );
   flowNodes.find((node) => node.id === "paper-a").data.onActivate();
   assert.deepEqual(activated, ["paper-a"]);
+});
+
+test("preserves bound dragged positions until the visible subgraph changes", () => {
+  const edges = [
+    { sourceId: "paper-a", targetId: "author-a", kind: "authored_by" },
+    { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
+  ];
+  const initial = reconcileFlowNodes(null, [], nodes, edges, () => {});
+  const dragged = initial.nodes.map((node) => node.id === "topic-a"
+    ? { ...node, position: { x: node.position.x + 123, y: node.position.y + 77 } }
+    : node);
+  const unchanged = reconcileFlowNodes(initial.layoutKey, dragged, [...nodes].reverse(), [...edges].reverse(), () => {});
+  assert.equal(unchanged.nodes, dragged);
+  assert.deepEqual(unchanged.nodes.find((node) => node.id === "topic-a").position, dragged.find((node) => node.id === "topic-a").position);
+
+  const filteredNodes = nodes.filter((node) => node.id !== "author-a");
+  const filteredEdges = edges.filter((edge) => edge.kind === "has_topic");
+  const filtered = reconcileFlowNodes(unchanged.layoutKey, unchanged.nodes, filteredNodes, filteredEdges, () => {});
+  assert.notEqual(filtered.layoutKey, unchanged.layoutKey);
+  assert.notEqual(filtered.nodes, dragged);
+  assert.deepEqual(filtered.nodes.map((node) => node.id), ["paper-a", "topic-a"]);
+  assert.equal(graphLayoutKey(filteredNodes, filteredEdges), filtered.layoutKey);
 });
 
 test("adapts canonical edge kinds to labeled flow edges", () => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     Background,
     BackgroundVariant,
@@ -9,7 +9,7 @@
   } from "@xyflow/svelte";
   import "@xyflow/svelte/dist/style.css";
   import { connectedNodes } from "../lib/graph-layout";
-  import { toFlowEdges, toFlowNodes, type GraphFlowNode } from "$lib/graph-flow";
+  import { reconcileFlowNodes, toFlowEdges, type GraphFlowNode } from "$lib/graph-flow";
   import {
     selectGraphEdges,
     selectGraphMessage,
@@ -33,12 +33,21 @@
   const selectedId = selectGraphNodeId();
   const message = selectGraphMessage();
 
-  const flowNodes = $derived(toFlowNodes($nodes, activateNode));
+  let flowNodes = $state.raw<GraphFlowNode[]>([]);
+  let flowLayoutKey = $state<string | null>(null);
   const flowEdges = $derived(toFlowEdges($edges));
   const selected = $derived($nodes.find((node) => node.id === $selectedId) ?? null);
   const connected = $derived(connectedNodes($selectedId, $nodes, $edges));
   const nodeTypes = { graph: GraphNode };
   let colorMode = $state<"light" | "dark">("light");
+
+  $effect(() => {
+    const next = reconcileFlowNodes(flowLayoutKey, untrack(() => flowNodes), $nodes, $edges, activateNode);
+    if (next.layoutKey !== flowLayoutKey) {
+      flowLayoutKey = next.layoutKey;
+      flowNodes = next.nodes;
+    }
+  });
 
   onMount(() => {
     const syncTheme = () => {
@@ -116,7 +125,7 @@
       <div class="h-full min-h-[260px] w-full" aria-label="Interactive paper graph">
         <SvelteFlow
           {nodeTypes}
-          nodes={flowNodes}
+          bind:nodes={flowNodes}
           edges={flowEdges}
           fitView
           fitViewOptions={{ padding: 0.2, minZoom: 0.35, maxZoom: 1.5 }}

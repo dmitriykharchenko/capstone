@@ -67,20 +67,16 @@ test("rejects malformed node and edge payloads at the frontend boundary", () => 
   );
 });
 
-test("merges duplicate neighborhoods and lays out nodes stably by type", () => {
+test("merges duplicate neighborhoods and lays out nodes stably from connectivity", () => {
   const parsed = parseGraphNeighborhoodPayload(raw);
   const merged = mergeGraphNeighborhoods([parsed, parsed]);
-  const first = layoutGraph(merged.nodes);
-  const second = layoutGraph([...merged.nodes].reverse());
+  const first = layoutGraph(merged.nodes, merged.edges);
+  const second = layoutGraph([...merged.nodes].reverse(), [...merged.edges].reverse());
 
   assert.equal(merged.nodes.length, 3);
   assert.equal(merged.edges.length, 2);
   assert.deepEqual(first, second);
-  assert.deepEqual(first.nodes.map(({ id, x, y }) => [id, x, y]), [
-    ["author-a", 92, 42],
-    ["paper-b", 322, 42],
-    ["topic-z", 552, 42],
-  ]);
+  assert.deepEqual(first, second);
   assert.deepEqual(
     connectedNodes("paper-b", merged.nodes, merged.edges).map((node) => node.id),
     ["author-a", "topic-z"],

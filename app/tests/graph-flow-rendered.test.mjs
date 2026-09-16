@@ -153,4 +153,18 @@ test("mounted Svelte Flow renders and keeps both canonical edges attached", asyn
   })()`);
   assert.equal(movedPaths["authored_by:paper-a:author-a"], initial.paths["authored_by:paper-a:author-a"]);
   assert.notEqual(movedPaths["has_topic:paper-a:topic-a"], initial.paths["has_topic:paper-a:topic-a"]);
+
+  const movedTopicTransform = await evaluate(`document.querySelector('[data-id="topic-a"]').style.transform`);
+  await evaluate(`document.querySelector('#refresh-unchanged').click()`);
+  assert.equal(await evaluate(`document.querySelector('[data-id="topic-a"]').style.transform`), movedTopicTransform);
+
+  await evaluate(`document.querySelector('#filter-graph').click()`);
+  const filtered = await waitFor(`(() => {
+    const paths = [...document.querySelectorAll('.svelte-flow__edge-path')];
+    const nodes = [...document.querySelectorAll('.svelte-flow__node')].map((node) => node.dataset.id).sort();
+    return paths.length === 1 && paths[0].closest('.svelte-flow__edge').dataset.id === 'has_topic:paper-a:topic-a'
+      && paths[0].getAttribute('d') && nodes.length === 2 ? { path: paths[0].getAttribute('d'), nodes } : null;
+  })()`);
+  assert.deepEqual(filtered.nodes, ["paper-a", "topic-a"]);
+  assert.notEqual(filtered.path, movedPaths["has_topic:paper-a:topic-a"]);
 });
