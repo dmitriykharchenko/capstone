@@ -11,6 +11,8 @@ from src.agent_loop import (
     AgentPlanError,
     AgentRetrievalError,
     MultihopCompletedEvent,
+    MultihopCoverageCompletedEvent,
+    MultihopCoverageStartedEvent,
     MultihopFinalDeltaEvent,
 )
 from src.cli.models import MockChatModel
@@ -141,6 +143,8 @@ def test_stream_events_are_ordered_typed_and_persist_after_completion(tmp_path):
         "hop_completed",
         "hop_started",
         "hop_completed",
+        "coverage_started",
+        "coverage_completed",
         "final_delta",
         "final_delta",
         "completed",
@@ -152,6 +156,9 @@ def test_stream_events_are_ordered_typed_and_persist_after_completion(tmp_path):
         "answer",
     ]
     assert isinstance(events[-1], MultihopCompletedEvent)
+    assert isinstance(events[5], MultihopCoverageStartedEvent)
+    assert isinstance(events[6], MultihopCoverageCompletedEvent)
+    assert events[6].followup_subqueries == ()
     with SQLiteHistoryStore(database) as store:
         assert [item.content for item in store.get_messages("session")] == [
             "question",
@@ -202,6 +209,64 @@ def test_adaptive_followups_use_exact_hop_path_and_compose_in_order(
     assert [item["subquery"] for item in composition["subanswers"]] == all_queries
     assert [item["answer"] for item in composition["subanswers"]] == [
         f"summary for {query}" for query in all_queries
+    ]
+
+
+def test_stream_appends_adaptive_followups_before_final_deltas(tmp_path):
+    model = StageModel()
+    model.coverage = json.dumps(
+        {
+            "complete": False,
+            "follow_up_subqueries": ["gamma evidence", "delta evidence"],
+        }
+    )
+    hop_results = results()
+    hop_results.update(
+        {
+            "gamma evidence": [chunk(1, "gamma")],
+            "delta evidence": [chunk(1, "delta")],
+        }
+    )
+
+    with AgentLoop(
+        tmp_path / "adaptive-stream.sqlite3",
+        model,
+        paper_retriever=HopRetriever(hop_results),
+    ) as loop:
+        events = list(loop.stream_events("session", "question"))
+
+    stages = [event.stage for event in events]
+    assert stages == [
+        "plan",
+        "hop_started",
+        "hop_completed",
+        "hop_started",
+        "hop_completed",
+        "coverage_started",
+        "coverage_completed",
+        "hop_started",
+        "hop_completed",
+        "hop_started",
+        "hop_completed",
+        "final_delta",
+        "final_delta",
+        "completed",
+    ]
+    coverage = events[6]
+    assert isinstance(coverage, MultihopCoverageCompletedEvent)
+    assert coverage.total == 4
+    assert coverage.followup_subqueries == ("gamma evidence", "delta evidence")
+    assert [(events[index].index, events[index].total) for index in (7, 9)] == [
+        (3, 4),
+        (4, 4),
+    ]
+    assert stages.index("final_delta") > stages.index("coverage_completed")
+    assert [source.paper_id for source in events[-1].sources] == [
+        "shared",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
     ]
 
 

@@ -9,6 +9,8 @@ test("ChatStreamEvent exposes ordered multihop transport stages", () => {
     'event: "plan"; subqueries: ChatSubquery[]',
     'event: "subquery";',
     'event: "subanswer";',
+    'event: "coverage";',
+    'status: ChatCoverageStatus',
     'event: "delta"; delta: string',
     'event: "done";',
     'event: "error"; message: string',
@@ -28,4 +30,10 @@ test("subquery progress has stable identity and ordering fields", () => {
   ]) {
     assert.ok(api.includes(field), `missing ${field}`);
   }
+});
+
+test("adaptive coverage contract is public-safe and bounded", () => {
+  assert.ok(api.includes('"reviewing" | "complete" | "followup"'));
+  assert.ok(api.includes("subqueries: ChatSubquery[]"));
+  assert.doesNotMatch(api, /coverageReason|privateReasoning|chainOfThought/);
 });

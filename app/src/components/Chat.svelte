@@ -35,6 +35,9 @@
   const sessions = selectSessions();
 
   let text = $state("");
+  const completedHops = $derived(
+    $activeTurn?.subqueries.filter((subquery) => subquery.status === "complete").length ?? 0,
+  );
 
   const sessionIds = $derived.by(() => {
     // Preserve the backend list order; only append the current session at the
@@ -166,7 +169,10 @@
             <span class="font-mono text-[0.7rem] font-medium uppercase opacity-70">assistant</span>
             {#if $activeTurn.subqueries.length}
               <div class="flex flex-col gap-2">
-                <h2 class="m-0 text-sm font-semibold">Retrieval plan</h2>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="m-0 text-sm font-semibold">Retrieval progress</h2>
+                  <Badge variant="secondary">{completedHops} of {$activeTurn.total}</Badge>
+                </div>
                 <ol class="m-0 flex list-none flex-col gap-2 p-0">
                   {#each $activeTurn.subqueries as subquery (subquery.id)}
                     <li>
@@ -176,10 +182,13 @@
                       >
                         <summary
                           class="cursor-pointer px-3 py-2 marker:text-muted-foreground"
-                          aria-label={`Subquery ${subquery.index}: ${subquery.query}. Status: ${subquery.status}`}
+                          aria-label={`${subquery.kind === "followup" ? "Follow-up " : ""}Subquery ${subquery.index}: ${subquery.query}. Status: ${subquery.status}`}
                         >
                           <span class="ml-1 inline-flex flex-wrap items-center gap-2 align-middle">
                             <span class="text-sm font-medium">{subquery.query}</span>
+                            {#if subquery.kind === "followup"}
+                              <Badge variant="outline">follow-up</Badge>
+                            {/if}
                             <Badge variant={subquery.status === "complete" ? "secondary" : "outline"}>
                               {subquery.status}
                             </Badge>
@@ -229,6 +238,22 @@
                     </li>
                   {/each}
                 </ol>
+              </div>
+            {/if}
+            {#if $activeTurn.coverageStatus}
+              <div
+                class="flex items-center gap-2 text-sm text-muted-foreground"
+                role="status"
+                aria-label="Evidence coverage review status"
+              >
+                {#if $activeTurn.coverageStatus === "reviewing"}
+                  <LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
+                  <span>Reviewing evidence coverage…</span>
+                {:else if $activeTurn.coverageStatus === "followup"}
+                  <span>Coverage review requested additional evidence.</span>
+                {:else}
+                  <span>Evidence coverage is complete.</span>
+                {/if}
               </div>
             {/if}
             {#if $activeTurn.finalAnswer || $streaming}

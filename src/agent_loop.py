@@ -126,6 +126,25 @@ class MultihopHopCompletedEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class MultihopCoverageStartedEvent:
+    """Public-safe notice that evidence coverage is being reviewed."""
+
+    total: int
+    stage: Literal["coverage_started"] = field(default="coverage_started", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MultihopCoverageCompletedEvent:
+    """Public coverage result containing only accepted follow-up questions."""
+
+    total: int
+    followup_subqueries: tuple[str, ...]
+    stage: Literal["coverage_completed"] = field(
+        default="coverage_completed", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class MultihopFinalDeltaEvent:
     """One public text delta from the final composed answer."""
 
@@ -146,6 +165,8 @@ MultihopProgress: TypeAlias = (
     MultihopPlanEvent
     | MultihopHopStartedEvent
     | MultihopHopCompletedEvent
+    | MultihopCoverageStartedEvent
+    | MultihopCoverageCompletedEvent
     | MultihopFinalDeltaEvent
     | MultihopCompletedEvent
 )
@@ -1090,21 +1111,49 @@ class AgentLoop:
         """Yield typed public progress records and atomically persist on completion."""
 
         model, types, history = self._start_turn(session_id, user_text)
-        subqueries = self._plan(model, types, history, user_text)
-        yield MultihopPlanEvent(subqueries)
+        initial_subqueries = self._plan(model, types, history, user_text)
+        subqueries = list(initial_subqueries)
+        yield MultihopPlanEvent(initial_subqueries)
         subanswers: list[str] = []
         contexts: list[str] = []
         hop_sources: list[tuple[SourceRecord, ...]] = []
-        for index, subquery in enumerate(subqueries, start=1):
-            yield MultihopHopStartedEvent(index, len(subqueries), subquery)
+        for index, subquery in enumerate(initial_subqueries, start=1):
+            yield MultihopHopStartedEvent(index, len(initial_subqueries), subquery)
             context, sources = self._retrieve(subquery)
             answer = self._answer_hop(model, types, user_text, subquery, context)
             contexts.append(context)
             hop_sources.append(sources)
             subanswers.append(answer)
             yield MultihopHopCompletedEvent(
-                index, len(subqueries), subquery, answer, sources
+                index, len(initial_subqueries), subquery, answer, sources
             )
+        yield MultihopCoverageStartedEvent(len(initial_subqueries))
+        followups = _review_multihop_coverage(
+            model, types, user_text, initial_subqueries, subanswers
+        )
+        total = len(initial_subqueries) + len(followups)
+        yield MultihopCoverageCompletedEvent(total, followups)
+        for index, subquery in enumerate(followups, start=len(initial_subqueries) + 1):
+            yield MultihopHopStartedEvent(index, total, subquery)
+            try:
+                context, sources = self._retrieve(subquery)
+            except AgentRetrievalError as exc:
+                setattr(exc, "stage", "followup_retrieval")
+                raise
+            try:
+                answer = self._answer_hop(model, types, user_text, subquery, context)
+            except AgentModelError as exc:
+                setattr(exc, "stage", "followup_subanswer")
+                raise
+            subqueries.append(subquery)
+            contexts.append(context)
+            hop_sources.append(sources)
+            subanswers.append(answer)
+            yield MultihopHopCompletedEvent(index, total, subquery, answer, sources)
+        if len(subqueries) > MAX_TOTAL_HOP_COUNT or sum(map(len, hop_sources)) > (
+            MAX_AGGREGATE_SOURCE_COUNT
+        ):
+            raise AgentCoverageError("adaptive multihop bounds were exceeded")
         messages = self._compose_messages(
             types, history, user_text, subqueries, subanswers
         )
@@ -1180,6 +1229,8 @@ __all__ = [
     "MAX_TOTAL_HOP_COUNT",
     "MIN_SUBQUERY_COUNT",
     "MultihopCompletedEvent",
+    "MultihopCoverageCompletedEvent",
+    "MultihopCoverageStartedEvent",
     "MultihopFinalDeltaEvent",
     "MultihopHopCompletedEvent",
     "MultihopHopStartedEvent",

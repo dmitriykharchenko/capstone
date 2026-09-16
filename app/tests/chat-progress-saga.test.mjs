@@ -60,16 +60,34 @@ test("saga maps every ordered multihop event to chat progress actions", async ()
   });
   await settle();
   for (const event of [
-    { event: "plan", subqueries: [{ id: "subquery-1", index: 1, query: "First" }] },
-    { event: "subquery", id: "subquery-1", index: 1, total: 1, query: "First" },
+    { event: "plan", subqueries: [
+      { id: "subquery-1", index: 1, query: "First" },
+      { id: "subquery-2", index: 2, query: "Second" },
+    ] },
+    { event: "subquery", id: "subquery-1", index: 1, total: 2, query: "First" },
     {
       event: "subanswer",
       id: "subquery-1",
       index: 1,
-      total: 1,
+      total: 2,
       query: "First",
       answer: "Evidence answer",
       sources: [source],
+    },
+    { event: "subquery", id: "subquery-2", index: 2, total: 2, query: "Second" },
+    {
+      event: "subanswer", id: "subquery-2", index: 2, total: 2, query: "Second",
+      answer: "Second answer", sources: [source],
+    },
+    { event: "coverage", status: "reviewing", total: 2, subqueries: [] },
+    {
+      event: "coverage", status: "followup", total: 3,
+      subqueries: [{ id: "subquery-3", index: 3, query: "Gap" }],
+    },
+    { event: "subquery", id: "subquery-3", index: 3, total: 3, query: "Gap" },
+    {
+      event: "subanswer", id: "subquery-3", index: 3, total: 3, query: "Gap",
+      answer: "Gap answer", sources: [source],
     },
     { event: "delta", delta: "Final" },
     { event: "done", reply: "Final", chatMode: "rag", indexed: true, sources: [] },
@@ -83,6 +101,12 @@ test("saga maps every ordered multihop event to chat progress actions", async ()
     "chat/appendMessage",
     "chat/started",
     "chat/planReceived",
+    "chat/subqueryStarted",
+    "chat/subanswerReceived",
+    "chat/subqueryStarted",
+    "chat/subanswerReceived",
+    "chat/coverageReceived",
+    "chat/coverageReceived",
     "chat/subqueryStarted",
     "chat/subanswerReceived",
     "chat/chunk",

@@ -1,5 +1,7 @@
 from src.agent_loop import (
     MultihopCompletedEvent,
+    MultihopCoverageCompletedEvent,
+    MultihopCoverageStartedEvent,
     MultihopFinalDeltaEvent,
     MultihopHopCompletedEvent,
     MultihopHopStartedEvent,
@@ -85,6 +87,8 @@ def test_multihop_ndjson_events_are_ordered_and_done_is_authoritative(
             yield MultihopHopCompletedEvent(
                 2, 2, "beta evidence", "beta answer", (source(1, "beta"),)
             )
+            yield MultihopCoverageStartedEvent(2)
+            yield MultihopCoverageCompletedEvent(2, ())
             yield MultihopFinalDeltaEvent("streamed draft")
             yield MultihopCompletedEvent("persisted final", (alpha, beta))
 
@@ -104,6 +108,8 @@ def test_multihop_ndjson_events_are_ordered_and_done_is_authoritative(
         "subanswer",
         "subquery",
         "subanswer",
+        "coverage",
+        "coverage",
         "delta",
         "done",
     ]
@@ -113,6 +119,13 @@ def test_multihop_ndjson_events_are_ordered_and_done_is_authoritative(
     ]
     assert events[2]["id"] == "subquery-1"
     assert events[2]["answer"] == "alpha answer"
+    assert events[5] == {
+        "event": "coverage",
+        "status": "reviewing",
+        "total": 2,
+        "subqueries": [],
+    }
+    assert events[6]["status"] == "complete"
     assert events[-2] == {"event": "delta", "delta": "streamed draft"}
     assert events[-1]["reply"] == "persisted final"
     assert [item["paper_id"] for item in events[-1]["sources"]] == [
@@ -122,6 +135,70 @@ def test_multihop_ndjson_events_are_ordered_and_done_is_authoritative(
     assert captured["chat"]["response"] == "persisted final"
     assert captured["retrieval"]["context"] == "combined evidence"
     assert store.closed is True
+
+
+def test_adaptive_ndjson_appends_stable_followup_ids_and_dynamic_total(
+    monkeypatch, tmp_path
+):
+    final_sources = tuple(source(rank, f"paper-{rank}") for rank in range(1, 5))
+
+    class Store:
+        def close(self):
+            pass
+
+    class Loop:
+        last_context = "all evidence"
+
+        def stream_events(self, _session_id, _message):
+            yield MultihopPlanEvent(("alpha", "beta"))
+            for index, query in enumerate(("alpha", "beta"), start=1):
+                yield MultihopHopStartedEvent(index, 2, query)
+                yield MultihopHopCompletedEvent(
+                    index, 2, query, f"{query} answer", (source(1, query),)
+                )
+            yield MultihopCoverageStartedEvent(2)
+            yield MultihopCoverageCompletedEvent(4, ("gamma", "delta"))
+            for index, query in enumerate(("gamma", "delta"), start=3):
+                yield MultihopHopStartedEvent(index, 4, query)
+                yield MultihopHopCompletedEvent(
+                    index, 4, query, f"{query} answer", (source(1, query),)
+                )
+            yield MultihopFinalDeltaEvent("final")
+            yield MultihopCompletedEvent("final", final_sources)
+
+    install_transport(monkeypatch, Loop(), Store(), {})
+    events = list(
+        handle_chat_stream(
+            config(tmp_path), {"session_id": "session", "message": "question"}
+        )
+    )
+
+    followup_plan = next(
+        event
+        for event in events
+        if event["event"] == "coverage" and event["status"] == "followup"
+    )
+    assert followup_plan == {
+        "event": "coverage",
+        "status": "followup",
+        "total": 4,
+        "subqueries": [
+            {"id": "subquery-3", "index": 3, "query": "gamma"},
+            {"id": "subquery-4", "index": 4, "query": "delta"},
+        ],
+    }
+    assert [event["total"] for event in events if event["event"] == "subquery"] == [
+        2,
+        2,
+        4,
+        4,
+    ]
+    assert [source["paper_id"] for source in events[-1]["sources"]] == [
+        "paper-1",
+        "paper-2",
+        "paper-3",
+        "paper-4",
+    ]
 
 
 def test_multihop_transport_sanitizes_failures_and_closes_store(monkeypatch, tmp_path):

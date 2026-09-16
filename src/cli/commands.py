@@ -15,6 +15,8 @@ from typing import Any, Iterator
 from ..agent_loop import (
     AgentIncompleteResponseError,
     MultihopCompletedEvent,
+    MultihopCoverageCompletedEvent,
+    MultihopCoverageStartedEvent,
     MultihopFinalDeltaEvent,
     MultihopHopCompletedEvent,
     MultihopHopStartedEvent,
@@ -210,6 +212,26 @@ def _chat_progress_payload(progress: Any) -> dict[str, Any]:
         }
     if isinstance(progress, MultihopFinalDeltaEvent):
         return {"event": "delta", "delta": progress.text}
+    if isinstance(progress, MultihopCoverageStartedEvent):
+        return {
+            "event": "coverage",
+            "status": "reviewing",
+            "total": progress.total,
+            "subqueries": [],
+        }
+    if isinstance(progress, MultihopCoverageCompletedEvent):
+        first_index = progress.total - len(progress.followup_subqueries) + 1
+        return {
+            "event": "coverage",
+            "status": "followup" if progress.followup_subqueries else "complete",
+            "total": progress.total,
+            "subqueries": [
+                {"id": _subquery_id(index), "index": index, "query": query}
+                for index, query in enumerate(
+                    progress.followup_subqueries, start=first_index
+                )
+            ],
+        }
     raise TypeError("unsupported chat progress event")
 
 

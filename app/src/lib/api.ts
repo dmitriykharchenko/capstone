@@ -140,6 +140,8 @@ export type ChatStreamEvent =
       reply: string;
       chatMode: string;
       indexed: boolean;
+export type ChatCoverageStatus = "reviewing" | "complete" | "followup";
+
       sources: ChatSource[];
     }
   | { event: "error"; message: string };
@@ -160,6 +162,12 @@ export type IndexStreamEvent =
       error: string | null;
     }
   | {
+  | {
+      event: "coverage";
+      status: ChatCoverageStatus;
+      total: number;
+      subqueries: ChatSubquery[];
+    }
       event: "done";
       completed: number;
       total: number;

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatSource } from "../../lib/api";
+import type { ChatCoverageStatus, ChatMessage, ChatSource } from "../../lib/api";
 
 export type ChatSubqueryStatus = "pending" | "active" | "complete";
 
@@ -6,6 +6,7 @@ export interface ChatSubqueryProgress {
   id: string;
   index: number;
   query: string;
+  kind: "initial" | "followup";
   status: ChatSubqueryStatus;
   answer: string | null;
   sources: ChatSource[];
@@ -13,6 +14,9 @@ export interface ChatSubqueryProgress {
 
 export interface ChatTurnProgress {
   subqueries: ChatSubqueryProgress[];
+  initialCount: number;
+  total: number;
+  coverageStatus: ChatCoverageStatus | null;
   finalAnswer: string;
 }
 

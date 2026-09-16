@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const MAX_AGGREGATE_CHUNK_LIMIT: usize = 25;
+const MAX_AGGREGATE_CHUNK_LIMIT: usize = 35;
 const TRANSPORT_ERROR_MESSAGE: &str =
     "Evaluation transport failed. Check the backend logs and retry.";
 
@@ -191,6 +191,18 @@ impl EvaluationCaseError {
             "subanswer" => (
                 "subanswer",
                 "Subanswer generation failed for this case. Check backend configuration and retry.",
+            ),
+            "coverage" => (
+                "coverage",
+                "Coverage review failed for this case. Check backend configuration and retry.",
+            ),
+            "followup_retrieval" => (
+                "followup_retrieval",
+                "Follow-up retrieval failed for this case. Check the paper index and retry.",
+            ),
+            "followup_subanswer" => (
+                "followup_subanswer",
+                "Follow-up subanswer generation failed for this case. Check backend configuration and retry.",
             ),
             "composer" => (
                 "composer",
@@ -496,6 +508,18 @@ mod tests {
                 "Subanswer generation failed for this case. Check backend configuration and retry.",
             ),
             (
+                "coverage",
+                "Coverage review failed for this case. Check backend configuration and retry.",
+            ),
+            (
+                "followup_retrieval",
+                "Follow-up retrieval failed for this case. Check the paper index and retry.",
+            ),
+            (
+                "followup_subanswer",
+                "Follow-up subanswer generation failed for this case. Check backend configuration and retry.",
+            ),
+            (
                 "composer",
                 "Final answer composition failed for this case. Check backend configuration and retry.",
             ),
@@ -567,7 +591,7 @@ mod tests {
         let base = json!({
             "score": 4, "confidence": "high", "reasoning": "supported", "flags": []
         });
-        let chunks: Vec<Value> = (1..=25)
+        let chunks: Vec<Value> = (1..=35)
             .map(|rank| {
                 json!({
                     "rank": rank,
@@ -582,9 +606,9 @@ mod tests {
             })
             .collect();
         let mut ranking = base.clone();
-        ranking["relevant_chunk_ranks"] = json!([1, 25]);
+        ranking["relevant_chunk_ranks"] = json!([1, 35]);
         let mut utilization = base.clone();
-        utilization["chunks_used"] = json!([25, "chunk-2"]);
+        utilization["chunks_used"] = json!([35, "chunk-2"]);
         let mut similarity = base.clone();
         similarity["contradicting_claims"] = json!([]);
         let mut completeness = base.clone();
@@ -616,12 +640,12 @@ mod tests {
         let serialized = serde_json::to_value(event).unwrap();
         assert_eq!(serialized["event"], "caseSuccess");
         assert_eq!(
-            serialized["result"]["retrieved_chunks"][24]["text"],
-            "full chunk 25"
+            serialized["result"]["retrieved_chunks"][34]["text"],
+            "full chunk 35"
         );
         assert_eq!(
             serialized["result"]["judge_scores"]["context_utilization"]["chunks_used"][0],
-            25
+            35
         );
         assert_eq!(
             serialized["result"]["judge_scores"]["context_utilization"]["chunks_used"][1],
@@ -630,7 +654,7 @@ mod tests {
 
         for invalid_chunks in [
             json!([]),
-            json!((1..=26)
+            json!((1..=36)
                 .map(|rank| {
                     json!({
                         "rank": rank, "text": "chunk", "score": 1.0,
@@ -650,7 +674,7 @@ mod tests {
 
         let mut invalid_reference = payload;
         invalid_reference["result"]["judge_scores"]["relevant_chunk_ranking"]
-            ["relevant_chunk_ranks"] = json!([26]);
+            ["relevant_chunk_ranks"] = json!([36]);
         assert!(matches!(
             evaluation_stream_event(invalid_reference),
             EvaluationStreamEvent::Error { .. }

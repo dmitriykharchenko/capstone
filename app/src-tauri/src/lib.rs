@@ -24,8 +24,9 @@ use tauri::ipc::Channel;
 ///
 /// Serialized with an internal `event` tag so TypeScript can discriminate every
 /// public multihop stage while retaining the legacy `delta` / `done` contract.
-const MAX_CHAT_SOURCES: usize = 25;
-const MAX_CHAT_SUBQUERIES: usize = 5;
+const MAX_CHAT_SOURCES: usize = 35;
+const MAX_CHAT_INITIAL_SUBQUERIES: usize = 5;
+const MAX_CHAT_SUBQUERIES: usize = 7;
 const CHAT_TRANSPORT_ERROR: &str = "Chat transport failed. Check backend logs and retry.";
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -45,6 +46,14 @@ struct ChatSource {
     page: u32,
     score: f64,
     snippet: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ChatCoverageStatus {
+    Reviewing,
+    Complete,
+    Followup,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -70,6 +79,11 @@ enum ChatStreamEvent {
         query: String,
         answer: String,
         sources: Vec<ChatSource>,
+    },
+    Coverage {
+        status: ChatCoverageStatus,
+        total: u32,
+        subqueries: Vec<ChatSubquery>,
     },
     Delta {
         delta: String,
@@ -133,6 +147,65 @@ fn chat_subquery_fields(value: &Value) -> Option<(String, u32, u32, String)> {
     Some((id, index, total, query))
 }
 
+fn chat_coverage_event(value: &Value) -> Option<ChatStreamEvent> {
+    let Some(raw_status) = value.get("status").and_then(Value::as_str) else {
+        return invalid_chat_stream_event();
+    };
+    let status = match raw_status {
+        "reviewing" => ChatCoverageStatus::Reviewing,
+        "complete" => ChatCoverageStatus::Complete,
+        "followup" => ChatCoverageStatus::Followup,
+        _ => return invalid_chat_stream_event(),
+    };
+    let Some(total) = value
+        .get("total")
+        .and_then(Value::as_u64)
+        .and_then(|total| u32::try_from(total).ok())
+    else {
+        return invalid_chat_stream_event();
+    };
+    let Ok(subqueries) = serde_json::from_value::<Vec<ChatSubquery>>(
+        value.get("subqueries").cloned().unwrap_or(Value::Null),
+    ) else {
+        return invalid_chat_stream_event();
+    };
+    let valid = match status {
+        ChatCoverageStatus::Reviewing | ChatCoverageStatus::Complete => {
+            (2..=MAX_CHAT_INITIAL_SUBQUERIES as u32).contains(&total) && subqueries.is_empty()
+        }
+        ChatCoverageStatus::Followup => {
+            let followup_count = subqueries.len();
+            if !(1..=2).contains(&followup_count)
+                || !(3..=MAX_CHAT_SUBQUERIES as u32).contains(&total)
+                || (total as usize) < followup_count + 2
+            {
+                false
+            } else {
+                let first_index = total - followup_count as u32 + 1;
+                let mut normalized = Vec::with_capacity(followup_count);
+                subqueries.iter().enumerate().all(|(offset, subquery)| {
+                    let index = first_index + offset as u32;
+                    let key = subquery.query.trim().to_lowercase();
+                    let valid = subquery.id == format!("subquery-{index}")
+                        && subquery.index == index
+                        && !key.is_empty()
+                        && !normalized.contains(&key);
+                    normalized.push(key);
+                    valid
+                })
+            }
+        }
+    };
+    if !valid {
+        return invalid_chat_stream_event();
+    }
+    Some(ChatStreamEvent::Coverage {
+        status,
+        total,
+        subqueries,
+    })
+}
+
 fn chat_done_event(value: &Value) -> Option<ChatStreamEvent> {
     if value.get("done").and_then(Value::as_bool) != Some(true) {
         return invalid_chat_stream_event();
@@ -187,7 +260,7 @@ fn chat_stream_event(value: &Value) -> Option<ChatStreamEvent> {
                 return invalid_chat_stream_event();
             };
             let mut normalized = Vec::with_capacity(subqueries.len());
-            if !(2..=MAX_CHAT_SUBQUERIES).contains(&subqueries.len()) {
+            if !(2..=MAX_CHAT_INITIAL_SUBQUERIES).contains(&subqueries.len()) {
                 return invalid_chat_stream_event();
             }
             for (position, subquery) in subqueries.iter().enumerate() {
@@ -237,6 +310,7 @@ fn chat_stream_event(value: &Value) -> Option<ChatStreamEvent> {
                 sources,
             })
         }
+        Some("coverage") => chat_coverage_event(value),
         Some("delta") => match value.get("delta").and_then(Value::as_str) {
             Some(delta) if !delta.is_empty() => Some(ChatStreamEvent::Delta {
                 delta: delta.to_string(),
@@ -754,7 +828,7 @@ mod tests {
         }))
         .unwrap();
 
-        let values: Vec<Value> = [plan, started, answer, delta]
+        let values: Vec<Value> = [plan, started, answer, coverage, delta]
             .into_iter()
             .map(|event| serde_json::to_value(event).unwrap())
             .collect();
@@ -763,12 +837,14 @@ mod tests {
                 .iter()
                 .map(|value| value["event"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["plan", "subquery", "subanswer", "delta"]
+            ["plan", "subquery", "subanswer", "coverage", "delta"]
         );
         assert_eq!(values[0]["subqueries"][1]["id"], "subquery-2");
         assert_eq!(values[1]["index"], 1);
         assert_eq!(values[2]["answer"], "summary");
-        assert_eq!(values[3]["delta"], "final text");
+        assert_eq!(values[3]["status"], "followup");
+        assert_eq!(values[3]["subqueries"][1]["id"], "subquery-4");
+        assert_eq!(values[4]["delta"], "final text");
     }
 
     #[test]
@@ -798,7 +874,7 @@ mod tests {
 
     #[test]
     fn accepts_aggregate_done_sources_and_legacy_delta() {
-        let sources: Vec<Value> = (1..=6).map(chat_source).collect();
+        let sources: Vec<Value> = (1..=35).map(chat_source).collect();
         let done = chat_stream_event(&serde_json::json!({
             "ok": true,
             "done": true,
@@ -811,7 +887,14 @@ mod tests {
 
         assert!(matches!(
             done,
-            ChatStreamEvent::Done { sources, .. } if sources.len() == 6
+            ChatStreamEvent::Done { sources, .. } if sources.len() == 35
+        ));
+        assert!(matches!(
+            chat_stream_event(&serde_json::json!({
+                "ok": true, "done": true, "reply": "answer", "chat_mode": "mock",
+                "indexed": true, "sources": (1..=36).map(chat_source).collect::<Vec<_>>(),
+            })),
+            Some(ChatStreamEvent::Error { .. })
         ));
         assert_eq!(
             chat_stream_event(&serde_json::json!({"delta": "legacy"})),
@@ -825,6 +908,14 @@ mod tests {
     fn accepts_source_less_legacy_done_completion() {
         let done = chat_stream_event(&serde_json::json!({
             "ok": true,
+        let coverage = chat_stream_event(&serde_json::json!({
+            "event": "coverage", "status": "followup", "total": 4,
+            "subqueries": [
+                {"id": "subquery-3", "index": 3, "query": "gamma"},
+                {"id": "subquery-4", "index": 4, "query": "delta"},
+            ],
+        }))
+        .unwrap();
             "done": true,
             "reply": "answer",
             "chat_mode": "mock",
@@ -861,6 +952,10 @@ mod tests {
             "ok": false,
             "delta": "partial",
             "error": "Chat response was incomplete; shorten the request and try again",
+            serde_json::json!({
+                "event": "coverage", "status": "followup", "total": 3,
+                "subqueries": [{"id": "subquery-4", "index": 4, "query": "gap"}],
+            }),
             "error_type": "AgentIncompleteResponseError",
         }));
 

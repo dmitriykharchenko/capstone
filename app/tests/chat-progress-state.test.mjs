@@ -46,12 +46,22 @@ test("chat progress follows planner order through subanswers and final stream", 
 
   state = chatReducer(
     state,
-    actions.chatSubqueryStarted({ id: "subquery-1", index: 1, query: "First" }),
+    actions.chatSubqueryStarted({ id: "subquery-1", index: 1, query: "First" }, 2),
   );
   state = chatReducer(
     state,
-    actions.chatSubanswerReceived("subquery-1", 1, "First", "First answer", [source]),
+    actions.chatSubanswerReceived("subquery-1", 1, "First", "First answer", [source], 2),
   );
+  state = chatReducer(
+    state,
+    actions.chatSubqueryStarted({ id: "subquery-2", index: 2, query: "Second" }, 2),
+  );
+  state = chatReducer(
+    state,
+    actions.chatSubanswerReceived("subquery-2", 2, "Second", "Second answer", [source], 2),
+  );
+  state = chatReducer(state, actions.chatCoverageReceived("reviewing", 2, []));
+  state = chatReducer(state, actions.chatCoverageReceived("complete", 2, []));
   state = chatReducer(state, actions.chatChunk("Final "));
   state = chatReducer(state, actions.chatChunk("answer"));
 
@@ -60,6 +70,66 @@ test("chat progress follows planner order through subanswers and final stream", 
   assert.deepEqual(state.activeTurn.subqueries[0].sources, [source]);
   assert.equal(state.activeTurn.finalAnswer, "Final answer");
   assert.equal(state.streaming, true);
+});
+
+test("adaptive followups append deterministically and reconcile dynamic totals", () => {
+  let state = chatReducer(undefined, actions.chatStarted());
+  state = chatReducer(state, actions.chatPlanReceived([
+    { id: "subquery-1", index: 1, query: "First" },
+    { id: "subquery-2", index: 2, query: "Second" },
+  ]));
+  for (const [id, index, query] of [["subquery-1", 1, "First"], ["subquery-2", 2, "Second"]]) {
+    state = chatReducer(state, actions.chatSubqueryStarted({ id, index, query }, 2));
+    state = chatReducer(state, actions.chatSubanswerReceived(id, index, query, `${query} answer`, [source], 2));
+  }
+  state = chatReducer(state, actions.chatCoverageReceived("reviewing", 2, []));
+  const beforeFollowup = state;
+  state = chatReducer(state, actions.chatChunk("too early"));
+  assert.equal(state, beforeFollowup);
+  state = chatReducer(state, actions.chatCoverageReceived("followup", 4, [
+    { id: "subquery-3", index: 3, query: "Third" },
+    { id: "subquery-4", index: 4, query: "Fourth" },
+  ]));
+  assert.equal(state.activeTurn.total, 4);
+  assert.deepEqual(state.activeTurn.subqueries.map(({ id, kind, status }) => [id, kind, status]), [
+    ["subquery-1", "initial", "complete"],
+    ["subquery-2", "initial", "complete"],
+    ["subquery-3", "followup", "pending"],
+    ["subquery-4", "followup", "pending"],
+  ]);
+  for (const [id, index, query] of [["subquery-3", 3, "Third"], ["subquery-4", 4, "Fourth"]]) {
+    state = chatReducer(state, actions.chatSubqueryStarted({ id, index, query }, 4));
+    state = chatReducer(state, actions.chatSubanswerReceived(id, index, query, `${query} answer`, [source], 4));
+  }
+  state = chatReducer(state, actions.chatChunk("Final"));
+  assert.equal(state.activeTurn.finalAnswer, "Final");
+});
+
+test("malformed and late adaptive events cannot duplicate or regress progress", () => {
+  let state = chatReducer(undefined, actions.chatStarted());
+  state = chatReducer(state, actions.chatPlanReceived([
+    { id: "subquery-1", index: 1, query: "First" },
+    { id: "subquery-2", index: 2, query: "Second" },
+  ]));
+  const planned = state;
+  state = chatReducer(state, actions.chatCoverageReceived("followup", 4, [
+    { id: "subquery-2", index: 2, query: "Duplicate" },
+  ]));
+  state = chatReducer(state, actions.chatSubqueryStarted(
+    { id: "subquery-4", index: 4, query: "Late gap" }, 4,
+  ));
+  state = chatReducer(state, actions.chatSubanswerReceived(
+    "subquery-1", 1, "Changed", "answer", [source], 2,
+  ));
+  assert.equal(state, planned);
+
+  state = chatReducer(state, actions.setSessionId("new"));
+  const reset = state;
+  state = chatReducer(state, actions.chatCoverageReceived("reviewing", 2, []));
+  state = chatReducer(state, actions.chatSubqueryStarted(
+    { id: "subquery-1", index: 1, query: "Late" }, 2,
+  ));
+  assert.equal(state, reset);
 });
 
 test("completion persists only authoritative final answer and clears progress", () => {

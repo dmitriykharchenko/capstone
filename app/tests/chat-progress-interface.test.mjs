@@ -25,6 +25,7 @@ test("subquery toggles expose accessible status and source metadata", async () =
   const component = await readChatComponent();
   for (const contract of [
     "<summary",
+    'subquery.kind === "followup"',
     "Subquery ${subquery.index}: ${subquery.query}. Status: ${subquery.status}",
     "Answer for subquery ${subquery.index}",
     "Retrieved chunks for subquery ${subquery.index}",
@@ -41,7 +42,13 @@ test("Chat renders accessible ordered multihop and prominent final-answer progre
   for (const contract of [
     'aria-label="Multihop answer progress"',
     'aria-live="polite"',
-    "Retrieval plan",
+    "Retrieval progress",
+    "completedHops",
+    "$activeTurn.total",
+    'aria-label="Evidence coverage review status"',
+    'role="status"',
+    "Reviewing evidence coverage…",
+    "Coverage review requested additional evidence.",
     "subquery.status",
     "subquery.answer",
     "Retrieved chunks",

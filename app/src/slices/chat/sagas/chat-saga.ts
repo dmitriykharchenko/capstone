@@ -7,6 +7,7 @@ import { loadSessions, sessionsFailed, setSessions } from "../../sessions/sessio
 import {
   appendMessage,
   chatChunk,
+  chatCoverageReceived,
   chatFailed,
   chatHydrationFailed,
   chatPlanReceived,
@@ -160,9 +161,14 @@ export function* streamChatTurn(
       if (reset || !event) return;
       if (event.event === "plan") {
         yield* put(chatPlanReceived(event.subqueries));
+      } else if (event.event === "coverage") {
+        yield* put(chatCoverageReceived(event.status, event.total, event.subqueries));
       } else if (event.event === "subquery") {
         yield* put(
-          chatSubqueryStarted({ id: event.id, index: event.index, query: event.query }),
+          chatSubqueryStarted(
+            { id: event.id, index: event.index, query: event.query },
+            event.total,
+          ),
         );
       } else if (event.event === "subanswer") {
         yield* put(
@@ -172,6 +178,7 @@ export function* streamChatTurn(
             event.query,
             event.answer,
             event.sources,
+            event.total,
           ),
         );
       } else if (event.event === "delta") {
