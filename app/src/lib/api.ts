@@ -114,6 +114,8 @@ export interface ChatSubquery {
   query: string;
 }
 
+export type ChatCoverageStatus = "reviewing" | "complete" | "followup";
+
 // Discriminated union mirroring the Rust `ChatStreamEvent` (internally tagged
 // on `event`). `delta` remains the final-answer token event for compatibility.
 export type ChatStreamEvent =
@@ -134,14 +136,18 @@ export type ChatStreamEvent =
       answer: string;
       sources: ChatSource[];
     }
+  | {
+      event: "coverage";
+      status: ChatCoverageStatus;
+      total: number;
+      subqueries: ChatSubquery[];
+    }
   | { event: "delta"; delta: string }
   | {
       event: "done";
       reply: string;
       chatMode: string;
       indexed: boolean;
-export type ChatCoverageStatus = "reviewing" | "complete" | "followup";
-
       sources: ChatSource[];
     }
   | { event: "error"; message: string };
@@ -162,12 +168,6 @@ export type IndexStreamEvent =
       error: string | null;
     }
   | {
-  | {
-      event: "coverage";
-      status: ChatCoverageStatus;
-      total: number;
-      subqueries: ChatSubquery[];
-    }
       event: "done";
       completed: number;
       total: number;

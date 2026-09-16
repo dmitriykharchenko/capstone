@@ -210,8 +210,6 @@ def _chat_progress_payload(progress: Any) -> dict[str, Any]:
             "answer": progress.answer,
             "sources": [_source_payload(source) for source in progress.sources],
         }
-    if isinstance(progress, MultihopFinalDeltaEvent):
-        return {"event": "delta", "delta": progress.text}
     if isinstance(progress, MultihopCoverageStartedEvent):
         return {
             "event": "coverage",
@@ -232,6 +230,8 @@ def _chat_progress_payload(progress: Any) -> dict[str, Any]:
                 )
             ],
         }
+    if isinstance(progress, MultihopFinalDeltaEvent):
+        return {"event": "delta", "delta": progress.text}
     raise TypeError("unsupported chat progress event")
 
 

@@ -823,6 +823,14 @@ mod tests {
             "sources": [chat_source(1)],
         }))
         .unwrap();
+        let coverage = chat_stream_event(&serde_json::json!({
+            "event": "coverage", "status": "followup", "total": 4,
+            "subqueries": [
+                {"id": "subquery-3", "index": 3, "query": "gamma"},
+                {"id": "subquery-4", "index": 4, "query": "delta"},
+            ],
+        }))
+        .unwrap();
         let delta = chat_stream_event(&serde_json::json!({
             "event": "delta", "delta": "final text",
         }))
@@ -860,6 +868,10 @@ mod tests {
             serde_json::json!({
                 "event": "subanswer", "id": "subquery-1", "index": 1,
                 "total": 2, "query": "alpha", "answer": "summary",
+            }),
+            serde_json::json!({
+                "event": "coverage", "status": "followup", "total": 3,
+                "subqueries": [{"id": "subquery-4", "index": 4, "query": "gap"}],
             }),
             serde_json::json!({"event": "private_reasoning", "text": "hidden"}),
         ] {
@@ -908,14 +920,6 @@ mod tests {
     fn accepts_source_less_legacy_done_completion() {
         let done = chat_stream_event(&serde_json::json!({
             "ok": true,
-        let coverage = chat_stream_event(&serde_json::json!({
-            "event": "coverage", "status": "followup", "total": 4,
-            "subqueries": [
-                {"id": "subquery-3", "index": 3, "query": "gamma"},
-                {"id": "subquery-4", "index": 4, "query": "delta"},
-            ],
-        }))
-        .unwrap();
             "done": true,
             "reply": "answer",
             "chat_mode": "mock",
@@ -952,10 +956,6 @@ mod tests {
             "ok": false,
             "delta": "partial",
             "error": "Chat response was incomplete; shorten the request and try again",
-            serde_json::json!({
-                "event": "coverage", "status": "followup", "total": 3,
-                "subqueries": [{"id": "subquery-4", "index": 4, "query": "gap"}],
-            }),
             "error_type": "AgentIncompleteResponseError",
         }));
 
