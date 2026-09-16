@@ -83,12 +83,14 @@ class FakeModel:
         answer_failures=None,
         stage_failures=None,
         hop_count=2,
+        followups=(),
     ):
         self.calls = []
         self.malformed_judges = set(malformed_judges or ())
         self.answer_failures = set(answer_failures or ())
         self.stage_failures = dict(stage_failures or {})
         self.hop_count = hop_count
+        self.followups = tuple(followups)
 
     def invoke(self, messages):
         self.calls.append(messages)
@@ -112,9 +114,26 @@ class FakeModel:
                     }
                 )
             )
+        if "MULTIHOP_COVERAGE" in contents:
+            payload = json.loads(messages[-1].content)
+            question = payload["original_question"]
+            if self.stage_failures.get(question) == "coverage":
+                raise RuntimeError(f"coverage failed for {question}")
+            return FakeResponse(
+                json.dumps(
+                    {
+                        "complete": not self.followups,
+                        "follow_up_subqueries": list(self.followups),
+                    }
+                )
+            )
         payload = json.loads(messages[-1].content)
         if "MULTIHOP_SUBANSWER" in contents:
-            if self.stage_failures.get(payload["original_question"]) == "subanswer":
+            failure = self.stage_failures.get(payload["original_question"])
+            if failure == "subanswer" or (
+                failure == "followup_subanswer"
+                and payload["subquery"] in self.followups
+            ):
                 raise RuntimeError(
                     f"subanswer failed for {payload['original_question']}"
                 )
@@ -137,6 +156,8 @@ def model_stages(model):
             stages.append("planner")
         elif "MULTIHOP_SUBANSWER" in contents:
             stages.append("subanswer")
+        elif "MULTIHOP_COVERAGE" in contents:
+            stages.append("coverage")
         else:
             stages.append("composer")
     return stages
@@ -159,6 +180,7 @@ def test_existing_strategy_values_all_use_multihop_default_retrieval(strategy):
         "planner",
         "subanswer",
         "subanswer",
+        "coverage",
         "composer",
         "judge",
     ]
@@ -264,16 +286,19 @@ def test_cases_and_model_calls_execute_in_strict_sequential_order():
         "planner",
         "subanswer",
         "subanswer",
+        "coverage",
         "composer",
         "judge",
         "planner",
         "subanswer",
         "subanswer",
+        "coverage",
         "composer",
         "judge",
         "planner",
         "subanswer",
         "subanswer",
+        "coverage",
         "composer",
         "judge",
     ]
@@ -301,7 +326,7 @@ def test_retrieval_and_model_failures_are_recorded_and_later_cases_continue():
     assert results[2]["judge_scores"]["context_precision"]["score"] == 4
 
 
-@pytest.mark.parametrize("stage", ["planner", "subanswer", "composer"])
+@pytest.mark.parametrize("stage", ["planner", "subanswer", "coverage", "composer"])
 def test_each_multihop_model_failure_stage_is_explicit_and_later_cases_continue(stage):
     model = FakeModel(stage_failures={"failure": stage})
 
@@ -311,6 +336,43 @@ def test_each_multihop_model_failure_stage_is_explicit_and_later_cases_continue(
 
     assert results[0]["error"]["stage"] == stage
     assert results[0]["generated_answer"] is None
+    assert results[1]["error"] is None
+
+
+def test_followup_failures_are_explicit_and_later_cases_continue():
+    followups = ("material gap evidence",)
+    model = FakeModel(
+        stage_failures={"failure": "followup_subanswer"},
+        followups=followups,
+    )
+
+    results = EvaluationRunner(FakeRetriever(), model).run(
+        [case("failure"), case("success")], "hybrid"
+    )
+
+    assert results[0]["error"]["stage"] == "followup_subanswer"
+    assert results[1]["error"] is None
+
+
+def test_followup_retrieval_failure_has_explicit_stage_and_next_case_runs():
+    class FailFirstGapRetriever(FakeRetriever):
+        def __init__(self):
+            super().__init__()
+            self.failed = False
+
+        def retrieve_chunks(self, query, n_results=5):
+            self.calls.append((query, n_results))
+            if query == "material gap evidence" and not self.failed:
+                self.failed = True
+                raise RuntimeError("private retrieval detail")
+            return chunks(query)
+
+    results = EvaluationRunner(
+        FailFirstGapRetriever(),
+        FakeModel(followups=("material gap evidence",)),
+    ).run([case("failure"), case("success")], "hybrid")
+
+    assert results[0]["error"]["stage"] == "followup_retrieval"
     assert results[1]["error"] is None
 
 
@@ -345,20 +407,23 @@ def test_valid_judge_json_and_aggregation_ready_result_schema():
     json.dumps(result)
 
 
-def test_five_hops_aggregate_and_judge_all_twenty_five_chunks():
-    model = FakeModel(hop_count=5)
+def test_seven_hops_aggregate_and_judge_all_thirty_five_chunks():
+    model = FakeModel(
+        hop_count=5,
+        followups=("Question one followup 1", "Question one followup 2"),
+    )
 
     result = EvaluationRunner(FakeRetriever(), model).run([case()], "hybrid")[0]
 
-    assert len(result["retrieved_chunks"]) == 25
-    assert [chunk["rank"] for chunk in result["retrieved_chunks"]] == list(range(1, 26))
-    assert "25. full chunk" in model.calls[-1][-1].content
+    assert len(result["retrieved_chunks"]) == 35
+    assert [chunk["rank"] for chunk in result["retrieved_chunks"]] == list(range(1, 36))
+    assert "35. full chunk" in model.calls[-1][-1].content
     valid = judge_payload()
-    valid["relevant_chunk_ranking"]["relevant_chunk_ranks"] = [25]
+    valid["relevant_chunk_ranking"]["relevant_chunk_ranks"] = [35]
     assert parse_judge_output(json.dumps(valid))["relevant_chunk_ranking"][
         "relevant_chunk_ranks"
-    ] == [25]
-    valid["relevant_chunk_ranking"]["relevant_chunk_ranks"] = [26]
+    ] == [35]
+    valid["relevant_chunk_ranking"]["relevant_chunk_ranks"] = [36]
     with pytest.raises(JudgeOutputError):
         parse_judge_output(json.dumps(valid))
 
@@ -407,7 +472,7 @@ def test_stateless_calls_do_not_use_chat_persistence(monkeypatch):
         "src.chat_history_index.ChatHistoryIndex.index_exchange",
         persistence_was_called,
     )
-    model = FakeModel()
+    model = FakeModel(followups=("Question one material gap",))
 
     result = EvaluationRunner(FakeRetriever(), model).run([case()], "vector")
 
@@ -416,6 +481,8 @@ def test_stateless_calls_do_not_use_chat_persistence(monkeypatch):
         "planner",
         "subanswer",
         "subanswer",
+        "coverage",
+        "subanswer",
         "composer",
         "judge",
     ]
@@ -423,7 +490,8 @@ def test_stateless_calls_do_not_use_chat_persistence(monkeypatch):
 
 def test_chat_and_evaluation_share_calls_answer_and_aggregate_sources(tmp_path):
     question = "Compare systems"
-    chat_model = FakeModel()
+    followups = ("Compare systems material gap",)
+    chat_model = FakeModel(followups=followups)
     chat_retriever = FakeRetriever()
     with AgentLoop(
         tmp_path / "chat.sqlite3", chat_model, paper_retriever=chat_retriever
@@ -431,7 +499,7 @@ def test_chat_and_evaluation_share_calls_answer_and_aggregate_sources(tmp_path):
         chat_answer = chat.run("session", question)
         chat_sources = chat.last_sources
 
-    evaluation_model = FakeModel()
+    evaluation_model = FakeModel(followups=followups)
     evaluation_retriever = FakeRetriever()
     evaluation = EvaluationRunner(evaluation_retriever, evaluation_model).run(
         [case(question)], "hybrid"

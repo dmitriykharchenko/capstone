@@ -438,13 +438,20 @@ def _valid_chunk_reference(value: Any) -> bool:
 
 
 def _multihop_error_stage(exc: Exception) -> str:
+    explicit_stage = getattr(exc, "stage", None)
+    if explicit_stage in {
+        "coverage",
+        "followup_retrieval",
+        "followup_subanswer",
+    }:
+        return explicit_stage
     if isinstance(exc, AgentPlanError):
         return "planner"
     if isinstance(exc, AgentRetrievalError):
         return "retrieval"
     if isinstance(exc, AgentModelError):
         stage = getattr(exc, "stage", None)
-        if stage in {"planner", "subanswer", "composer"}:
+        if stage in {"planner", "coverage", "subanswer", "composer"}:
             return stage
     return "model"
 

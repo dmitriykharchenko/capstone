@@ -272,6 +272,18 @@ def test_sanitizes_path_and_credential_shaped_case_errors(tmp_path):
             "Subanswer generation failed for this case. Check backend configuration and retry.",
         ),
         (
+            "coverage",
+            "Coverage review failed for this case. Check backend configuration and retry.",
+        ),
+        (
+            "followup_retrieval",
+            "Follow-up retrieval failed for this case. Check the paper index and retry.",
+        ),
+        (
+            "followup_subanswer",
+            "Follow-up subanswer generation failed for this case. Check backend configuration and retry.",
+        ),
+        (
             "composer",
             "Final answer composition failed for this case. Check backend configuration and retry.",
         ),

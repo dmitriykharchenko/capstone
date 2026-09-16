@@ -24,7 +24,9 @@ DEFAULT_SYSTEM_PROMPT = (
 PAPER_CHUNK_LIMIT = 5
 MIN_SUBQUERY_COUNT = 2
 MAX_SUBQUERY_COUNT = 5
-MAX_AGGREGATE_SOURCE_COUNT = PAPER_CHUNK_LIMIT * MAX_SUBQUERY_COUNT
+MAX_FOLLOWUP_SUBQUERY_COUNT = 2
+MAX_TOTAL_HOP_COUNT = MAX_SUBQUERY_COUNT + MAX_FOLLOWUP_SUBQUERY_COUNT
+MAX_AGGREGATE_SOURCE_COUNT = PAPER_CHUNK_LIMIT * MAX_TOTAL_HOP_COUNT
 SOURCE_SNIPPET_LENGTH = 240
 UNTRUSTED_CONTEXT_BEGIN = "<<<BEGIN_UNTRUSTED_PAPER_CONTEXT>>>"
 UNTRUSTED_CONTEXT_END = "<<<END_UNTRUSTED_PAPER_CONTEXT>>>"
@@ -52,6 +54,10 @@ class AgentRetrievalError(AgentLoopError):
 
 class AgentPlanError(AgentModelError):
     """Raised when the planner returns an invalid multihop plan."""
+
+
+class AgentCoverageError(AgentModelError):
+    """Raised when the coverage reviewer fails or returns invalid output."""
 
 
 class ChatModel(Protocol):
@@ -511,6 +517,79 @@ def _parse_plan(response: Any) -> tuple[str, ...]:
     return tuple(subqueries)
 
 
+def _parse_coverage(
+    response: Any, initial_subqueries: Sequence[str]
+) -> tuple[str, ...]:
+    """Parse one strict coverage decision into normalized follow-up questions."""
+
+    try:
+        text = _response_text(response)
+    except AgentModelError as exc:
+        raise AgentCoverageError("coverage output must contain non-empty JSON") from exc
+    try:
+        payload = json.loads(
+            text,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise AgentCoverageError(
+            "coverage output must be a strict JSON object"
+        ) from exc
+    expected = {"complete", "follow_up_subqueries"}
+    if not isinstance(payload, dict) or set(payload) != expected:
+        raise AgentCoverageError(
+            "coverage output must contain only complete and follow_up_subqueries"
+        )
+    complete = payload["complete"]
+    raw_followups = payload["follow_up_subqueries"]
+    if not isinstance(complete, bool):
+        raise AgentCoverageError("coverage complete must be a boolean")
+    if not isinstance(raw_followups, list):
+        raise AgentCoverageError("coverage follow_up_subqueries must be a JSON array")
+    if complete and raw_followups:
+        raise AgentCoverageError(
+            "complete coverage cannot include follow-up subqueries"
+        )
+    if not complete and not raw_followups:
+        raise AgentCoverageError(
+            "incomplete coverage must include a follow-up subquery"
+        )
+    if len(raw_followups) > MAX_FOLLOWUP_SUBQUERY_COUNT:
+        raise AgentCoverageError(
+            f"coverage may return at most {MAX_FOLLOWUP_SUBQUERY_COUNT} follow-up subqueries"
+        )
+    normalized = {" ".join(query.split()).casefold() for query in initial_subqueries}
+    followups: list[str] = []
+    for raw_followup in raw_followups:
+        if not isinstance(raw_followup, str) or not raw_followup.strip():
+            raise AgentCoverageError(
+                "coverage follow-up subqueries must be non-empty strings"
+            )
+        followup = " ".join(raw_followup.split())
+        key = followup.casefold()
+        if key in normalized:
+            raise AgentCoverageError(
+                "coverage follow-up subqueries must be distinct from all prior queries"
+            )
+        normalized.add(key)
+        followups.append(followup)
+    return tuple(followups)
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key: {key}")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
 def _aggregate_records(records_by_hop: Sequence[Sequence[Any]]) -> tuple[Any, ...]:
     """Deduplicate ranked evidence by stable identity in first-seen hop order."""
 
@@ -575,6 +654,47 @@ def _plan_multihop(
         human_message(content=user_text),
     ]
     return _parse_plan(_invoke_multihop(model, messages, "Planner"))
+
+
+def _review_multihop_coverage(
+    model: ChatModel,
+    types: tuple[Any, Any, Any, Any],
+    user_text: str,
+    subqueries: Sequence[str],
+    subanswers: Sequence[str],
+) -> tuple[str, ...]:
+    human_message, _, system_message, _ = types
+    evidence = [
+        {"subquery": subquery, "answer": answer}
+        for subquery, answer in zip(subqueries, subanswers, strict=True)
+    ]
+    messages = [
+        system_message(
+            content=(
+                "MULTIHOP_COVERAGE\nReview whether the ordered evidence summaries "
+                "materially cover the original question. Return only strict JSON with "
+                'exactly {"complete": boolean, "follow_up_subqueries": array}. '
+                "When complete is true, return an empty array. Otherwise return one or "
+                "two concise evidence-seeking questions that address material gaps and "
+                "do not duplicate any supplied subquery."
+            )
+        ),
+        human_message(
+            content=json.dumps(
+                {"original_question": user_text, "subanswers": evidence},
+                ensure_ascii=False,
+            )
+        ),
+    ]
+    try:
+        response = _invoke_multihop(model, messages, "Coverage")
+        return _parse_coverage(response, subqueries)
+    except AgentCoverageError as exc:
+        setattr(exc, "stage", "coverage")
+        raise
+    except AgentModelError as exc:
+        setattr(exc, "stage", "coverage")
+        raise
 
 
 def _retrieve_multihop(
@@ -679,12 +799,13 @@ def run_multihop(
     if not isinstance(system_prompt, str) or not system_prompt.strip():
         raise AgentConfigurationError("system_prompt must be a non-empty string")
     types = _load_message_types()
-    subqueries = _plan_multihop(model, types, history, user_text)
+    initial_subqueries = _plan_multihop(model, types, history, user_text)
+    subqueries = list(initial_subqueries)
     subanswers: list[str] = []
     contexts: list[str] = []
     hop_sources: list[tuple[SourceRecord, ...]] = []
     hop_chunks: list[tuple[PaperChunkMatch, ...]] = []
-    for subquery in subqueries:
+    for subquery in initial_subqueries:
         context, sources, chunks = _retrieve_multihop(paper_retriever, subquery)
         subanswers.append(
             _answer_multihop(model, types, system_prompt, user_text, subquery, context)
@@ -692,6 +813,31 @@ def run_multihop(
         contexts.append(context)
         hop_sources.append(sources)
         hop_chunks.append(chunks)
+    followups = _review_multihop_coverage(
+        model, types, user_text, initial_subqueries, subanswers
+    )
+    for subquery in followups:
+        try:
+            context, sources, chunks = _retrieve_multihop(paper_retriever, subquery)
+        except AgentRetrievalError as exc:
+            setattr(exc, "stage", "followup_retrieval")
+            raise
+        try:
+            answer = _answer_multihop(
+                model, types, system_prompt, user_text, subquery, context
+            )
+        except AgentModelError as exc:
+            setattr(exc, "stage", "followup_subanswer")
+            raise
+        subqueries.append(subquery)
+        subanswers.append(answer)
+        contexts.append(context)
+        hop_sources.append(sources)
+        hop_chunks.append(chunks)
+    if len(subqueries) > MAX_TOTAL_HOP_COUNT or sum(map(len, hop_chunks)) > (
+        MAX_AGGREGATE_SOURCE_COUNT
+    ):
+        raise AgentCoverageError("adaptive multihop bounds were exceeded")
     messages = _compose_multihop_messages(
         types, system_prompt, history, user_text, subqueries, subanswers
     )
@@ -702,7 +848,7 @@ def run_multihop(
         raise
     return MultihopResult(
         answer=answer,
-        subqueries=subqueries,
+        subqueries=tuple(subqueries),
         subanswers=tuple(subanswers),
         chunks=_aggregate_chunks(hop_chunks),
         sources=_aggregate_sources(hop_sources),
@@ -1008,6 +1154,7 @@ ChatConfig = ChatOpenAIConfig
 __all__ = [
     "AgentConfig",
     "AgentConfigurationError",
+    "AgentCoverageError",
     "AgentIncompleteResponseError",
     "AgentLoop",
     "AgentLoopError",
@@ -1022,6 +1169,8 @@ __all__ = [
     "INCOMPLETE_RESPONSE_MESSAGE",
     "MAX_SUBQUERY_COUNT",
     "MAX_AGGREGATE_SOURCE_COUNT",
+    "MAX_FOLLOWUP_SUBQUERY_COUNT",
+    "MAX_TOTAL_HOP_COUNT",
     "MIN_SUBQUERY_COUNT",
     "MultihopCompletedEvent",
     "MultihopFinalDeltaEvent",

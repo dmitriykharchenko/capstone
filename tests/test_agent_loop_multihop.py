@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.agent_loop import (
+    AgentCoverageError,
     AgentIncompleteResponseError,
     AgentLoop,
     AgentModelError,
@@ -46,6 +47,7 @@ class HopRetriever:
 class StageModel:
     def __init__(self, plan='{"subqueries":["alpha evidence","beta evidence"]}'):
         self.plan = plan
+        self.coverage = '{"complete":true,"follow_up_subqueries":[]}'
         self.calls = []
         self.stream_calls = []
         self.fail_stage = None
@@ -54,7 +56,7 @@ class StageModel:
     @staticmethod
     def stage(messages):
         content = "\n".join(str(message.content) for message in messages)
-        for stage in ("PLANNER", "SUBANSWER", "COMPOSER"):
+        for stage in ("PLANNER", "SUBANSWER", "COVERAGE", "COMPOSER"):
             if f"MULTIHOP_{stage}" in content:
                 return stage.lower()
         raise AssertionError("missing multihop stage marker")
@@ -66,6 +68,8 @@ class StageModel:
             raise RuntimeError(f"{stage} offline")
         if stage == "planner":
             return SimpleNamespace(content=self.plan)
+        if stage == "coverage":
+            return SimpleNamespace(content=self.coverage)
         payload = json.loads(messages[-1].content)
         if stage == "subanswer":
             return SimpleNamespace(content=f"summary for {payload['subquery']}")
@@ -107,6 +111,7 @@ def test_run_retrieves_each_hop_composes_all_answers_and_persists_only_final(tmp
         "planner",
         "subanswer",
         "subanswer",
+        "coverage",
         "composer",
     ]
     composition = json.loads(model.calls[-1][1][-1].content)
@@ -152,6 +157,152 @@ def test_stream_events_are_ordered_typed_and_persist_after_completion(tmp_path):
             "question",
             "final answer",
         ]
+
+
+@pytest.mark.parametrize(
+    ("followups", "expected"),
+    [
+        (["  gamma   evidence  "], ["gamma evidence"]),
+        (
+            ["gamma evidence", "delta evidence"],
+            ["gamma evidence", "delta evidence"],
+        ),
+    ],
+)
+def test_adaptive_followups_use_exact_hop_path_and_compose_in_order(
+    tmp_path, followups, expected
+):
+    model = StageModel()
+    model.coverage = json.dumps({"complete": False, "follow_up_subqueries": followups})
+    hop_results = results()
+    for query in expected:
+        hop_results[query] = [chunk(1, "shared"), chunk(2, query)]
+    retriever = HopRetriever(hop_results)
+
+    with AgentLoop(
+        tmp_path / "adaptive.sqlite3", model, paper_retriever=retriever
+    ) as loop:
+        assert loop.run("session", "question") == "final answer"
+        source_ids = [source.paper_id for source in loop.last_sources]
+
+    all_queries = ["alpha evidence", "beta evidence", *expected]
+    assert retriever.calls == [(query, 5) for query in all_queries]
+    assert source_ids == ["shared", "alpha", "beta", *expected]
+    assert [stage for stage, _ in model.calls] == [
+        "planner",
+        "subanswer",
+        "subanswer",
+        "coverage",
+        *("subanswer" for _ in expected),
+        "composer",
+    ]
+    coverage = json.loads(model.calls[3][1][-1].content)
+    assert [item["subquery"] for item in coverage["subanswers"]] == all_queries[:2]
+    composition = json.loads(model.calls[-1][1][-1].content)
+    assert [item["subquery"] for item in composition["subanswers"]] == all_queries
+    assert [item["answer"] for item in composition["subanswers"]] == [
+        f"summary for {query}" for query in all_queries
+    ]
+
+
+def test_seven_hops_cap_aggregate_at_thirty_five_deterministic_chunks(tmp_path):
+    initial = [f"initial {index}" for index in range(1, 6)]
+    followups = ["followup one", "followup two"]
+    model = StageModel(json.dumps({"subqueries": initial}))
+    model.coverage = json.dumps({"complete": False, "follow_up_subqueries": followups})
+    hop_results = {
+        query: [chunk(rank, f"{query}-{rank}", rank - 1) for rank in range(1, 6)]
+        for query in [*initial, *followups]
+    }
+
+    with AgentLoop(
+        tmp_path / "bounds.sqlite3",
+        model,
+        paper_retriever=HopRetriever(hop_results),
+    ) as loop:
+        loop.run("session", "question")
+        sources = loop.last_sources
+
+    assert len(sources) == 35
+    assert [source.rank for source in sources] == list(range(1, 36))
+    assert [source.paper_id for source in sources[:6]] == [
+        "initial 1-1",
+        "initial 1-2",
+        "initial 1-3",
+        "initial 1-4",
+        "initial 1-5",
+        "initial 2-1",
+    ]
+
+
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        "not json",
+        "{}",
+        '{"complete":true,"follow_up_subqueries":["gap"]}',
+        '{"complete":false,"follow_up_subqueries":[]}',
+        '{"complete":false,"follow_up_subqueries":["gap","GAP"]}',
+        '{"complete":false,"follow_up_subqueries":["alpha evidence"]}',
+        '{"complete":false,"follow_up_subqueries":["a","b","c"]}',
+        '{"complete":true,"complete":false,"follow_up_subqueries":[]}',
+    ],
+)
+def test_invalid_or_duplicate_coverage_fails_before_followup_and_persistence(
+    tmp_path, coverage
+):
+    database = tmp_path / "invalid-coverage.sqlite3"
+    model = StageModel()
+    model.coverage = coverage
+    retriever = HopRetriever(results())
+    with AgentLoop(database, model, paper_retriever=retriever) as loop:
+        with pytest.raises(AgentCoverageError) as raised:
+            loop.run("session", "question")
+    assert raised.value.stage == "coverage"
+    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 5)]
+    with SQLiteHistoryStore(database) as store:
+        assert store.get_messages("session") == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_stage"),
+    [
+        ("coverage", "coverage"),
+        ("followup_retrieval", "followup_retrieval"),
+        ("followup_subanswer", "followup_subanswer"),
+    ],
+)
+def test_adaptive_failure_stages_are_explicit_and_never_persist(
+    tmp_path, failure, expected_stage
+):
+    database = tmp_path / f"{failure}.sqlite3"
+    model = StageModel()
+    model.coverage = json.dumps(
+        {"complete": False, "follow_up_subqueries": ["gap evidence"]}
+    )
+    hop_results = results()
+    hop_results["gap evidence"] = [chunk(1, "gap")]
+    if failure == "coverage":
+        model.fail_stage = "coverage"
+    elif failure == "followup_retrieval":
+        hop_results["gap evidence"] = RuntimeError("secret index path")
+    else:
+        original_invoke = model.invoke
+
+        def fail_followup(messages):
+            if model.stage(messages) == "subanswer":
+                payload = json.loads(messages[-1].content)
+                if payload["subquery"] == "gap evidence":
+                    raise RuntimeError("secret model detail")
+            return original_invoke(messages)
+
+        model.invoke = fail_followup
+    with AgentLoop(database, model, paper_retriever=HopRetriever(hop_results)) as loop:
+        with pytest.raises((AgentModelError, AgentRetrievalError)) as raised:
+            loop.run("session", "question")
+    assert raised.value.stage == expected_stage
+    with SQLiteHistoryStore(database) as store:
+        assert store.get_messages("session") == []
 
 
 @pytest.mark.parametrize(

@@ -77,6 +77,8 @@ class MockChatModel:
             )
         if "MULTIHOP_SUBANSWER" in stage_markers:
             return "[offline mock evidence summary] " + user_text.strip()
+        if "MULTIHOP_COVERAGE" in stage_markers:
+            return json.dumps({"complete": True, "follow_up_subqueries": []})
         if user_text.startswith("METADATA_EXTRACTION_INPUT"):
             paper_text = user_text.partition("<paper_text>\n")[2].partition(
                 "\n</paper_text>"

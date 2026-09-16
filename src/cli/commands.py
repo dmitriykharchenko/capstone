@@ -484,7 +484,17 @@ def _sanitize_evaluation_result(result: Mapping[str, Any]) -> dict[str, Any]:
         safe_stage = (
             stage
             if stage
-            in {"planner", "retrieval", "subanswer", "composer", "model", "judge"}
+            in {
+                "planner",
+                "retrieval",
+                "subanswer",
+                "coverage",
+                "followup_retrieval",
+                "followup_subanswer",
+                "composer",
+                "model",
+                "judge",
+            }
             else "evaluation"
         )
         sanitized["error"] = {
@@ -499,6 +509,9 @@ def _evaluation_error_message(stage: str) -> str:
         "planner": "Question planning failed for this case. Check backend configuration and retry.",
         "retrieval": "Retrieval failed for this case. Check the paper index and retry.",
         "subanswer": "Subanswer generation failed for this case. Check backend configuration and retry.",
+        "coverage": "Coverage review failed for this case. Check backend configuration and retry.",
+        "followup_retrieval": "Follow-up retrieval failed for this case. Check the paper index and retry.",
+        "followup_subanswer": "Follow-up subanswer generation failed for this case. Check backend configuration and retry.",
         "composer": "Final answer composition failed for this case. Check backend configuration and retry.",
         "model": "Answer generation failed for this case. Check backend configuration and retry.",
         "judge": "Judge evaluation failed for this case. Check backend configuration and retry.",
