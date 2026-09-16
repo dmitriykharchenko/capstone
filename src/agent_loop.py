@@ -176,7 +176,10 @@ class ChatOpenAIConfig:
             not isinstance(self.api_key, str) or not self.api_key.strip()
         ):
             raise AgentConfigurationError("api_key must be a non-empty string")
-        for name, value in (("temperature", self.temperature), ("timeout", self.timeout)):
+        for name, value in (
+            ("temperature", self.temperature),
+            ("timeout", self.timeout),
+        ):
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise AgentConfigurationError(f"{name} must be a positive number")
             if (
@@ -244,7 +247,9 @@ def _load_message_types() -> tuple[Any, Any, Any, Any]:
 
 
 def _resolve_api_key(config: ChatOpenAIConfig) -> str:
-    key = config.api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+    key = (
+        config.api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+    )
     if not key:
         raise AgentConfigurationError(
             "No API key configured; pass ChatOpenAIConfig(api_key=...) or set "
@@ -305,8 +310,10 @@ def _message_for_record(record: MessageRecord, types: tuple[Any, Any, Any, Any])
         "system": system_message,
     }
     constructor = constructors.get(record.role)
-    return constructor(content=record.content) if constructor else chat_message(
-        role=record.role, content=record.content
+    return (
+        constructor(content=record.content)
+        if constructor
+        else chat_message(role=record.role, content=record.content)
     )
 
 
@@ -373,9 +380,7 @@ def _output_limit_reason(value: Any, *, incomplete_context: bool = False) -> str
                 reason = _normalized_reason(nested)
                 if reason in _OUTPUT_LIMIT_REASONS:
                     return reason
-            reason = _output_limit_reason(
-                nested, incomplete_context=nested_incomplete
-            )
+            reason = _output_limit_reason(nested, incomplete_context=nested_incomplete)
             if reason is not None:
                 return reason
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
@@ -1145,7 +1150,9 @@ class AgentLoop:
     def __enter__(self) -> AgentLoop:
         return self
 
-    def __exit__(self, _exc_type: object, _exc_value: object, _traceback: object) -> None:
+    def __exit__(
+        self, _exc_type: object, _exc_value: object, _traceback: object
+    ) -> None:
         self.close()
 
 

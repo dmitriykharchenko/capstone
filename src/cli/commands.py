@@ -114,7 +114,11 @@ def handle_chat_stream(
             if isinstance(progress, MultihopCompletedEvent):
                 completed = progress
                 break
-            yield progress if isinstance(progress, dict) else _chat_progress_payload(progress)
+            yield (
+                progress
+                if isinstance(progress, dict)
+                else _chat_progress_payload(progress)
+            )
         if completed is None:
             raise RuntimeError("chat stream ended before terminal completion")
         reply = completed.answer
@@ -573,7 +577,9 @@ def handle_search_papers(config: CLIConfig, request: dict[str, Any]) -> dict[str
     return {"enabled": True, "matches": match_payloads}
 
 
-def dispatch(command: Any, config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+def dispatch(
+    command: Any, config: CLIConfig, request: dict[str, Any]
+) -> dict[str, Any]:
     """Route ``command`` to its handler, raising ``ValueError`` when unknown."""
 
     handlers = {

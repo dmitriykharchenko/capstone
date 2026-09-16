@@ -4,7 +4,25 @@ import sys
 
 import pytest
 
-from src.sqlite_history import ExchangeRecord, MessageRecord, SQLiteHistoryStore
+from src.sqlite_history import (
+    ExchangeRecord,
+    MessageRecord,
+    SQLiteHistoryStore,
+    SourceRecord,
+)
+
+
+def source(rank=1, *, snippet="concise evidence"):
+    return SourceRecord(
+        rank=rank,
+        paper_id=f"paper-{rank}",
+        chunk_index=rank - 1,
+        filename=f"paper-{rank}.pdf",
+        title=f"Paper {rank}",
+        page=rank,
+        score=1.0 / rank,
+        snippet=snippet,
+    )
 
 
 def test_messages_persist_in_order_and_are_isolated_by_session(tmp_path):
@@ -99,6 +117,10 @@ def test_legacy_database_migrates_without_changing_existing_rows(tmp_path):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
         assert "exchange_id" in columns
         assert connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'exchange_sources'"
+        ).fetchone() == ("exchange_sources",)
+        assert connection.execute(
             "SELECT exchange_id FROM messages ORDER BY id"
         ).fetchall() == [(None,), (None,), (exchange_id,), (exchange_id,)]
 
@@ -122,6 +144,29 @@ def test_append_exchange_is_atomic_and_returns_retrievable_stable_id(tmp_path):
         ]
 
 
+def test_exchange_sources_persist_and_hydrate_only_the_assistant_message(tmp_path):
+    database = tmp_path / "history.sqlite3"
+    expected = (source(), source(2))
+    with SQLiteHistoryStore(database) as store:
+        exchange_id = store.append_exchange(
+            "session", "question", "answer", sources=expected
+        )
+
+    with SQLiteHistoryStore(database) as reopened:
+        messages = reopened.get_messages("session")
+        exchange = reopened.get_exchange(exchange_id, "session")
+
+    with sqlite3.connect(database) as connection:
+        source_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(exchange_sources)")
+        }
+
+    assert messages[0].sources == ()
+    assert messages[1].sources == expected
+    assert exchange.assistant_message.sources == expected
+    assert "text" not in source_columns
+
+
 def test_exchange_write_rolls_back_all_rows_when_second_message_fails(tmp_path):
     database = tmp_path / "history.sqlite3"
     SQLiteHistoryStore(database).close()
@@ -140,6 +185,59 @@ def test_exchange_write_rolls_back_all_rows_when_second_message_fails(tmp_path):
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM exchanges").fetchone() == (0,)
         assert connection.execute("SELECT COUNT(*) FROM messages").fetchone() == (0,)
+
+
+def test_exchange_write_rolls_back_messages_when_source_insert_fails(tmp_path):
+    database = tmp_path / "history.sqlite3"
+    SQLiteHistoryStore(database).close()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_source BEFORE INSERT ON exchange_sources "
+            "BEGIN SELECT RAISE(ABORT, 'source failure'); END"
+        )
+
+    with SQLiteHistoryStore(database) as store:
+        with pytest.raises(sqlite3.IntegrityError, match="source failure"):
+            store.append_exchange("session", "question", "answer", sources=(source(),))
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM exchanges").fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM messages").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM exchange_sources"
+        ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        (source(2),),
+        (source(snippet="x" * 281),),
+        tuple(source(rank) for rank in range(1, 37)),
+        ({"rank": 1},),
+    ],
+)
+def test_malformed_sources_are_rejected_before_history_is_written(tmp_path, sources):
+    with SQLiteHistoryStore(tmp_path / "history.sqlite3") as store:
+        with pytest.raises((TypeError, ValueError), match="source"):
+            store.append_exchange("session", "question", "answer", sources=sources)
+        assert store.get_messages("session") == []
+
+
+def test_malformed_stored_source_fails_hydration_without_changing_history(tmp_path):
+    database = tmp_path / "history.sqlite3"
+    with SQLiteHistoryStore(database) as store:
+        store.append_exchange("session", "question", "answer", sources=(source(),))
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE exchange_sources SET snippet = ''")
+
+    with SQLiteHistoryStore(database) as reopened:
+        with pytest.raises(RuntimeError, match="source metadata is invalid"):
+            reopened.get_messages("session")
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM messages").fetchone() == (2,)
+        assert connection.execute("SELECT COUNT(*) FROM exchanges").fetchone() == (1,)
 
 
 def test_exchanges_preserve_message_order_with_standalone_rows(tmp_path):

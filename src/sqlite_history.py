@@ -1,22 +1,38 @@
-"""Persistent, provider-neutral conversation message history.
+"""Persistent, provider-neutral conversation history and source snapshots.
 
-The :class:`SQLiteHistoryStore` keeps only a session identifier, a canonical
-message role, and message text.  It intentionally knows nothing about a chat
-model or an LLM provider, so callers can adapt :class:`MessageRecord` to the
-message type used by their application.
+SQLite remains the canonical store for ordered messages, completed exchanges,
+and compact retrieved-paper metadata associated with assistant responses.
 """
 
 from __future__ import annotations
 
+import math
 import sqlite3
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DatabasePath = str | Path
+MAX_EXCHANGE_SOURCE_COUNT = 35
+MAX_SOURCE_SNIPPET_LENGTH = 280
 
 _VALID_ROLES = frozenset(
     {"system", "user", "assistant", "human", "ai", "tool", "function", "developer"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRecord:
+    """A compact retrieved-paper snapshot associated with one exchange."""
+
+    rank: int
+    paper_id: str
+    chunk_index: int
+    filename: str
+    title: str
+    page: int
+    score: float
+    snippet: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +46,8 @@ class MessageRecord:
 
     role: str
     content: str
+    sources: tuple[SourceRecord, ...] = ()
+    exchange_id: int | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +58,7 @@ class ExchangeRecord:
     session_id: str
     user_message: MessageRecord
     assistant_message: MessageRecord
+
 
 
 class SQLiteHistoryStore:
@@ -101,6 +120,23 @@ class SQLiteHistoryStore:
                 "CREATE INDEX IF NOT EXISTS idx_messages_exchange_id "
                 "ON messages (exchange_id, id)"
             )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS exchange_sources (
+                    exchange_id INTEGER NOT NULL
+                        REFERENCES exchanges(id) ON DELETE CASCADE,
+                    rank INTEGER NOT NULL,
+                    paper_id TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    snippet TEXT NOT NULL,
+                    PRIMARY KEY (exchange_id, rank)
+                )
+                """
+            )
 
     def append_message(self, session_id: str, role: str, content: str) -> None:
         """Append one message to ``session_id``.
@@ -125,17 +161,23 @@ class SQLiteHistoryStore:
             )
 
     def append_exchange(
-        self, session_id: str, user_content: str, assistant_content: str
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+        *,
+        sources: Sequence[SourceRecord] = (),
     ) -> int:
         """Atomically store a completed turn and return its stable exchange ID.
 
-        Both message rows are committed in one transaction.  If either insert
-        fails, neither the exchange nor either message is retained.
+        Both message rows and every source are committed in one transaction.
+        Any failed insert rolls back the complete exchange.
         """
 
         session = _validate_session_id(session_id)
         user_message = _validate_content(user_content)
         assistant_message = _validate_content(assistant_content)
+        source_records = _validate_sources(sources)
         with self._connection:
             cursor = self._connection.execute(
                 "INSERT INTO exchanges (session_id) VALUES (?)", (session,)
@@ -149,6 +191,25 @@ class SQLiteHistoryStore:
                 [
                     (session, "user", user_message, exchange_id),
                     (session, "assistant", assistant_message, exchange_id),
+                ],
+            )
+            self._connection.executemany(
+                "INSERT INTO exchange_sources "
+                "(exchange_id, rank, paper_id, chunk_index, filename, title, "
+                "page, score, snippet) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        exchange_id,
+                        source.rank,
+                        source.paper_id,
+                        source.chunk_index,
+                        source.filename,
+                        source.title,
+                        source.page,
+                        source.score,
+                        source.snippet,
+                    )
+                    for source in source_records
                 ],
             )
         return exchange_id
@@ -177,12 +238,60 @@ class SQLiteHistoryStore:
         ).fetchall()
         if len(rows) != 2 or [row[0] for row in rows] != ["user", "assistant"]:
             raise RuntimeError(f"exchange {identity} is incomplete or invalid")
+        sources = self._sources_by_exchange((identity,)).get(identity, ())
         return ExchangeRecord(
             exchange_id=identity,
             session_id=session,
             user_message=MessageRecord(*rows[0]),
-            assistant_message=MessageRecord(*rows[1]),
+            assistant_message=MessageRecord(*rows[1], sources=sources),
         )
+
+    def _sources_by_exchange(
+        self, exchange_ids: Sequence[int]
+    ) -> dict[int, tuple[SourceRecord, ...]]:
+        identities = tuple(dict.fromkeys(exchange_ids))
+        if not identities:
+            return {}
+        placeholders = ", ".join("?" for _ in identities)
+        rows = self._connection.execute(
+            "SELECT exchange_id, rank, paper_id, chunk_index, filename, title, "
+            "page, score, snippet FROM exchange_sources "
+            f"WHERE exchange_id IN ({placeholders}) "
+            "ORDER BY exchange_id, rank",
+            identities,
+        ).fetchall()
+        grouped: dict[int, list[SourceRecord]] = {}
+        for row in rows:
+            (
+                exchange_id,
+                rank,
+                paper_id,
+                chunk_index,
+                filename,
+                title,
+                page,
+                score,
+                snippet,
+            ) = row
+            grouped.setdefault(exchange_id, []).append(
+                SourceRecord(
+                    rank=rank,
+                    paper_id=paper_id,
+                    chunk_index=chunk_index,
+                    filename=filename,
+                    title=title,
+                    page=page,
+                    score=score,
+                    snippet=snippet,
+                )
+            )
+        try:
+            return {
+                exchange_id: _validate_sources(sources)
+                for exchange_id, sources in grouped.items()
+            }
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("stored exchange source metadata is invalid") from exc
 
     def get_messages(self, session_id: str) -> list[MessageRecord]:
         """Return all messages for ``session_id`` in insertion order.
@@ -196,10 +305,26 @@ class SQLiteHistoryStore:
 
         session = _validate_session_id(session_id)
         rows = self._connection.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id ASC",
+            "SELECT role, content, exchange_id FROM messages "
+            "WHERE session_id = ? ORDER BY id ASC",
             (session,),
         ).fetchall()
-        return [MessageRecord(role=role, content=content) for role, content in rows]
+        sources = self._sources_by_exchange(
+            tuple(
+                exchange_id
+                for role, _content, exchange_id in rows
+                if role == "assistant" and exchange_id is not None
+            )
+        )
+        return [
+            MessageRecord(
+                role=role,
+                content=content,
+                sources=sources.get(exchange_id, ()) if role == "assistant" else (),
+                exchange_id=exchange_id,
+            )
+            for role, content, exchange_id in rows
+        ]
 
     def read_messages(self, session_id: str) -> list[MessageRecord]:
         """Alias for :meth:`get_messages` using a read-oriented name."""
@@ -266,4 +391,51 @@ def _validate_exchange_id(exchange_id: int) -> int:
     return exchange_id
 
 
-__all__ = ["ExchangeRecord", "MessageRecord", "SQLiteHistoryStore"]
+def _validate_sources(sources: Sequence[SourceRecord]) -> tuple[SourceRecord, ...]:
+    if isinstance(sources, (str, bytes)) or not isinstance(sources, Sequence):
+        raise TypeError("sources must be a sequence of SourceRecord values")
+    records = tuple(sources)
+    if len(records) > MAX_EXCHANGE_SOURCE_COUNT:
+        raise ValueError(f"sources cannot contain more than {MAX_EXCHANGE_SOURCE_COUNT} records")
+    for expected_rank, source in enumerate(records, start=1):
+        if not isinstance(source, SourceRecord):
+            raise TypeError("sources must contain only SourceRecord values")
+        if source.rank != expected_rank:
+            raise ValueError("source ranks must be consecutive from 1")
+        if isinstance(source.chunk_index, bool) or not isinstance(
+            source.chunk_index, int
+        ):
+            raise TypeError("source chunk_index must be a non-negative integer")
+        if source.chunk_index < 0:
+            raise ValueError("source chunk_index must be a non-negative integer")
+        if isinstance(source.page, bool) or not isinstance(source.page, int):
+            raise TypeError("source page must be a positive integer")
+        if source.page < 1:
+            raise ValueError("source page must be a positive integer")
+        if (
+            isinstance(source.score, bool)
+            or not isinstance(source.score, (int, float))
+            or not math.isfinite(float(source.score))
+        ):
+            raise ValueError("source score must be a finite number")
+        for source_field, value in (
+            ("paper_id", source.paper_id),
+            ("filename", source.filename),
+            ("title", source.title),
+            ("snippet", source.snippet),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"source {source_field} must be a non-empty string")
+        if len(source.snippet) > MAX_SOURCE_SNIPPET_LENGTH:
+            raise ValueError("source snippet is too long")
+    return records
+
+
+__all__ = [
+    "ExchangeRecord",
+    "MAX_EXCHANGE_SOURCE_COUNT",
+    "MAX_SOURCE_SNIPPET_LENGTH",
+    "MessageRecord",
+    "SQLiteHistoryStore",
+    "SourceRecord",
+]

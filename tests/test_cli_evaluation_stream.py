@@ -46,20 +46,35 @@ def test_streams_ordered_success_failure_and_aggregate_scores(
         def run(self, payload, strategy):
             source = payload[0]
             index = cases.index(source) + 1
-            error = {"stage": "judge", "message": "invalid judge JSON"} if index == 2 else None
-            scores = None if error else {
-                criterion: {"score": index, "confidence": "high", "reasoning": "ok", "flags": []}
-                for criterion in JUDGE_CRITERIA
-            }
-            return [{
-                "case_index": 1,
-                "input": source,
-                "retrieval_strategy": strategy,
-                "retrieved_chunks": [],
-                "generated_answer": f"answer {index}",
-                "judge_scores": scores,
-                "error": error,
-            }]
+            error = (
+                {"stage": "judge", "message": "invalid judge JSON"}
+                if index == 2
+                else None
+            )
+            scores = (
+                None
+                if error
+                else {
+                    criterion: {
+                        "score": index,
+                        "confidence": "high",
+                        "reasoning": "ok",
+                        "flags": [],
+                    }
+                    for criterion in JUDGE_CRITERIA
+                }
+            )
+            return [
+                {
+                    "case_index": 1,
+                    "input": source,
+                    "retrieval_strategy": strategy,
+                    "retrieved_chunks": [],
+                    "generated_answer": f"answer {index}",
+                    "judge_scores": scores,
+                    "error": error,
+                }
+            ]
 
     events = list(
         cli_main._persisted_evaluation_stream(
@@ -73,11 +88,23 @@ def test_streams_ordered_success_failure_and_aggregate_scores(
     )
 
     assert [event["event"] for event in events] == [
-        "run_start", "case_start", "case_success", "case_start",
-        "case_failure", "case_start", "case_success", "complete",
+        "run_start",
+        "case_start",
+        "case_success",
+        "case_start",
+        "case_failure",
+        "case_start",
+        "case_success",
+        "complete",
     ]
-    assert [event["input"] for event in events if event["event"] == "case_start"] == cases
-    results = [event["result"] for event in events if event["event"].startswith("case_") and "result" in event]
+    assert [
+        event["input"] for event in events if event["event"] == "case_start"
+    ] == cases
+    results = [
+        event["result"]
+        for event in events
+        if event["event"].startswith("case_") and "result" in event
+    ]
     assert [result["case_index"] for result in results] == [1, 2, 3]
     assert results[1]["error"]["stage"] == "judge"
     done = events[-1]
@@ -105,19 +132,29 @@ def test_case_exception_is_streamed_without_aborting_following_cases(tmp_path):
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("backend unavailable")
-            return [{
-                "case_index": 1, "input": payload[0], "retrieval_strategy": strategy,
-                "retrieved_chunks": [], "generated_answer": None, "judge_scores": None,
-                "error": {"stage": "retrieval", "message": "no chunks"},
-            }]
+            return [
+                {
+                    "case_index": 1,
+                    "input": payload[0],
+                    "retrieval_strategy": strategy,
+                    "retrieved_chunks": [],
+                    "generated_answer": None,
+                    "judge_scores": None,
+                    "error": {"stage": "retrieval", "message": "no chunks"},
+                }
+            ]
 
     cases = [
         {"question": "one", "grading_notes": "a", "sources": []},
         {"question": "two", "grading_notes": "b", "sources": []},
     ]
-    events = list(handle_evaluation_stream(
-        config(tmp_path), {"retrieval_type": "vector", "test_cases": cases}, FakeRunner()
-    ))
+    events = list(
+        handle_evaluation_stream(
+            config(tmp_path),
+            {"retrieval_type": "vector", "test_cases": cases},
+            FakeRunner(),
+        )
+    )
     failures = [event["result"] for event in events if event["event"] == "case_failure"]
     assert [result["case_index"] for result in failures] == [1, 2]
     assert failures[0]["error"] == {
@@ -128,7 +165,9 @@ def test_case_exception_is_streamed_without_aborting_following_cases(tmp_path):
         "stage": "retrieval",
         "message": "Retrieval failed for this case. Check the paper index and retry.",
     }
-    assert events[-1]["aggregate_scores"] == {criterion: None for criterion in JUDGE_CRITERIA}
+    assert events[-1]["aggregate_scores"] == {
+        criterion: None for criterion in JUDGE_CRITERIA
+    }
 
 
 def test_validation_and_backend_transport_failures_preserve_last_artifact(
@@ -196,9 +235,7 @@ def test_persists_only_after_terminal_event_is_successfully_consumed(
             config(tmp_path),
             {
                 "retrieval_type": "hybrid",
-                "test_cases": [
-                    {"question": "q", "grading_notes": "g", "sources": []}
-                ],
+                "test_cases": [{"question": "q", "grading_notes": "g", "sources": []}],
             },
             FakeRunner(),
         ),
@@ -211,7 +248,9 @@ def test_persists_only_after_terminal_event_is_successfully_consumed(
 
     with pytest.raises(StopIteration):
         next(events)
-    assert json.loads(evaluation_results_path.read_text(encoding="utf-8"))["summary"] == {
+    assert json.loads(evaluation_results_path.read_text(encoding="utf-8"))[
+        "summary"
+    ] == {
         "failed": 1,
         "succeeded": 0,
         "total": 1,
@@ -231,24 +270,28 @@ def test_sanitizes_path_and_credential_shaped_case_errors(tmp_path):
             self.calls += 1
             if self.calls == 2:
                 raise RuntimeError("api_key=secret at /private/secret/tests/judge.md")
-            return [{
-                "case_index": 1,
-                "input": payload[0],
-                "retrieval_strategy": strategy,
-                "retrieved_chunks": [],
-                "generated_answer": None,
-                "judge_scores": None,
-                "error": {
-                    "stage": "judge",
-                    "message": "token=secret at /private/secret/tests/judge.md",
-                },
-            }]
+            return [
+                {
+                    "case_index": 1,
+                    "input": payload[0],
+                    "retrieval_strategy": strategy,
+                    "retrieved_chunks": [],
+                    "generated_answer": None,
+                    "judge_scores": None,
+                    "error": {
+                        "stage": "judge",
+                        "message": "token=secret at /private/secret/tests/judge.md",
+                    },
+                }
+            ]
 
-    events = list(handle_evaluation_stream(
-        config(tmp_path),
-        {"retrieval_type": "vector", "test_cases": cases},
-        FakeRunner(),
-    ))
+    events = list(
+        handle_evaluation_stream(
+            config(tmp_path),
+            {"retrieval_type": "vector", "test_cases": cases},
+            FakeRunner(),
+        )
+    )
     failures = [event for event in events if event["event"] == "case_failure"]
 
     assert failures[0]["result"]["error"] == {
@@ -342,7 +385,9 @@ def test_cli_main_routes_evaluation_stream(monkeypatch, tmp_path):
     expected = [{"event": "run_start", "retrieval_type": "bm25", "total": 1}]
     monkeypatch.setattr(cli_main.CLIConfig, "from_env", lambda: config(tmp_path))
     monkeypatch.setattr(cli_main, "load_dotenv_if_present", lambda: None)
-    monkeypatch.setattr(cli_main, "handle_evaluation_stream", lambda cfg, request: iter(expected))
+    monkeypatch.setattr(
+        cli_main, "handle_evaluation_stream", lambda cfg, request: iter(expected)
+    )
     monkeypatch.setattr(
         cli_main.sys,
         "stdin",
