@@ -8,6 +8,7 @@
 mod bridge;
 mod error;
 mod evaluation;
+mod graph;
 mod papers;
 
 use error::CommandError;
@@ -528,6 +529,16 @@ async fn search_papers(query: String, limit: Option<u32>) -> Result<Value, Comma
 }
 
 #[tauri::command]
+async fn graph_neighborhood(
+    node_id: String,
+    max_depth: Option<u32>,
+) -> Result<Value, CommandError> {
+    let request = graph::neighborhood_request(node_id, max_depth)?;
+    let root = project_root();
+    run_blocking(move || bridge::call(&root, request)).await
+}
+
+#[tauri::command]
 async fn index_papers() -> Result<Value, CommandError> {
     let root = project_root();
     run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "index_papers" }))).await
@@ -621,6 +632,7 @@ pub fn run() {
             get_messages,
             search,
             search_papers,
+            graph_neighborhood,
             index_papers,
             index_papers_stream,
             evaluate_stream,

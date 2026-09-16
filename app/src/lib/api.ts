@@ -3,6 +3,10 @@
 // while chat/sessions/messages/search/health are proxied to the Python CLI.
 
 import { invoke, Channel } from "@tauri-apps/api/core";
+import {
+  parseGraphNeighborhoodPayload,
+  type GraphNeighborhoodResponse,
+} from "./graph-types";
 
 import type {
   EvaluationRetrievalType,
@@ -20,6 +24,13 @@ export type {
   EvaluationStreamEvent,
   EvaluationTestCase,
 } from "./evaluation-types";
+export type {
+  GraphEdge,
+  GraphEdgeKind,
+  GraphNeighborhoodResponse,
+  GraphNode,
+  GraphNodeKind,
+} from "./graph-types";
 
 export interface PaperInfo {
   id: string;
@@ -189,6 +200,15 @@ export const api = {
     invoke<{ enabled: boolean; matches: PaperMatch[]; reason?: string }>(
       "search_papers",
       { query, limit },
+    ),
+  // Fetch one bounded, allow-listed graph neighborhood. The parser validates
+  // the unknown sidecar payload before it can enter application state.
+  graphNeighborhood: async (
+    nodeId: string,
+    maxDepth = 1,
+  ): Promise<GraphNeighborhoodResponse> =>
+    parseGraphNeighborhoodPayload(
+      await invoke<unknown>("graph_neighborhood", { nodeId, maxDepth }),
     ),
   // Index (or re-index) every PDF in the papers directory into Chroma.
   indexPapers: () =>

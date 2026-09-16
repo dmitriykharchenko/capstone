@@ -30,6 +30,7 @@
   import { runPaperSearch } from "../slices/paper-search/paper-search-slice";
   import { selectActiveRoute } from "../slices/router/router-selectors";
   import PdfViewer from "./PdfViewer.svelte";
+  import GraphExplorer from "./GraphExplorer.svelte";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import PanelLeftOpen from "@lucide/svelte/icons/panel-left-open";
@@ -293,5 +294,6 @@
   <div class="absolute inset-0 min-h-0">
     <PdfViewer />
   </div>
+  <GraphExplorer />
   </div>
 </div>
