@@ -37,6 +37,8 @@ export function toFlowEdges(edges: GraphEdge[]): GraphFlowEdge[] {
     id: `${edge.kind}:${edge.sourceId}:${edge.targetId}`,
     source: edge.sourceId,
     target: edge.targetId,
+    sourceHandle: edge.kind,
+    targetHandle: edge.kind,
     type: "straight",
     label: edge.kind === "authored_by" ? "authored by" : "has topic",
     ariaLabel: edge.kind === "authored_by" ? "authored by" : "has topic",

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Handle, Position } from "@xyflow/svelte";
   import type { GraphFlowNodeData } from "$lib/graph-flow";
 
   let { data, selected = false }: { data: GraphFlowNodeData; selected?: boolean } = $props();
@@ -9,6 +10,15 @@
     topic: "border-emerald-500/70 bg-emerald-500/15 text-emerald-950 dark:text-emerald-100",
   } as const;
 </script>
+
+{#if data.kind === "paper"}
+  <Handle id="authored_by" type="source" position={Position.Left} isConnectable={false} />
+  <Handle id="has_topic" type="source" position={Position.Right} isConnectable={false} />
+{:else if data.kind === "author"}
+  <Handle id="authored_by" type="target" position={Position.Right} isConnectable={false} />
+{:else}
+  <Handle id="has_topic" type="target" position={Position.Left} isConnectable={false} />
+{/if}
 
 <button
   type="button"

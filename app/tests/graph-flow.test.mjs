@@ -46,10 +46,15 @@ test("adapts canonical edge kinds to labeled flow edges", () => {
     { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
   ]);
 
-  assert.deepEqual(flowEdges.map(({ id, source, target, label, type }) => [id, source, target, label, type]), [
-    ["authored_by:paper-a:author-a", "paper-a", "author-a", "authored by", "straight"],
-    ["has_topic:paper-a:topic-a", "paper-a", "topic-a", "has topic", "straight"],
-  ]);
+  assert.deepEqual(
+    flowEdges.map(({ id, source, target, sourceHandle, targetHandle, label, type }) => [
+      id, source, target, sourceHandle, targetHandle, label, type,
+    ]),
+    [
+      ["authored_by:paper-a:author-a", "paper-a", "author-a", "authored_by", "authored_by", "authored by", "straight"],
+      ["has_topic:paper-a:topic-a", "paper-a", "topic-a", "has_topic", "has_topic", "has topic", "straight"],
+    ],
+  );
 });
 
 test("keeps paper routing and keyboard-accessible node activation in the component boundary", async () => {
