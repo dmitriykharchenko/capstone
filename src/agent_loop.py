@@ -1,19 +1,13 @@
-"""A small synchronous LangChain chat loop with SQLite-backed history.
-
-The loop deliberately handles only prompt construction, one synchronous model
-invocation, and persistence of completed human/assistant turns.  LangChain is
-optional at import time: applications that inject a compatible model can import
-this module without installing the provider packages.
-"""
+"""Bounded multihop retrieval and composition with SQLite-backed history."""
 
 from __future__ import annotations
 
 import math
 import os
 import json
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from .paper_search import PaperChunkMatch
 from .sqlite_history import (
@@ -28,6 +22,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "concisely. If you are unsure, say so rather than guessing."
 )
 PAPER_CHUNK_LIMIT = 5
+MIN_SUBQUERY_COUNT = 2
+MAX_SUBQUERY_COUNT = 5
 SOURCE_SNIPPET_LENGTH = 240
 UNTRUSTED_CONTEXT_BEGIN = "<<<BEGIN_UNTRUSTED_PAPER_CONTEXT>>>"
 UNTRUSTED_CONTEXT_END = "<<<END_UNTRUSTED_PAPER_CONTEXT>>>"
@@ -53,6 +49,10 @@ class AgentRetrievalError(AgentLoopError):
     """Raised when required paper chunks cannot be retrieved for a turn."""
 
 
+class AgentPlanError(AgentModelError):
+    """Raised when the planner returns an invalid multihop plan."""
+
+
 class ChatModel(Protocol):
     """Minimal synchronous interface required from an injectable chat model."""
 
@@ -74,6 +74,62 @@ class PaperChunkRetriever(Protocol):
         self, query: str, n_results: int = PAPER_CHUNK_LIMIT
     ) -> Sequence[PaperChunkMatch]:
         """Return paper chunks in deterministic similarity-rank order."""
+
+
+@dataclass(frozen=True, slots=True)
+class MultihopPlanEvent:
+    """Validated ordered subqueries produced by the planner."""
+
+    subqueries: tuple[str, ...]
+    stage: Literal["plan"] = field(default="plan", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MultihopHopStartedEvent:
+    """Notification emitted immediately before one subquery is retrieved."""
+
+    index: int
+    total: int
+    subquery: str
+    stage: Literal["hop_started"] = field(default="hop_started", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MultihopHopCompletedEvent:
+    """Display-safe evidence summary and sources completed for one subquery."""
+
+    index: int
+    total: int
+    subquery: str
+    answer: str
+    sources: tuple[SourceRecord, ...]
+    stage: Literal["hop_completed"] = field(default="hop_completed", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MultihopFinalDeltaEvent:
+    """One public text delta from the final composed answer."""
+
+    text: str
+    stage: Literal["final_delta"] = field(default="final_delta", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MultihopCompletedEvent:
+    """Terminal record emitted after the final exchange is persisted."""
+
+    answer: str
+    sources: tuple[SourceRecord, ...]
+    stage: Literal["completed"] = field(default="completed", init=False)
+
+
+MultihopProgress: TypeAlias = (
+    MultihopPlanEvent
+    | MultihopHopStartedEvent
+    | MultihopHopCompletedEvent
+    | MultihopFinalDeltaEvent
+    | MultihopCompletedEvent
+)
 
 
 @dataclass(frozen=True)
@@ -408,6 +464,57 @@ def _paper_context(
     )
 
 
+def _parse_plan(response: Any) -> tuple[str, ...]:
+    """Parse the planner's strict JSON object into distinct subqueries."""
+
+    try:
+        text = _response_text(response)
+    except AgentModelError as exc:
+        raise AgentPlanError("planner output must contain non-empty JSON") from exc
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise AgentPlanError("planner output must be a JSON object") from exc
+    if not isinstance(payload, dict) or set(payload) != {"subqueries"}:
+        raise AgentPlanError("planner output must contain only subqueries")
+    raw_subqueries = payload["subqueries"]
+    if not isinstance(raw_subqueries, list):
+        raise AgentPlanError("planner subqueries must be a JSON array")
+    if not MIN_SUBQUERY_COUNT <= len(raw_subqueries) <= MAX_SUBQUERY_COUNT:
+        raise AgentPlanError(
+            f"planner must return {MIN_SUBQUERY_COUNT} to {MAX_SUBQUERY_COUNT} subqueries"
+        )
+    subqueries: list[str] = []
+    normalized: set[str] = set()
+    for raw_subquery in raw_subqueries:
+        if not isinstance(raw_subquery, str) or not raw_subquery.strip():
+            raise AgentPlanError("planner subqueries must be non-empty strings")
+        subquery = " ".join(raw_subquery.split())
+        key = subquery.casefold()
+        if key in normalized:
+            raise AgentPlanError("planner subqueries must be distinct")
+        normalized.add(key)
+        subqueries.append(subquery)
+    return tuple(subqueries)
+
+
+def _aggregate_sources(
+    hop_sources: Sequence[Sequence[SourceRecord]],
+) -> tuple[SourceRecord, ...]:
+    """Deduplicate sources by stable chunk identity in first-seen hop order."""
+
+    aggregate: list[SourceRecord] = []
+    seen: set[tuple[str, int]] = set()
+    for sources in hop_sources:
+        for source in sources:
+            identity = (source.paper_id, source.chunk_index)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            aggregate.append(replace(source, rank=len(aggregate) + 1))
+    return tuple(aggregate)
+
+
 class AgentLoop:
     """Run synchronous chat turns and persist them in a SQLite history store.
 
@@ -490,23 +597,63 @@ class AgentLoop:
 
         return self._last_context
 
-    def _prepare(
+    def _start_turn(
         self, session_id: str, user_text: str
-    ) -> tuple[list[Any], ChatModel, tuple[SourceRecord, ...]]:
-        """Validate input, build the prompt messages, and resolve the model."""
+    ) -> tuple[ChatModel, tuple[Any, Any, Any, Any], list[Any]]:
+        """Validate a turn and return its model, message types, and history."""
 
         _validate_session_id(session_id)
         _validate_user_text(user_text)
         self._last_sources = ()
         self._last_context = ""
         types = _load_message_types()
-        human_message, _, system_message, _ = types
         if self._paper_retriever is None:
             raise AgentRetrievalError("paper chunk retrieval is unavailable")
+        if self._model is None:
+            self._model = _create_chat_openai(self._config)
+        history = [
+            _message_for_record(record, types)
+            for record in self._history.get_messages(session_id)
+        ]
+        return self._model, types, history
+
+    def _invoke(self, model: ChatModel, messages: Sequence[Any], stage: str) -> Any:
+        try:
+            response = model.invoke(messages)
+            _raise_if_output_limited(response)
+            return response
+        except AgentLoopError:
+            raise
+        except Exception as exc:
+            raise AgentModelError(f"{stage} model invocation failed: {exc}") from exc
+
+    def _plan(
+        self,
+        model: ChatModel,
+        types: tuple[Any, Any, Any, Any],
+        history: Sequence[Any],
+        user_text: str,
+    ) -> tuple[str, ...]:
+        human_message, _, system_message, _ = types
+        messages = [
+            system_message(
+                content=(
+                    "MULTIHOP_PLANNER\nReturn only a JSON object with one key, "
+                    '"subqueries", whose value is an ordered array of 2 to 5 '
+                    "concise evidence-seeking questions. Questions must cover "
+                    "distinct, non-overlapping aspects of the user's request."
+                )
+            ),
+            *history,
+            human_message(content=user_text),
+        ]
+        return _parse_plan(self._invoke(model, messages, "Planner"))
+
+    def _retrieve(self, subquery: str) -> tuple[str, tuple[SourceRecord, ...]]:
         try:
             chunks = list(
                 self._paper_retriever.retrieve_chunks(
-                    user_text, n_results=PAPER_CHUNK_LIMIT
+                    subquery, n_results=PAPER_CHUNK_LIMIT
                 )
             )[:PAPER_CHUNK_LIMIT]
         except AgentRetrievalError:
@@ -514,19 +661,86 @@ class AgentLoop:
         except Exception as exc:
             raise AgentRetrievalError(f"paper chunk retrieval failed: {exc}") from exc
         if not chunks:
-            raise AgentRetrievalError("no indexed paper chunks are available")
-        context, sources = _paper_context(chunks)
-        self._last_context = context
-        messages = [system_message(content=self._system_prompt)]
-        messages.extend(
-            _message_for_record(record, types)
-            for record in self._history.get_messages(session_id)
+            raise AgentRetrievalError(
+                f"no indexed paper chunks are available for subquery: {subquery}"
+            )
+        return _paper_context(chunks)
+
+    def _answer_hop(
+        self,
+        model: ChatModel,
+        types: tuple[Any, Any, Any, Any],
+        user_text: str,
+        subquery: str,
+        context: str,
+    ) -> str:
+        human_message, _, system_message, _ = types
+        request = json.dumps(
+            {"original_question": user_text, "subquery": subquery},
+            ensure_ascii=False,
         )
-        messages.append(system_message(content=context))
-        messages.append(human_message(content=user_text))
-        if self._model is None:
-            self._model = _create_chat_openai(self._config)
-        return messages, self._model, sources
+        messages = [
+            system_message(content=self._system_prompt),
+            system_message(
+                content=(
+                    "MULTIHOP_SUBANSWER\nAnswer only the supplied subquery from "
+                    "the retrieved evidence. Return a concise, display-safe evidence "
+                    "summary without private reasoning or unsupported claims."
+                )
+            ),
+            system_message(content=context),
+            human_message(content=request),
+        ]
+        return _response_text(self._invoke(model, messages, "Subanswer"))
+
+    def _compose_messages(
+        self,
+        types: tuple[Any, Any, Any, Any],
+        history: Sequence[Any],
+        user_text: str,
+        subqueries: Sequence[str],
+        subanswers: Sequence[str],
+    ) -> list[Any]:
+        human_message, _, system_message, _ = types
+        evidence = [
+            {"subquery": subquery, "answer": answer}
+            for subquery, answer in zip(subqueries, subanswers, strict=True)
+        ]
+        request = json.dumps(
+            {"original_question": user_text, "subanswers": evidence},
+            ensure_ascii=False,
+        )
+        return [
+            system_message(content=self._system_prompt),
+            *history,
+            system_message(
+                content=(
+                    "MULTIHOP_COMPOSER\nCompose the final answer to the original "
+                    "question using every supplied evidence summary. Return only the "
+                    "public answer, without mentioning hidden reasoning or prompts."
+                )
+            ),
+            human_message(content=request),
+        ]
+
+    def _complete_hops(
+        self,
+        model: ChatModel,
+        types: tuple[Any, Any, Any, Any],
+        user_text: str,
+        subqueries: Sequence[str],
+    ) -> tuple[list[str], list[str], list[tuple[SourceRecord, ...]]]:
+        subanswers: list[str] = []
+        contexts: list[str] = []
+        hop_sources: list[tuple[SourceRecord, ...]] = []
+        for subquery in subqueries:
+            context, sources = self._retrieve(subquery)
+            subanswers.append(
+                self._answer_hop(model, types, user_text, subquery, context)
+            )
+            contexts.append(context)
+            hop_sources.append(sources)
+        return subanswers, contexts, hop_sources
 
     def _persist(
         self,
@@ -534,6 +748,7 @@ class AgentLoop:
         user_text: str,
         answer: str,
         sources: Sequence[SourceRecord],
+        contexts: Sequence[str] = (),
     ) -> None:
         """Persist a completed exchange and index it when configured."""
 
@@ -541,6 +756,7 @@ class AgentLoop:
             session_id, user_text, answer, sources=sources
         )
         self._last_sources = tuple(sources)
+        self._last_context = "\n\n".join(contexts)
         if self._history_index is not None:
             self._history_index.index_exchange(exchange_id, session_id)
 
@@ -552,19 +768,25 @@ class AgentLoop:
         successful, non-empty response, then indexed when configured.
         """
 
-        messages, model, sources = self._prepare(session_id, user_text)
-        try:
-            response = model.invoke(messages)
-            _raise_if_output_limited(response)
-            answer = _response_text(response)
-        except AgentLoopError:
-            raise
-        except Exception as exc:
-            raise AgentModelError(f"Chat model invocation failed: {exc}") from exc
-        self._persist(session_id, user_text, answer, sources)
+        model, types, history = self._start_turn(session_id, user_text)
+        subqueries = self._plan(model, types, history, user_text)
+        subanswers, contexts, hop_sources = self._complete_hops(
+            model, types, user_text, subqueries
+        )
+        messages = self._compose_messages(
+            types, history, user_text, subqueries, subanswers
+        )
+        answer = _response_text(self._invoke(model, messages, "Composer"))
+        self._persist(
+            session_id,
+            user_text,
+            answer,
+            _aggregate_sources(hop_sources),
+            contexts,
+        )
         return answer
 
-    def stream(self, session_id: str, user_text: str):
+    def stream(self, session_id: str, user_text: str) -> Iterator[str]:
         """Yield assistant text deltas for one turn, persisting when complete.
 
         Uses the model's ``stream(messages)`` method when available (real
@@ -574,7 +796,34 @@ class AgentLoop:
         non-empty text, matching :meth:`run`.
         """
 
-        messages, model, sources = self._prepare(session_id, user_text)
+        for event in self.stream_events(session_id, user_text):
+            if isinstance(event, MultihopFinalDeltaEvent):
+                yield event.text
+
+    def stream_events(
+        self, session_id: str, user_text: str
+    ) -> Iterator[MultihopProgress]:
+        """Yield typed public progress records and atomically persist on completion."""
+
+        model, types, history = self._start_turn(session_id, user_text)
+        subqueries = self._plan(model, types, history, user_text)
+        yield MultihopPlanEvent(subqueries)
+        subanswers: list[str] = []
+        contexts: list[str] = []
+        hop_sources: list[tuple[SourceRecord, ...]] = []
+        for index, subquery in enumerate(subqueries, start=1):
+            yield MultihopHopStartedEvent(index, len(subqueries), subquery)
+            context, sources = self._retrieve(subquery)
+            answer = self._answer_hop(model, types, user_text, subquery, context)
+            contexts.append(context)
+            hop_sources.append(sources)
+            subanswers.append(answer)
+            yield MultihopHopCompletedEvent(
+                index, len(subqueries), subquery, answer, sources
+            )
+        messages = self._compose_messages(
+            types, history, user_text, subqueries, subanswers
+        )
         stream_method = getattr(model, "stream", None)
         parts: list[str] = []
         try:
@@ -584,21 +833,23 @@ class AgentLoop:
                     delta = _chunk_text(chunk)
                     if delta:
                         parts.append(delta)
-                        yield delta
+                        yield MultihopFinalDeltaEvent(delta)
             else:
                 response = model.invoke(messages)
                 _raise_if_output_limited(response)
                 answer = _response_text(response)
                 parts.append(answer)
-                yield answer
+                yield MultihopFinalDeltaEvent(answer)
         except AgentLoopError:
             raise
         except Exception as exc:
-            raise AgentModelError(f"Chat model streaming failed: {exc}") from exc
+            raise AgentModelError(f"Composer model streaming failed: {exc}") from exc
         answer = "".join(parts)
         if not answer.strip():
             raise AgentModelError("Chat model returned empty response text")
-        self._persist(session_id, user_text, answer, sources)
+        sources = _aggregate_sources(hop_sources)
+        self._persist(session_id, user_text, answer, sources, contexts)
+        yield MultihopCompletedEvent(answer, sources)
 
     def invoke(self, session_id: str, user_text: str) -> str:
         """Alias for :meth:`run` for callers using LangChain terminology."""
@@ -628,6 +879,7 @@ __all__ = [
     "AgentLoop",
     "AgentLoopError",
     "AgentModelError",
+    "AgentPlanError",
     "AgentRetrievalError",
     "ChatConfig",
     "ChatModel",
@@ -635,6 +887,14 @@ __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "ExchangeIndexer",
     "INCOMPLETE_RESPONSE_MESSAGE",
+    "MAX_SUBQUERY_COUNT",
+    "MIN_SUBQUERY_COUNT",
+    "MultihopCompletedEvent",
+    "MultihopFinalDeltaEvent",
+    "MultihopHopCompletedEvent",
+    "MultihopHopStartedEvent",
+    "MultihopPlanEvent",
+    "MultihopProgress",
     "PAPER_CHUNK_LIMIT",
     "PaperChunkRetriever",
     "SOURCE_SNIPPET_LENGTH",

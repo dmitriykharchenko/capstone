@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -50,10 +51,35 @@ class MockChatModel:
 
     @staticmethod
     def _reply(messages: Sequence[Any]) -> str:
+        stage_markers = {
+            text.splitlines()[0]
+            for message in messages
+            if (text := str(getattr(message, "content", message))).startswith(
+                "MULTIHOP_"
+            )
+        }
         last = messages[-1] if messages else None
         user_text = getattr(last, "content", "") if last is not None else ""
         if not isinstance(user_text, str):
             user_text = str(user_text)
+        if "MULTIHOP_PLANNER" in stage_markers:
+            question = user_text.strip()
+            return json.dumps(
+                {
+                    "subqueries": [
+                        f"Evidence supporting {question}",
+                        f"Evidence limiting or contrasting {question}",
+                    ]
+                }
+            )
+        if "MULTIHOP_SUBANSWER" in stage_markers:
+            return "[offline mock evidence summary] " + user_text.strip()
+        if "MULTIHOP_COMPOSER" in stage_markers:
+            try:
+                question = json.loads(user_text)["original_question"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                question = user_text
+            return "[offline mock reply] " + str(question).strip()
         return (
             "[offline mock reply] No API key is configured, so this is a "
             "deterministic response. You said: " + user_text.strip()
