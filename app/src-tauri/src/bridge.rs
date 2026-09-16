@@ -6,13 +6,106 @@
 //! overrides) is inherited. A non-zero exit or an `ok: false` response is
 //! turned into a `CommandError`.
 
-use std::io::{BufRead, BufReader, Write};
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStderr, Command, ExitStatus, Stdio};
+use std::thread::{self, JoinHandle};
 
 use serde_json::Value;
 
 use crate::error::CommandError;
+
+const STDERR_CAPTURE_LIMIT: usize = 64 * 1024;
+
+struct StderrCapture {
+    bytes: VecDeque<u8>,
+    total: usize,
+    read_error: Option<String>,
+}
+
+impl StderrCapture {
+    fn diagnostic(&self) -> String {
+        let bytes: Vec<_> = self.bytes.iter().copied().collect();
+        let text = String::from_utf8_lossy(&bytes);
+        let diagnostic = text.trim();
+        let read_error = self
+            .read_error
+            .as_deref()
+            .map(|error| format!("; stderr read failed: {error}"))
+            .unwrap_or_default();
+        if self.total > self.bytes.len() {
+            format!(
+                "[stderr truncated; showing last {} bytes] {diagnostic}{read_error}",
+                self.bytes.len()
+            )
+        } else {
+            format!("{diagnostic}{read_error}")
+        }
+    }
+}
+
+fn drain_stderr(mut stderr: ChildStderr) -> StderrCapture {
+    let mut capture = StderrCapture {
+        bytes: VecDeque::with_capacity(STDERR_CAPTURE_LIMIT),
+        total: 0,
+        read_error: None,
+    };
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match stderr.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => {
+                capture.total = capture.total.saturating_add(count);
+                let overflow = capture
+                    .bytes
+                    .len()
+                    .saturating_add(count)
+                    .saturating_sub(STDERR_CAPTURE_LIMIT);
+                capture.bytes.drain(..overflow.min(capture.bytes.len()));
+                capture.bytes.extend(&chunk[..count]);
+            }
+            Err(error) => {
+                capture.read_error = Some(error.to_string());
+                break;
+            }
+        }
+    }
+    capture
+}
+
+struct StreamingChild {
+    child: Child,
+    stderr_drain: Option<JoinHandle<StderrCapture>>,
+}
+
+impl StreamingChild {
+    fn wait(&mut self) -> Result<ExitStatus, CommandError> {
+        self.child
+            .wait()
+            .map_err(|error| CommandError::Bridge(format!("failed to wait for python: {error}")))
+    }
+
+    fn finish_stderr(&mut self) -> Result<StderrCapture, CommandError> {
+        self.stderr_drain
+            .take()
+            .ok_or_else(|| CommandError::Bridge("stderr drain unavailable".to_string()))?
+            .join()
+            .map_err(|_| CommandError::Bridge("stderr drain thread panicked".to_string()))
+    }
+}
+
+impl Drop for StreamingChild {
+    fn drop(&mut self) {
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        if let Some(drain) = self.stderr_drain.take() {
+            let _ = drain.join();
+        }
+    }
+}
 
 /// Return the Python interpreter to invoke, honoring `CAPSTONE_PYTHON`.
 ///
@@ -79,12 +172,28 @@ pub fn call(project_root: &Path, request: Value) -> Result<Value, CommandError> 
 pub fn call_streaming<F>(
     project_root: &Path,
     request: Value,
+    on_line: F,
+) -> Result<(), CommandError>
+where
+    F: FnMut(Value),
+{
+    let executable = python_executable();
+    call_streaming_with_executable(project_root, Path::new(&executable), request, on_line)
+}
+
+fn call_streaming_with_executable<F>(
+    project_root: &Path,
+    executable: &Path,
+    request: Value,
     mut on_line: F,
 ) -> Result<(), CommandError>
 where
     F: FnMut(Value),
 {
-    let mut child = Command::new(python_executable())
+    let payload = serde_json::to_vec(&request)
+        .map_err(|e| CommandError::Bridge(format!("failed to encode request: {e}")))?;
+
+    let child = Command::new(executable)
         .arg("-m")
         .arg("src.cli")
         .current_dir(project_root)
@@ -94,17 +203,36 @@ where
         .spawn()
         .map_err(|e| CommandError::Bridge(format!("failed to spawn python: {e}")))?;
 
-    let payload = serde_json::to_vec(&request)
-        .map_err(|e| CommandError::Bridge(format!("failed to encode request: {e}")))?;
+    let mut process = StreamingChild {
+        child,
+        stderr_drain: None,
+    };
+    let stderr = process
+        .child
+        .stderr
+        .take()
+        .ok_or_else(|| CommandError::Bridge("child stderr unavailable".to_string()))?;
+    process.stderr_drain = Some(
+        thread::Builder::new()
+            .name("capstone-stderr-drain".to_string())
+            .spawn(move || drain_stderr(stderr))
+            .map_err(|error| {
+                CommandError::Bridge(format!("failed to start stderr drain: {error}"))
+            })?,
+    );
 
-    child
+    let mut stdin = process
+        .child
         .stdin
         .take()
-        .ok_or_else(|| CommandError::Bridge("child stdin unavailable".to_string()))?
+        .ok_or_else(|| CommandError::Bridge("child stdin unavailable".to_string()))?;
+    stdin
         .write_all(&payload)
         .map_err(|e| CommandError::Bridge(format!("failed to write request: {e}")))?;
+    drop(stdin);
 
-    let stdout = child
+    let stdout = process
+        .child
         .stdout
         .take()
         .ok_or_else(|| CommandError::Bridge("child stdout unavailable".to_string()))?;
@@ -120,20 +248,110 @@ where
         on_line(value);
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| CommandError::Bridge(format!("failed to wait for python: {e}")))?;
+    let status = process.wait()?;
+    let stderr = process.finish_stderr()?;
     if !status.success() {
-        let mut stderr = String::new();
-        if let Some(mut err) = child.stderr.take() {
-            use std::io::Read;
-            let _ = err.read_to_string(&mut stderr);
-        }
         return Err(CommandError::Bridge(format!(
             "python exited with {status}; stderr: {}",
-            stderr.trim()
+            stderr.diagnostic()
+        )));
+    }
+    if let Some(error) = stderr.read_error {
+        return Err(CommandError::Bridge(format!(
+            "failed to read python stderr: {error}"
         )));
     }
 
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_SCRIPT_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn executable_script(contents: &str) -> std::path::PathBuf {
+        let suffix = NEXT_SCRIPT_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "capstone-stderr-drain-{}-{suffix}.py",
+            std::process::id()
+        ));
+        fs::write(&path, contents).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
+    }
+
+    #[test]
+    fn drains_stderr_beyond_pipe_capacity_while_forwarding_index_events() {
+        let script = executable_script(
+            "#!/usr/bin/env python3\nimport sys\nsys.stderr.buffer.write(b'x' * 262144)\nsys.stderr.buffer.flush()\nprint('{\"event\":\"start\",\"completed\":0,\"total\":1}', flush=True)\nprint('{\"event\":\"done\",\"completed\":1,\"total\":1,\"indexed\":1,\"empty\":0,\"failed\":0}', flush=True)\n",
+        );
+        let mut events = Vec::new();
+
+        let result = call_streaming_with_executable(
+            Path::new("."),
+            &script,
+            serde_json::json!({"command": "index_papers", "stream": true}),
+            |event| events.push(event),
+        );
+        let _ = fs::remove_file(script);
+
+        result.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["event"], "start");
+        assert_eq!(events[1]["event"], "done");
+    }
+
+    #[test]
+    fn bounds_stderr_diagnostics_on_nonzero_exit() {
+        let script = executable_script(
+            "#!/usr/bin/env python3\nimport sys\nsys.stderr.buffer.write(b'x' * 262144 + b' useful failure marker\\n')\nsys.stderr.buffer.flush()\nraise SystemExit(17)\n",
+        );
+
+        let error =
+            call_streaming_with_executable(Path::new("."), &script, serde_json::json!({}), |_| {})
+                .expect_err("non-zero child must fail");
+        let _ = fs::remove_file(script);
+        let message = error.to_string();
+
+        assert!(message.contains("useful failure marker"));
+        assert!(message.contains("stderr truncated"));
+        assert!(message.len() < STDERR_CAPTURE_LIMIT + 256);
+    }
+
+    #[test]
+    fn kills_and_reaps_child_after_invalid_stdout() {
+        let pid_path = std::env::temp_dir().join(format!(
+            "capstone-stderr-drain-{}-child.pid",
+            std::process::id()
+        ));
+        let script = executable_script(&format!(
+            "#!/usr/bin/env python3\nimport os, time\nwith open(r'{}', 'w') as pid_file:\n    pid_file.write(str(os.getpid()))\nprint('invalid json', flush=True)\ntime.sleep(5)\n",
+            pid_path.display()
+        ));
+
+        let error =
+            call_streaming_with_executable(Path::new("."), &script, serde_json::json!({}), |_| {})
+                .expect_err("malformed stdout must fail");
+        let pid = fs::read_to_string(&pid_path).unwrap();
+        let still_running = Command::new("kill")
+            .arg("-0")
+            .arg(pid.trim())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        let _ = fs::remove_file(script);
+        let _ = fs::remove_file(pid_path);
+
+        assert!(matches!(error, CommandError::InvalidResponse(_)));
+        assert!(!still_running, "malformed child was not reaped");
+    }
 }
