@@ -167,24 +167,65 @@
             {#if $activeTurn.subqueries.length}
               <div class="flex flex-col gap-2">
                 <h2 class="m-0 text-sm font-semibold">Retrieval plan</h2>
-                <ol class="m-0 flex flex-col gap-2 pl-5">
+                <ol class="m-0 flex list-none flex-col gap-2 p-0">
                   {#each $activeTurn.subqueries as subquery (subquery.id)}
-                    <li aria-label={`Subquery ${subquery.index}: ${subquery.status}`}>
-                      <div class="flex flex-wrap items-center gap-2">
-                        <span class="text-sm font-medium">{subquery.query}</span>
-                        <Badge variant={subquery.status === "complete" ? "secondary" : "outline"}>
-                          {subquery.status}
-                        </Badge>
-                        {#if subquery.status === "active"}
-                          <LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />
-                        {/if}
-                      </div>
-                      {#if subquery.answer}
-                        <p class="mt-1 mb-0 whitespace-pre-wrap text-sm">{subquery.answer}</p>
-                        <span class="text-xs text-muted-foreground">
-                          {subquery.sources.length} retrieved {subquery.sources.length === 1 ? "source" : "sources"}
-                        </span>
-                      {/if}
+                    <li>
+                      <details
+                        class="rounded-md border border-border/70 bg-background/40"
+                        data-subquery-id={subquery.id}
+                      >
+                        <summary
+                          class="cursor-pointer px-3 py-2 marker:text-muted-foreground"
+                          aria-label={`Subquery ${subquery.index}: ${subquery.query}. Status: ${subquery.status}`}
+                        >
+                          <span class="ml-1 inline-flex flex-wrap items-center gap-2 align-middle">
+                            <span class="text-sm font-medium">{subquery.query}</span>
+                            <Badge variant={subquery.status === "complete" ? "secondary" : "outline"}>
+                              {subquery.status}
+                            </Badge>
+                            {#if subquery.status === "active"}
+                              <LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />
+                            {/if}
+                          </span>
+                        </summary>
+                        <div class="flex flex-col gap-3 border-t border-border/70 px-3 py-3">
+                          {#if subquery.answer}
+                            <section aria-label={`Answer for subquery ${subquery.index}`}>
+                              <h3 class="m-0 text-xs font-semibold">Subquery answer</h3>
+                              <p class="mt-1 mb-0 whitespace-pre-wrap text-sm">{subquery.answer}</p>
+                            </section>
+                            <section aria-label={`Retrieved chunks for subquery ${subquery.index}`}>
+                              <div class="mb-2 flex items-center gap-2">
+                                <h3 class="m-0 text-xs font-semibold">Retrieved chunks</h3>
+                                <Badge variant="secondary">{subquery.sources.length}</Badge>
+                              </div>
+                              {#if subquery.sources.length}
+                                <ol class="m-0 flex list-none flex-col gap-2 p-0">
+                                  {#each subquery.sources as source}
+                                    <li>
+                                      <Card class="gap-1.5 p-3">
+                                        <div class="flex flex-wrap items-center gap-2">
+                                          <Badge variant="outline">Rank {source.rank}</Badge>
+                                          <span class="text-xs font-semibold">{source.title}</span>
+                                        </div>
+                                        <span class="text-xs text-muted-foreground">{source.filename}</span>
+                                        <span class="text-xs text-muted-foreground">
+                                          Page {source.page} · Chunk {source.chunk_index} · Score {source.score.toFixed(4)}
+                                        </span>
+                                        <p class="m-0 text-xs leading-relaxed">{source.snippet}</p>
+                                      </Card>
+                                    </li>
+                                  {/each}
+                                </ol>
+                              {:else}
+                                <p class="m-0 text-xs text-muted-foreground">No source metadata returned.</p>
+                              {/if}
+                            </section>
+                          {:else}
+                            <p class="m-0 text-sm text-muted-foreground">Answer and evidence are not available yet.</p>
+                          {/if}
+                        </div>
+                      </details>
                     </li>
                   {/each}
                 </ol>

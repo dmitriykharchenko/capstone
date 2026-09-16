@@ -71,13 +71,14 @@ test("completion persists only authoritative final answer and clears progress", 
   assert.equal(state.activeTurn, null);
   assert.equal(state.pending, false);
   assert.equal(state.streaming, false);
+  assert.equal(Object.hasOwn(state, "expandedSubqueries"), false);
   assert.deepEqual(state.messages, [
     { role: "user", content: "Question" },
     { role: "assistant", content: "Authoritative", sources: [source] },
   ]);
 });
 
-test("failure and session intents discard ephemeral progress and remain retryable", () => {
+test("failure and session intents discard ephemeral evidence details and remain retryable", () => {
   let state = chatReducer(undefined, actions.chatStarted());
   state = chatReducer(state, actions.chatChunk("Incomplete"));
   state = chatReducer(state, actions.chatFailed("transport failed"));
@@ -85,15 +86,19 @@ test("failure and session intents discard ephemeral progress and remain retryabl
   assert.equal(state.pending, false);
   assert.equal(state.streaming, false);
   assert.equal(state.error, "transport failed");
+  assert.equal(Object.hasOwn(state, "expandedSubqueries"), false);
 
   state = chatReducer(state, actions.chatStarted());
   assert.equal(state.error, null);
   state = chatReducer(state, actions.selectSession("other"));
   assert.equal(state.activeTurn, null);
+  assert.equal(Object.hasOwn(state, "expandedSubqueries"), false);
   state = chatReducer(chatReducer(state, actions.chatStarted()), actions.createSession());
   assert.equal(state.activeTurn, null);
+  assert.equal(Object.hasOwn(state, "expandedSubqueries"), false);
   state = chatReducer(chatReducer(state, actions.chatStarted()), actions.setSessionId("new"));
   assert.equal(state.activeTurn, null);
+  assert.equal(Object.hasOwn(state, "expandedSubqueries"), false);
   const stale = chatReducer(state, actions.chatChunk("late chunk"));
   assert.equal(stale.activeTurn, null);
   assert.equal(stale.streaming, false);
