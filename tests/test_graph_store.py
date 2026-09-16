@@ -107,6 +107,7 @@ def test_direct_derived_and_bounded_traversal_queries(tmp_path):
         assert {graph_id, logic_id, grace_id}.issubset(
             {node.node_id for node in depth_two.nodes}
         )
+        assert {edge.kind for edge in depth_two.edges} == {"authored_by", "has_topic"}
 
 
 def test_failed_replacement_rolls_back_existing_graph(tmp_path, monkeypatch):

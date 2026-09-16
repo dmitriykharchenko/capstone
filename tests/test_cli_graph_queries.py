@@ -67,6 +67,24 @@ def test_cli_queries_are_json_safe(
     json.dumps(result)
 
 
+def test_cli_neighborhood_uses_canonical_edge_kinds(tmp_path):
+    seed_graph(tmp_path)
+
+    result = handle_graph_query(
+        config(tmp_path),
+        {
+            "query": "neighborhood",
+            "node_id": stable_node_id("author", "Ada"),
+            "max_depth": 2,
+        },
+    )
+
+    assert {edge["kind"] for edge in result["neighborhood"]["edges"]} == {
+        "authored_by",
+        "has_topic",
+    }
+
+
 @pytest.mark.parametrize(
     ("query", "identifier_key", "result_key", "empty"),
     [

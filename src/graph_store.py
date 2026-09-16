@@ -519,7 +519,7 @@ class CozoGraphStore:
     @staticmethod
     def _all_edges(client: Any) -> tuple[GraphEdge, ...]:
         edges = [
-            GraphEdge(row[0], row[1], "authorship")
+            GraphEdge(row[0], row[1], "authored_by")
             for row in _rows(
                 client.run(
                     "?[paper_id, author_id] := *authored_by{paper_id, author_id}"
@@ -528,7 +528,7 @@ class CozoGraphStore:
             )
         ]
         edges.extend(
-            GraphEdge(row[0], row[1], "paper_topic")
+            GraphEdge(row[0], row[1], "has_topic")
             for row in _rows(
                 client.run(
                     "?[paper_id, topic_id] := *has_topic{paper_id, topic_id}"

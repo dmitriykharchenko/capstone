@@ -20,6 +20,11 @@ def test_graph_transport_is_allow_listed_typed_and_validated():
     assert "graph_neighborhood," in rust
     assert 'invoke<unknown>("graph_neighborhood"' in api
     assert "parseGraphNeighborhoodPayload" in api
+    assert 'GraphEdgeKind = "authored_by" | "has_topic"' in read(
+        "app/src/lib/graph-types.ts"
+    )
+    assert "authorship" not in read("app/src/lib/graph-types.ts")
+    assert "paper_topic" not in read("app/src/lib/graph-types.ts")
 
 
 def test_graph_state_and_saga_follow_store_ownership_patterns():

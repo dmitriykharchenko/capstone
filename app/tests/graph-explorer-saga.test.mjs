@@ -57,6 +57,23 @@ test("requests sorted unique paper neighborhoods and merges graph state", async 
   assert.deepEqual(actions[1].payload[0].map((node) => node.id), ["paper-a", "paper-b"]);
 });
 
+test("passes canonical edge kinds into loaded graph state", async () => {
+  const actions = await run([paper("paper")], async (id) => ({
+    ...response({ id, kind: "paper", label: id }),
+    nodes: [
+      { id, kind: "paper", label: id },
+      { id: "author-a", kind: "author", label: "Ada" },
+      { id: "topic-a", kind: "topic", label: "Graphs" },
+    ],
+    edges: [
+      { sourceId: id, targetId: "author-a", kind: "authored_by" },
+      { sourceId: id, targetId: "topic-a", kind: "has_topic" },
+    ],
+  }));
+
+  assert.deepEqual(actions[1].payload[1].map((edge) => edge.kind), ["authored_by", "has_topic"]);
+});
+
 test("surfaces dependency and store unavailability without transport leakage", async () => {
   for (const unavailable of [
     { enabled: false, available: false, reason: "dependency missing", status: "dependency-unavailable" },

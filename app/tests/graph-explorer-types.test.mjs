@@ -55,6 +55,16 @@ test("rejects malformed node and edge payloads at the frontend boundary", () => 
     () => parseGraphNeighborhoodPayload({ ...raw, query: "raw_cozoscript" }),
     /query must be neighborhood/,
   );
+  assert.throws(
+    () => parseGraphNeighborhoodPayload({
+      ...raw,
+      neighborhood: {
+        ...raw.neighborhood,
+        edges: [{ ...raw.neighborhood.edges[0], kind: "authorship" }],
+      },
+    }),
+    GraphPayloadError,
+  );
 });
 
 test("merges duplicate neighborhoods and lays out nodes stably by type", () => {
