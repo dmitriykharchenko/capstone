@@ -84,10 +84,14 @@ enum ChatStreamEvent {
     },
 }
 
-fn chat_sources(value: &Value, max_sources: usize) -> Result<Vec<ChatSource>, ()> {
+fn chat_sources(
+    value: &Value,
+    max_sources: usize,
+    allow_empty: bool,
+) -> Result<Vec<ChatSource>, ()> {
     let sources: Vec<ChatSource> =
         serde_json::from_value(value.get("sources").cloned().ok_or(())?).map_err(|_| ())?;
-    if sources.is_empty() || sources.len() > max_sources {
+    if (!allow_empty && sources.is_empty()) || sources.len() > max_sources {
         return Err(());
     }
     for (position, source) in sources.iter().enumerate() {
@@ -141,7 +145,7 @@ fn chat_done_event(value: &Value) -> Option<ChatStreamEvent> {
     let Some(indexed) = value.get("indexed").and_then(Value::as_bool) else {
         return invalid_chat_stream_event();
     };
-    let Ok(sources) = chat_sources(value, MAX_CHAT_SOURCES) else {
+    let Ok(sources) = chat_sources(value, MAX_CHAT_SOURCES, true) else {
         return Some(ChatStreamEvent::Error {
             message: "invalid chat source payload".to_string(),
         });
@@ -217,7 +221,7 @@ fn chat_stream_event(value: &Value) -> Option<ChatStreamEvent> {
             let Some(answer) = value.get("answer").and_then(Value::as_str) else {
                 return invalid_chat_stream_event();
             };
-            let Ok(sources) = chat_sources(value, 5) else {
+            let Ok(sources) = chat_sources(value, 5, false) else {
                 return invalid_chat_stream_event();
             };
             if answer.trim().is_empty() {
@@ -803,6 +807,21 @@ mod tests {
                 delta: "legacy".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn accepts_source_less_legacy_done_completion() {
+        let done = chat_stream_event(&serde_json::json!({
+            "ok": true,
+            "done": true,
+            "reply": "answer",
+            "chat_mode": "mock",
+            "indexed": false,
+            "sources": [],
+        }))
+        .unwrap();
+
+        assert!(matches!(done, ChatStreamEvent::Done { sources, .. } if sources.is_empty()));
     }
 
     #[test]
