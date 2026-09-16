@@ -41,6 +41,11 @@ test("collapsed evaluation summaries include readable scores and no-score states
   );
   assert.match(component, /<summary[\s\S]*?aria-label=\{summaryScoreAriaLabel/);
   assert.match(component, /return `Judge scores:/);
+  const scoreSubtitle = component.match(
+    /<span\s+class="([^"]*text-xs[^"]*)"\s+aria-label=\{summaryScoreAriaLabel\(/,
+  )?.[1];
+  assert.ok(scoreSubtitle?.includes("overflow-x-auto"), "score subtitle must be horizontally reachable");
+  assert.ok(!scoreSubtitle?.includes("truncate"), "score subtitle must not be ellipsized");
   for (const label of [
     "Context precision",
     "Context recall",

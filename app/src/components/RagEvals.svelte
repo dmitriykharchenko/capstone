@@ -236,7 +236,7 @@
                       </span>
                     {:else}
                       <span
-                        class="block truncate whitespace-nowrap text-xs font-normal"
+                        class="block max-w-full overflow-x-auto whitespace-nowrap text-xs font-normal"
                         aria-label={summaryScoreAriaLabel(result.judge_scores)}
                       >
                         {#each criteria as [key, label], scoreIndex}
