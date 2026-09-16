@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const CHUNK_LIMIT: usize = 5;
+const MAX_AGGREGATE_CHUNK_LIMIT: usize = 25;
 const TRANSPORT_ERROR_MESSAGE: &str =
     "Evaluation transport failed. Check the backend logs and retry.";
 
@@ -127,10 +127,10 @@ impl JudgeCriterion {
         self.relevant_chunk_ranks.as_ref().map_or(true, |ranks| {
             ranks
                 .iter()
-                .all(|rank| (1..=CHUNK_LIMIT as u32).contains(rank))
+                .all(|rank| (1..=MAX_AGGREGATE_CHUNK_LIMIT as u32).contains(rank))
         }) && self.chunks_used.as_ref().map_or(true, |references| {
             references.iter().all(|reference| match reference {
-                ChunkReference::Rank(rank) => (1..=CHUNK_LIMIT as u32).contains(rank),
+                ChunkReference::Rank(rank) => (1..=MAX_AGGREGATE_CHUNK_LIMIT as u32).contains(rank),
                 ChunkReference::Label(label) => nonempty(label),
             })
         }) && self
@@ -180,9 +180,21 @@ pub(crate) struct EvaluationCaseError {
 impl EvaluationCaseError {
     fn sanitize(mut self) -> Self {
         let (stage, message) = match self.stage.as_str() {
+            "planner" => (
+                "planner",
+                "Question planning failed for this case. Check backend configuration and retry.",
+            ),
             "retrieval" => (
                 "retrieval",
                 "Retrieval failed for this case. Check the paper index and retry.",
+            ),
+            "subanswer" => (
+                "subanswer",
+                "Subanswer generation failed for this case. Check backend configuration and retry.",
+            ),
+            "composer" => (
+                "composer",
+                "Final answer composition failed for this case. Check backend configuration and retry.",
             ),
             "model" => (
                 "model",
@@ -237,7 +249,7 @@ impl EvaluationCaseResult {
             && chunks_valid
             && if success {
                 self.error.is_none()
-                    && self.retrieved_chunks.len() == CHUNK_LIMIT
+                    && (1..=MAX_AGGREGATE_CHUNK_LIMIT).contains(&self.retrieved_chunks.len())
                     && self
                         .generated_answer
                         .as_ref()
@@ -473,6 +485,44 @@ mod tests {
     }
 
     #[test]
+    fn preserves_and_sanitizes_multihop_failure_stages() {
+        for (stage, message) in [
+            (
+                "planner",
+                "Question planning failed for this case. Check backend configuration and retry.",
+            ),
+            (
+                "subanswer",
+                "Subanswer generation failed for this case. Check backend configuration and retry.",
+            ),
+            (
+                "composer",
+                "Final answer composition failed for this case. Check backend configuration and retry.",
+            ),
+        ] {
+            let event = evaluation_stream_event(json!({
+                "event": "case_failure",
+                "completed": 1,
+                "total": 2,
+                "result": {
+                    "case_index": 1,
+                    "input": {"question": "q", "grading_notes": "g", "sources": []},
+                    "retrieval_strategy": "hybrid",
+                    "retrieved_chunks": [],
+                    "generated_answer": null,
+                    "judge_scores": null,
+                    "error": {"stage": stage, "message": "secret backend detail"}
+                }
+            }));
+
+            let serialized = serde_json::to_value(event).unwrap();
+            assert_eq!(serialized["result"]["error"]["stage"], stage);
+            assert_eq!(serialized["result"]["error"]["message"], message);
+            assert!(!serialized.to_string().contains("secret"));
+        }
+    }
+
+    #[test]
     fn sanitizes_transport_errors_before_channel_serialization() {
         let event = evaluation_stream_event(json!({
             "ok": false,
@@ -517,7 +567,7 @@ mod tests {
         let base = json!({
             "score": 4, "confidence": "high", "reasoning": "supported", "flags": []
         });
-        let chunks: Vec<Value> = (1..=5)
+        let chunks: Vec<Value> = (1..=25)
             .map(|rank| {
                 json!({
                     "rank": rank,
@@ -532,16 +582,16 @@ mod tests {
             })
             .collect();
         let mut ranking = base.clone();
-        ranking["relevant_chunk_ranks"] = json!([1, 2]);
+        ranking["relevant_chunk_ranks"] = json!([1, 25]);
         let mut utilization = base.clone();
-        utilization["chunks_used"] = json!([1, "chunk-2"]);
+        utilization["chunks_used"] = json!([25, "chunk-2"]);
         let mut similarity = base.clone();
         similarity["contradicting_claims"] = json!([]);
         let mut completeness = base.clone();
         completeness["missing_elements"] = json!([]);
         let mut hallucination = base.clone();
         hallucination["unsupported_claims"] = json!([]);
-        let event = evaluation_stream_event(json!({
+        let payload = json!({
             "event": "case_success", "completed": 1, "total": 1,
             "result": {
                 "case_index": 1,
@@ -560,17 +610,50 @@ mod tests {
                 },
                 "error": null
             }
-        }));
+        });
+        let event = evaluation_stream_event(payload.clone());
 
         let serialized = serde_json::to_value(event).unwrap();
         assert_eq!(serialized["event"], "caseSuccess");
         assert_eq!(
-            serialized["result"]["retrieved_chunks"][4]["text"],
-            "full chunk 5"
+            serialized["result"]["retrieved_chunks"][24]["text"],
+            "full chunk 25"
+        );
+        assert_eq!(
+            serialized["result"]["judge_scores"]["context_utilization"]["chunks_used"][0],
+            25
         );
         assert_eq!(
             serialized["result"]["judge_scores"]["context_utilization"]["chunks_used"][1],
             "chunk-2"
         );
+
+        for invalid_chunks in [
+            json!([]),
+            json!((1..=26)
+                .map(|rank| {
+                    json!({
+                        "rank": rank, "text": "chunk", "score": 1.0,
+                        "paper_id": format!("paper-{rank}"), "chunk_index": rank - 1,
+                        "filename": "paper.pdf", "title": "Paper", "page": rank
+                    })
+                })
+                .collect::<Vec<_>>()),
+        ] {
+            let mut invalid = payload.clone();
+            invalid["result"]["retrieved_chunks"] = invalid_chunks;
+            assert!(matches!(
+                evaluation_stream_event(invalid),
+                EvaluationStreamEvent::Error { .. }
+            ));
+        }
+
+        let mut invalid_reference = payload;
+        invalid_reference["result"]["judge_scores"]["relevant_chunk_ranking"]
+            ["relevant_chunk_ranks"] = json!([26]);
+        assert!(matches!(
+            evaluation_stream_event(invalid_reference),
+            EvaluationStreamEvent::Error { .. }
+        ));
     }
 }

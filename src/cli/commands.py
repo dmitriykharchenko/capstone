@@ -481,7 +481,12 @@ def _sanitize_evaluation_result(result: Mapping[str, Any]) -> dict[str, Any]:
     error = result.get("error")
     if error is not None:
         stage = error.get("stage") if isinstance(error, Mapping) else None
-        safe_stage = stage if stage in {"retrieval", "model", "judge"} else "evaluation"
+        safe_stage = (
+            stage
+            if stage
+            in {"planner", "retrieval", "subanswer", "composer", "model", "judge"}
+            else "evaluation"
+        )
         sanitized["error"] = {
             "stage": safe_stage,
             "message": _evaluation_error_message(safe_stage),
@@ -491,7 +496,10 @@ def _sanitize_evaluation_result(result: Mapping[str, Any]) -> dict[str, Any]:
 
 def _evaluation_error_message(stage: str) -> str:
     return {
+        "planner": "Question planning failed for this case. Check backend configuration and retry.",
         "retrieval": "Retrieval failed for this case. Check the paper index and retry.",
+        "subanswer": "Subanswer generation failed for this case. Check backend configuration and retry.",
+        "composer": "Final answer composition failed for this case. Check backend configuration and retry.",
         "model": "Answer generation failed for this case. Check backend configuration and retry.",
         "judge": "Judge evaluation failed for this case. Check backend configuration and retry.",
         "evaluation": "Evaluation failed for this case. Check backend configuration and retry.",

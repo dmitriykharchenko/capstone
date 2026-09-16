@@ -1,6 +1,8 @@
 import io
 import json
 
+import pytest
+
 from src.cli import __main__ as cli_main
 from src.cli.commands import handle_evaluation_stream
 from src.cli.config import CLIConfig
@@ -143,6 +145,72 @@ def test_sanitizes_path_and_credential_shaped_case_errors(tmp_path):
     assert failures[1]["result"]["error"]["stage"] == "evaluation"
     assert "/private/secret" not in json.dumps(events)
     assert "api_key" not in json.dumps(events)
+
+
+@pytest.mark.parametrize(
+    ("stage", "message"),
+    [
+        (
+            "planner",
+            "Question planning failed for this case. Check backend configuration and retry.",
+        ),
+        (
+            "subanswer",
+            "Subanswer generation failed for this case. Check backend configuration and retry.",
+        ),
+        (
+            "composer",
+            "Final answer composition failed for this case. Check backend configuration and retry.",
+        ),
+    ],
+)
+def test_preserves_multihop_failure_stage_and_continues(stage, message, tmp_path):
+    cases = [
+        {"question": "failure", "grading_notes": "a", "sources": []},
+        {"question": "success", "grading_notes": "b", "sources": []},
+    ]
+
+    class FakeRunner:
+        def run(self, payload, strategy):
+            failed = payload[0]["question"] == "failure"
+            scores = (
+                None
+                if failed
+                else {
+                    criterion: {
+                        "score": 4,
+                        "confidence": "high",
+                        "reasoning": "ok",
+                        "flags": [],
+                    }
+                    for criterion in JUDGE_CRITERIA
+                }
+            )
+            return [
+                {
+                    "case_index": 1,
+                    "input": payload[0],
+                    "retrieval_strategy": strategy,
+                    "retrieved_chunks": [],
+                    "generated_answer": None if failed else "answer",
+                    "judge_scores": scores,
+                    "error": {"stage": stage, "message": "secret"} if failed else None,
+                }
+            ]
+
+    events = list(
+        handle_evaluation_stream(
+            config(tmp_path),
+            {"retrieval_type": "hybrid", "test_cases": cases},
+            FakeRunner(),
+        )
+    )
+    results = [event["result"] for event in events if "result" in event]
+
+    assert results[0]["error"] == {"stage": stage, "message": message}
+    assert results[1]["error"] is None
+    assert events[-1]["succeeded"] == 1
+    assert events[-1]["failed"] == 1
 
 
 def test_cli_main_routes_evaluation_stream(monkeypatch, tmp_path):
