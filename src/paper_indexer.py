@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import re
+import threading
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Literal
@@ -16,12 +19,17 @@ from .chroma_persistence import (
     open_collection,
     upsert_records,
 )
-from .chunking import split_into_paragraphs
-from .embeddings import EmbeddingBackend, EmbeddingConfig, create_embedding
+from .chunking import (
+    DEFAULT_MAX_CHUNK_BYTES,
+    split_into_paragraphs,
+    split_oversized_chunk,
+)
+from .embeddings import EmbeddingBackend, EmbeddingConfig, create_embeddings
 from .paper_metadata import PaperMetadata, PaperMetadataExtractor
 
 DEFAULT_PAPERS_DIRECTORY = Path("ResearchPapers")
 DEFAULT_CHROMA_DIRECTORY = Path("data/chroma")
+DEFAULT_MAX_WORKERS = 4
 PAPER_METADATA_VERSION = 1
 _SAFE_PAPER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -44,7 +52,7 @@ class PaperIndexOutcome:
 
     paper_id: str
     filename: str
-    status: Literal["indexed", "empty", "failed"]
+    status: Literal["indexed", "empty", "failed", "skipped"]
     chunk_count: int = 0
     error: str | None = None
 
@@ -58,15 +66,25 @@ class PaperIndexReport:
 
 
 @dataclass(frozen=True)
+class PaperStart:
+    """Marks the paper the indexer is about to process next."""
+
+    paper_id: str
+    filename: str
+
+
+@dataclass(frozen=True)
 class PaperIndexProgress:
     """One determinate directory-indexing progress update.
 
-    The first update has ``completed == 0`` and no outcome. Each subsequent
-    update contains the outcome for exactly one paper.
+    The first update has ``completed == 0`` with no ``started`` and no
+    ``outcome``. Each paper then produces a ``started`` update (before it is
+    processed) followed by an ``outcome`` update (once it finishes).
     """
 
     completed: int
     total: int
+    started: PaperStart | None = None
     outcome: PaperIndexOutcome | None = None
 
 
@@ -146,10 +164,14 @@ class PaperIndexer:
         extractor: Callable[[Path], Sequence[ExtractedPage]] = extract_pdf_pages,
         chunker: Callable[[str], Sequence[str]] = split_into_paragraphs,
         embedder: Callable[[str], Sequence[float]] | None = None,
+        batch_embedder: Callable[[Sequence[str]], Sequence[Sequence[float]]]
+        | None = None,
         embedding_config: EmbeddingConfig | None = None,
         embedding_backend: EmbeddingBackend | Any | None = None,
         metadata_extractor: Callable[[str], PaperMetadata] | None = None,
         graph_store: Any | None = None,
+        max_chunk_bytes: int = DEFAULT_MAX_CHUNK_BYTES,
+        max_workers: int = DEFAULT_MAX_WORKERS,
     ) -> None:
         if not isinstance(papers_directory, (str, Path)):
             raise TypeError("papers_directory must be a string or Path")
@@ -157,6 +179,8 @@ class PaperIndexer:
             raise TypeError("extractor and chunker must be callable")
         if embedder is not None and not callable(embedder):
             raise TypeError("embedder must be callable")
+        if batch_embedder is not None and not callable(batch_embedder):
+            raise TypeError("batch_embedder must be callable")
         if metadata_extractor is not None and not callable(metadata_extractor):
             raise TypeError("metadata_extractor must be callable")
         if graph_store is not None and (
@@ -164,6 +188,14 @@ class PaperIndexer:
             or not callable(getattr(graph_store, "remove_paper", None))
         ):
             raise TypeError("graph_store must provide replace_paper and remove_paper")
+        if isinstance(max_chunk_bytes, bool) or not isinstance(max_chunk_bytes, int):
+            raise TypeError("max_chunk_bytes must be an integer")
+        if max_chunk_bytes < 1:
+            raise ValueError("max_chunk_bytes must be positive")
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+            raise TypeError("max_workers must be an integer")
+        if max_workers < 1:
+            raise ValueError("max_workers must be at least 1")
         self.papers_directory = Path(papers_directory)
         self.collection = (
             collection
@@ -174,7 +206,8 @@ class PaperIndexer:
         self._chunker = chunker
         self._embedding_config = embedding_config
         self._embedding_backend = embedding_backend
-        self._embedder = embedder or self._create_embedding
+        self._embedder = embedder
+        self._batch_embedder = batch_embedder
         self._metadata_extractor = (
             metadata_extractor
             if metadata_extractor is not None
@@ -183,13 +216,32 @@ class PaperIndexer:
             else None
         )
         self._graph_store = graph_store
+        self._max_chunk_bytes = max_chunk_bytes
+        self._max_workers = max_workers
+        # Serializes coordinated graph/Chroma mutations while extraction,
+        # metadata generation, and embedding remain parallel per paper.
+        self._write_lock = threading.Lock()
 
-    def _create_embedding(self, text: str) -> Sequence[float]:
-        return create_embedding(
-            text,
-            config=self._embedding_config,
-            backend=self._embedding_backend,
-        )
+    def _embed_chunks(self, chunks: Sequence[str]) -> list[list[float]]:
+        """Embed all of a paper's chunks, batching into one request by default.
+
+        An injected single-text ``embedder`` keeps the per-chunk path (used by
+        existing callers and tests); an injected ``batch_embedder`` or the
+        default backend embeds every chunk in a single request.
+        """
+
+        if self._batch_embedder is not None:
+            return [list(vector) for vector in self._batch_embedder(chunks)]
+        if self._embedder is not None:
+            return [list(self._embedder(chunk)) for chunk in chunks]
+        return [
+            list(vector)
+            for vector in create_embeddings(
+                list(chunks),
+                config=self._embedding_config,
+                backend=self._embedding_backend,
+            )
+        ]
 
     def _resolve_pdf(self, pdf_path: str | Path) -> Path:
         if not isinstance(pdf_path, (str, Path)):
@@ -242,13 +294,21 @@ class PaperIndexer:
                 not isinstance(chunk, str) or not chunk.strip() for chunk in page_chunks
             ):
                 raise ValueError("chunker must return non-empty strings")
-            chunks.extend(page_chunks)
-            page_numbers.extend([page.page_number] * len(page_chunks))
+            bounded_chunks = [
+                bounded
+                for chunk in page_chunks
+                for bounded in split_oversized_chunk(
+                    chunk, max_bytes=self._max_chunk_bytes
+                )
+            ]
+            chunks.extend(bounded_chunks)
+            page_numbers.extend([page.page_number] * len(bounded_chunks))
 
         if not chunks:
-            if self._graph_store is not None:
-                self._graph_store.remove_paper(paper_id)
-            delete_records(self.collection, where={"paper_id": paper_id})
+            with self._write_lock:
+                if self._graph_store is not None:
+                    self._graph_store.remove_paper(paper_id)
+                delete_records(self.collection, where={"paper_id": paper_id})
             return PaperIndexOutcome(paper_id, path.name, "empty")
 
         metadata = None
@@ -258,7 +318,7 @@ class PaperIndexer:
             )
             if not isinstance(metadata, PaperMetadata):
                 raise TypeError("metadata_extractor must return PaperMetadata")
-        embeddings = [list(self._embedder(chunk)) for chunk in chunks]
+        embeddings = self._embed_chunks(chunks)
         ids = [f"{paper_id}:chunk:{index:06d}" for index in range(len(chunks))]
         title = (
             metadata.title
@@ -288,19 +348,36 @@ class PaperIndexer:
             }
             for index in range(len(chunks))
         ]
-        if self._graph_store is not None:
-            if metadata is None:
-                raise RuntimeError("graph metadata extraction is unavailable")
-            self._graph_store.replace_paper(
-                paper_id, metadata.title, metadata.authors, metadata.topics
-            )
-        delete_records(self.collection, where={"paper_id": paper_id})
-        upsert_records(self.collection, ids, chunks, embeddings, metadatas)
+        # Replace this paper's records atomically under the write lock so a
+        # concurrent worker never interleaves its own delete/upsert here.
+        with self._write_lock:
+            if self._graph_store is not None:
+                if metadata is None:  # pragma: no cover - constructor establishes it
+                    raise RuntimeError("graph metadata extraction is unavailable")
+                self._graph_store.replace_paper(
+                    paper_id, metadata.title, metadata.authors, metadata.topics
+                )
+            delete_records(self.collection, where={"paper_id": paper_id})
+            upsert_records(self.collection, ids, chunks, embeddings, metadatas)
         return PaperIndexOutcome(paper_id, path.name, "indexed", len(chunks))
 
-    def iter_directory(self) -> Iterator[PaperIndexProgress]:
-        """Yield a start update then one outcome per top-level PDF."""
+    def iter_directory(
+        self, skip_paper_ids: set[str] | frozenset[str] | None = None
+    ) -> Iterator[PaperIndexProgress]:
+        """Yield a start update then one ``started``/``outcome`` pair per PDF.
 
+        Papers whose id is in ``skip_paper_ids`` are left untouched: they emit a
+        ``"skipped"`` outcome without being re-extracted, embedded, or written,
+        so re-running an index does not repeat work for already-indexed papers.
+
+        With ``max_workers > 1`` several papers are indexed concurrently, so
+        ``started``/``outcome`` events for different papers may interleave and
+        arrive out of filename order; the terminal ``completed`` count is still
+        monotonic and reaches ``total``. Every event is keyed by ``paper_id`` so
+        downstream consumers stay correct regardless of arrival order.
+        """
+
+        skip = skip_paper_ids or frozenset()
         directory = self.papers_directory
         if not directory.is_dir():
             raise NotADirectoryError(f"papers directory does not exist: {directory}")
@@ -314,25 +391,117 @@ class PaperIndexer:
         )
         total = len(pdfs)
         yield PaperIndexProgress(0, total)
-        for completed, path in enumerate(pdfs, start=1):
-            try:
-                outcome = self.index_paper(path)
-            except Exception as exc:
-                outcome = PaperIndexOutcome(
-                    path.stem,
-                    path.name,
-                    "failed",
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-            yield PaperIndexProgress(completed, total, outcome)
+        if self._max_workers <= 1:
+            yield from self._iter_sequential(pdfs, skip, total)
+        else:
+            yield from self._iter_concurrent(pdfs, skip, total)
 
-    def index_directory(self) -> PaperIndexReport:
-        """Index top-level PDFs in filename order, isolating paper failures."""
+    def _iter_sequential(
+        self,
+        pdfs: Sequence[Path],
+        skip: frozenset[str] | set[str],
+        total: int,
+    ) -> Iterator[PaperIndexProgress]:
+        """Index papers one at a time in filename order (``max_workers == 1``)."""
+
+        for completed, path in enumerate(pdfs, start=1):
+            if path.stem in skip:
+                yield PaperIndexProgress(
+                    completed,
+                    total,
+                    outcome=PaperIndexOutcome(path.stem, path.name, "skipped"),
+                )
+                continue
+            yield PaperIndexProgress(
+                completed - 1,
+                total,
+                started=PaperStart(path.stem, path.name),
+            )
+            yield PaperIndexProgress(
+                completed, total, outcome=self._index_or_failure(path)
+            )
+
+    def _iter_concurrent(
+        self,
+        pdfs: Sequence[Path],
+        skip: frozenset[str] | set[str],
+        total: int,
+    ) -> Iterator[PaperIndexProgress]:
+        """Index papers via a bounded thread pool, yielding events as they land.
+
+        Skipped papers emit their outcomes up front in filename order; the rest
+        are submitted to the pool. Each worker pushes a ``started`` event when it
+        begins and an ``outcome`` event when it finishes onto a thread-safe
+        queue, which this generator drains, advancing a monotonic ``completed``
+        count on each outcome.
+        """
+
+        completed = 0
+        to_process: list[Path] = []
+        for path in pdfs:
+            if path.stem in skip:
+                completed += 1
+                yield PaperIndexProgress(
+                    completed,
+                    total,
+                    outcome=PaperIndexOutcome(path.stem, path.name, "skipped"),
+                )
+            else:
+                to_process.append(path)
+        if not to_process:
+            return
+
+        events: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+        def worker(path: Path) -> None:
+            events.put(("started", PaperStart(path.stem, path.name)))
+            events.put(("outcome", self._index_or_failure(path)))
+
+        workers = min(self._max_workers, len(to_process))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for path in to_process:
+                executor.submit(worker, path)
+            remaining = len(to_process)
+            while remaining:
+                kind, payload = events.get()
+                if kind == "started":
+                    yield PaperIndexProgress(completed, total, started=payload)
+                else:
+                    completed += 1
+                    remaining -= 1
+                    yield PaperIndexProgress(completed, total, outcome=payload)
+
+    def _index_or_failure(self, path: Path) -> PaperIndexOutcome:
+        """Index one paper, converting any exception into a ``failed`` outcome."""
+
+        try:
+            return self.index_paper(path)
+        except Exception as exc:  # noqa: BLE001 - isolate one paper's failure
+            return PaperIndexOutcome(
+                path.stem,
+                path.name,
+                "failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def index_directory(
+        self, skip_paper_ids: set[str] | frozenset[str] | None = None
+    ) -> PaperIndexReport:
+        """Index top-level PDFs, isolating paper failures.
+
+        ``skip_paper_ids`` is forwarded to :meth:`iter_directory` so callers can
+        avoid re-indexing papers that are already indexed. Outcomes are sorted
+        by filename so the report is deterministically ordered even when papers
+        are indexed concurrently and finish out of order.
+        """
 
         outcomes: list[PaperIndexOutcome] = []
-        for progress in self.iter_directory():
+        for progress in self.iter_directory(skip_paper_ids):
             if progress.outcome is not None:
                 outcomes.append(progress.outcome)
+        outcomes.sort(
+            key=lambda outcome: (outcome.filename.casefold(), outcome.filename)
+        )
         return PaperIndexReport(self.papers_directory, tuple(outcomes))
 
 
@@ -347,14 +516,16 @@ def index_papers_directory(
 
 __all__ = [
     "DEFAULT_CHROMA_DIRECTORY",
+    "DEFAULT_MAX_WORKERS",
     "DEFAULT_PAPERS_DIRECTORY",
-    "PAPER_METADATA_VERSION",
     "ExtractedPage",
     "PDFExtractionError",
+    "PAPER_METADATA_VERSION",
     "PaperIndexOutcome",
     "PaperIndexProgress",
     "PaperIndexReport",
     "PaperIndexer",
+    "PaperStart",
     "extract_pdf_pages",
     "index_papers_directory",
 ]
