@@ -266,7 +266,10 @@ def build_evaluation_runner(config: CLIConfig) -> EvaluationRunner:
     else:
         model = MockChatModel()
         chat_config = None
-    return EvaluationRunner(retriever, model, config=chat_config)
+    kwargs: dict[str, Any] = {}
+    if config.system_prompt:
+        kwargs["system_prompt"] = config.system_prompt
+    return EvaluationRunner(retriever, model, config=chat_config, **kwargs)
 
 
 def build_agent_loop(

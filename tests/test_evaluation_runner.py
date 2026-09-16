@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from src.agent_loop import AgentLoop
 from src.evaluation_runner import (
     JUDGE_CRITERIA,
     EvaluationRunner,
@@ -18,10 +19,10 @@ def chunks(question="question"):
             rank=index,
             text=f"full chunk {index} for {question}\nsecond line",
             score=1.0 / index,
-            paper_id=f"paper-{index}",
+            paper_id=f"{question}-paper-{index}",
             chunk_index=index - 1,
-            filename=f"source-{index}.pdf",
-            title=f"Source {index}",
+            filename=f"{question}-source-{index}.pdf",
+            title=f"{question} Source {index}",
             page=index,
         )
         for index in range(1, 6)
@@ -63,9 +64,9 @@ class FakeRetriever:
         self.calls = []
         self.failures = set(failures or ())
 
-    def retrieve_evaluation_chunks(self, query, *, strategy, n_results):
-        self.calls.append((query, strategy, n_results))
-        if query in self.failures:
+    def retrieve_chunks(self, query, n_results=5):
+        self.calls.append((query, n_results))
+        if any(question in query for question in self.failures):
             raise RuntimeError(f"retrieval failed for {query}")
         return chunks(query)
 
@@ -76,39 +77,91 @@ class FakeResponse:
 
 
 class FakeModel:
-    def __init__(self, malformed_judges=None, answer_failures=None):
+    def __init__(
+        self,
+        malformed_judges=None,
+        answer_failures=None,
+        stage_failures=None,
+        hop_count=2,
+    ):
         self.calls = []
         self.malformed_judges = set(malformed_judges or ())
         self.answer_failures = set(answer_failures or ())
+        self.stage_failures = dict(stage_failures or {})
+        self.hop_count = hop_count
 
     def invoke(self, messages):
         self.calls.append(messages)
-        system = messages[0].content
-        user = messages[1].content
-        if system.startswith("You are an evaluation judge"):
+        contents = "\n".join(message.content for message in messages)
+        if messages[0].content.startswith("You are an evaluation judge"):
             for question in self.malformed_judges:
-                if f"USER_QUERY: {question}" in user:
+                if f"USER_QUERY: {question}" in messages[-1].content:
                     return FakeResponse("```json\n{}\n```")
             return FakeResponse(json.dumps(judge_payload()))
+        if "MULTIHOP_PLANNER" in contents:
+            question = messages[-1].content
+            if self.stage_failures.get(question) == "planner":
+                raise RuntimeError(f"planner failed for {question}")
+            return FakeResponse(
+                json.dumps(
+                    {
+                        "subqueries": [
+                            f"{question} hop {index}"
+                            for index in range(1, self.hop_count + 1)
+                        ]
+                    }
+                )
+            )
+        payload = json.loads(messages[-1].content)
+        if "MULTIHOP_SUBANSWER" in contents:
+            if self.stage_failures.get(payload["original_question"]) == "subanswer":
+                raise RuntimeError(
+                    f"subanswer failed for {payload['original_question']}"
+                )
+            return FakeResponse(f"summary for {payload['subquery']}")
+        if self.stage_failures.get(payload["original_question"]) == "composer":
+            raise RuntimeError(f"composer failed for {payload['original_question']}")
         for question in self.answer_failures:
-            if f"USER_QUERY: {question}" in user:
+            if payload["original_question"] == question:
                 raise RuntimeError(f"model failed for {question}")
-        question = user.rsplit("USER_QUERY: ", maxsplit=1)[1]
-        return FakeResponse(f"answer for {question}")
+        return FakeResponse(f"answer for {payload['original_question']}")
+
+
+def model_stages(model):
+    stages = []
+    for messages in model.calls:
+        contents = "\n".join(message.content for message in messages)
+        if messages[0].content.startswith("You are an evaluation judge"):
+            stages.append("judge")
+        elif "MULTIHOP_PLANNER" in contents:
+            stages.append("planner")
+        elif "MULTIHOP_SUBANSWER" in contents:
+            stages.append("subanswer")
+        else:
+            stages.append("composer")
+    return stages
 
 
 @pytest.mark.parametrize("strategy", ["vector", "bm25", "hybrid"])
-def test_runs_each_strategy_with_exactly_five_chunks(strategy):
+def test_existing_strategy_values_all_use_multihop_default_retrieval(strategy):
     retriever = FakeRetriever()
     model = FakeModel()
 
     result = EvaluationRunner(retriever, model).run([case()], strategy)
 
-    assert retriever.calls == [("Question one", strategy, 5)]
-    assert len(result[0]["retrieved_chunks"]) == 5
-    assert [item["rank"] for item in result[0]["retrieved_chunks"]] == [1, 2, 3, 4, 5]
+    assert retriever.calls == [("Question one hop 1", 5), ("Question one hop 2", 5)]
+    assert len(result[0]["retrieved_chunks"]) == 10
+    assert [item["rank"] for item in result[0]["retrieved_chunks"]] == list(
+        range(1, 11)
+    )
     assert result[0]["error"] is None
-    assert len(model.calls) == 2
+    assert model_stages(model) == [
+        "planner",
+        "subanswer",
+        "subanswer",
+        "composer",
+        "judge",
+    ]
 
 
 def test_rejects_invalid_strategy_before_any_calls():
@@ -122,20 +175,20 @@ def test_rejects_invalid_strategy_before_any_calls():
     assert model.calls == []
 
 
-def test_records_insufficient_chunks_as_retrieval_error_before_model_call():
+def test_records_empty_hop_as_retrieval_error_before_composer_or_judge():
     retriever = FakeRetriever()
     model = FakeModel()
 
-    def retrieve_four(query, *, strategy, n_results):
-        retriever.calls.append((query, strategy, n_results))
-        return chunks(query)[:4]
+    def retrieve_with_empty_second_hop(query, n_results=5):
+        retriever.calls.append((query, n_results))
+        return [] if query.endswith("hop 2") else chunks(query)
 
-    retriever.retrieve_evaluation_chunks = retrieve_four
+    retriever.retrieve_chunks = retrieve_with_empty_second_hop
     result = EvaluationRunner(retriever, model).run([case()], "vector")
 
     assert result[0]["error"]["stage"] == "retrieval"
     assert result[0]["retrieved_chunks"] == []
-    assert model.calls == []
+    assert model_stages(model) == ["planner", "subanswer"]
 
 
 @pytest.mark.parametrize(
@@ -173,14 +226,14 @@ def test_judge_prompt_uses_runtime_template_and_exact_field_mapping():
 
     runtime = open("tests/judge.md", encoding="utf-8").read()
     system_section = runtime.split("\nUSER PROMPT (fill per example):\n", maxsplit=1)[0]
-    judge_system = model.calls[1][0].content
-    judge_user = model.calls[1][1].content
+    judge_system = model.calls[-1][0].content
+    judge_user = model.calls[-1][1].content
     assert judge_system == system_section.removeprefix("SYSTEM PROMPT:\n").strip("\n")
     assert "USER_QUERY: Unique question" in judge_user
     assert 'GROUND_TRUTH_RELEVANT: ["alpha.pdf", "beta.pdf"]' in judge_user
     assert "GENERATED_ANSWER: answer for Unique question" in judge_user
     assert "REFERENCE_ANSWER: Unique grading notes" in judge_user
-    assert all(f"{index}. full chunk {index}" in judge_user for index in range(1, 6))
+    assert all(f"{index}. full chunk" in judge_user for index in range(1, 11))
     assert "{{" not in judge_user
     assert "\n...\n" not in judge_user
 
@@ -188,7 +241,7 @@ def test_judge_prompt_uses_runtime_template_and_exact_field_mapping():
 def test_empty_sources_map_to_not_provided():
     model = FakeModel()
     EvaluationRunner(FakeRetriever(), model).run([case(sources=[])], "vector")
-    assert "GROUND_TRUTH_RELEVANT: NOT PROVIDED" in model.calls[1][1].content
+    assert "GROUND_TRUTH_RELEVANT: NOT PROVIDED" in model.calls[-1][1].content
 
 
 def test_cases_and_model_calls_execute_in_strict_sequential_order():
@@ -198,15 +251,32 @@ def test_cases_and_model_calls_execute_in_strict_sequential_order():
 
     results = EvaluationRunner(retriever, model).run(inputs, "bm25")
 
-    assert [call[0] for call in retriever.calls] == ["first", "second", "third"]
-    assert [result["case_index"] for result in results] == [1, 2, 3]
-    call_kinds = [
-        "judge"
-        if call[0].content.startswith("You are an evaluation judge")
-        else "answer"
-        for call in model.calls
+    assert [call[0] for call in retriever.calls] == [
+        "first hop 1",
+        "first hop 2",
+        "second hop 1",
+        "second hop 2",
+        "third hop 1",
+        "third hop 2",
     ]
-    assert call_kinds == ["answer", "judge", "answer", "judge", "answer", "judge"]
+    assert [result["case_index"] for result in results] == [1, 2, 3]
+    assert model_stages(model) == [
+        "planner",
+        "subanswer",
+        "subanswer",
+        "composer",
+        "judge",
+        "planner",
+        "subanswer",
+        "subanswer",
+        "composer",
+        "judge",
+        "planner",
+        "subanswer",
+        "subanswer",
+        "composer",
+        "judge",
+    ]
 
 
 def test_retrieval_and_model_failures_are_recorded_and_later_cases_continue():
@@ -224,11 +294,24 @@ def test_retrieval_and_model_failures_are_recorded_and_later_cases_continue():
         result["error"]["stage"] if result["error"] else None for result in results
     ] == [
         "retrieval",
-        "model",
+        "composer",
         None,
     ]
     assert results[2]["generated_answer"] == "answer for success"
     assert results[2]["judge_scores"]["context_precision"]["score"] == 4
+
+
+@pytest.mark.parametrize("stage", ["planner", "subanswer", "composer"])
+def test_each_multihop_model_failure_stage_is_explicit_and_later_cases_continue(stage):
+    model = FakeModel(stage_failures={"failure": stage})
+
+    results = EvaluationRunner(FakeRetriever(), model).run(
+        [case("failure"), case("success")], "hybrid"
+    )
+
+    assert results[0]["error"]["stage"] == stage
+    assert results[0]["generated_answer"] is None
+    assert results[1]["error"] is None
 
 
 def test_malformed_judge_is_recorded_without_discarding_answer_or_later_case():
@@ -260,6 +343,24 @@ def test_valid_judge_json_and_aggregation_ready_result_schema():
     }
     assert [result["judge_scores"][name]["score"] for name in JUDGE_CRITERIA] == [4] * 7
     json.dumps(result)
+
+
+def test_five_hops_aggregate_and_judge_all_twenty_five_chunks():
+    model = FakeModel(hop_count=5)
+
+    result = EvaluationRunner(FakeRetriever(), model).run([case()], "hybrid")[0]
+
+    assert len(result["retrieved_chunks"]) == 25
+    assert [chunk["rank"] for chunk in result["retrieved_chunks"]] == list(range(1, 26))
+    assert "25. full chunk" in model.calls[-1][-1].content
+    valid = judge_payload()
+    valid["relevant_chunk_ranking"]["relevant_chunk_ranks"] = [25]
+    assert parse_judge_output(json.dumps(valid))["relevant_chunk_ranking"][
+        "relevant_chunk_ranks"
+    ] == [25]
+    valid["relevant_chunk_ranking"]["relevant_chunk_ranks"] = [26]
+    with pytest.raises(JudgeOutputError):
+        parse_judge_output(json.dumps(valid))
 
 
 def invalid_judge_outputs():
@@ -299,6 +400,10 @@ def test_stateless_calls_do_not_use_chat_persistence(monkeypatch):
         persistence_was_called,
     )
     monkeypatch.setattr(
+        "src.sqlite_history.SQLiteHistoryStore.get_messages",
+        persistence_was_called,
+    )
+    monkeypatch.setattr(
         "src.chat_history_index.ChatHistoryIndex.index_exchange",
         persistence_was_called,
     )
@@ -307,12 +412,44 @@ def test_stateless_calls_do_not_use_chat_persistence(monkeypatch):
     result = EvaluationRunner(FakeRetriever(), model).run([case()], "vector")
 
     assert result[0]["error"] is None
-    assert all(len(messages) == 2 for messages in model.calls)
-    assert all(
-        [
-            getattr(messages[0], "type", getattr(messages[0], "role", None)),
-            getattr(messages[1], "type", getattr(messages[1], "role", None)),
-        ]
-        in (["system", "human"], ["system", "user"])
-        for messages in model.calls
-    )
+    assert model_stages(model) == [
+        "planner",
+        "subanswer",
+        "subanswer",
+        "composer",
+        "judge",
+    ]
+
+
+def test_chat_and_evaluation_share_calls_answer_and_aggregate_sources(tmp_path):
+    question = "Compare systems"
+    chat_model = FakeModel()
+    chat_retriever = FakeRetriever()
+    with AgentLoop(
+        tmp_path / "chat.sqlite3", chat_model, paper_retriever=chat_retriever
+    ) as chat:
+        chat_answer = chat.run("session", question)
+        chat_sources = chat.last_sources
+
+    evaluation_model = FakeModel()
+    evaluation_retriever = FakeRetriever()
+    evaluation = EvaluationRunner(evaluation_retriever, evaluation_model).run(
+        [case(question)], "hybrid"
+    )[0]
+
+    assert chat_retriever.calls == evaluation_retriever.calls
+    assert chat_answer == evaluation["generated_answer"]
+    assert [
+        (source.rank, source.paper_id, source.chunk_index) for source in chat_sources
+    ] == [
+        (chunk["rank"], chunk["paper_id"], chunk["chunk_index"])
+        for chunk in evaluation["retrieved_chunks"]
+    ]
+    chat_pipeline_calls = [
+        [message.content for message in messages] for messages in chat_model.calls
+    ]
+    evaluation_pipeline_calls = [
+        [message.content for message in messages]
+        for messages in evaluation_model.calls[:-1]
+    ]
+    assert chat_pipeline_calls == evaluation_pipeline_calls
