@@ -1,6 +1,15 @@
 <script lang="ts">
-  import { connectedNodes, layoutGraph } from "../lib/graph-layout";
-  import type { GraphNodeKind } from "../lib/graph-types";
+  import { onMount } from "svelte";
+  import {
+    Background,
+    BackgroundVariant,
+    Controls,
+    SvelteFlow,
+    type NodeEventWithPointer,
+  } from "@xyflow/svelte";
+  import "@xyflow/svelte/dist/style.css";
+  import { connectedNodes } from "../lib/graph-layout";
+  import { toFlowEdges, toFlowNodes, type GraphFlowNode } from "$lib/graph-flow";
   import {
     selectGraphEdges,
     selectGraphMessage,
@@ -9,7 +18,11 @@
     selectGraphStatus,
   } from "../slices/graph-explorer/graph-explorer-selectors";
   import { loadGraph, selectGraphNode } from "../slices/graph-explorer/graph-explorer-slice";
+  import { openPaper } from "../slices/papers/papers-slice";
+  import { navigateTo } from "../slices/router/router-slice";
+  import { routeForName } from "../slices/router/router-types";
   import { store } from "../store";
+  import GraphNode from "./GraphNode.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Card } from "$lib/components/ui/card";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
@@ -20,24 +33,42 @@
   const selectedId = selectGraphNodeId();
   const message = selectGraphMessage();
 
-  const layout = $derived(layoutGraph($nodes));
-  const positions = $derived(new Map(layout.nodes.map((node) => [node.id, node])));
+  const flowNodes = $derived(toFlowNodes($nodes, activateNode));
+  const flowEdges = $derived(toFlowEdges($edges));
   const selected = $derived($nodes.find((node) => node.id === $selectedId) ?? null);
   const connected = $derived(connectedNodes($selectedId, $nodes, $edges));
+  const nodeTypes = { graph: GraphNode };
+  let colorMode = $state<"light" | "dark">("light");
 
-  const nodeClasses: Record<GraphNodeKind, string> = {
-    paper: "border-blue-500/60 bg-blue-500/15",
-    author: "border-amber-500/60 bg-amber-500/15",
-    topic: "border-emerald-500/60 bg-emerald-500/15",
-  };
+  onMount(() => {
+    const syncTheme = () => {
+      colorMode = document.documentElement.classList.contains("dark") ? "dark" : "light";
+    };
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  });
 
   function retry() {
     store.dispatch(loadGraph());
   }
 
+  function activateNode(node: { id: string; kind: string }) {
+    store.dispatch(selectGraphNode(node.id));
+    if (node.kind === "paper") {
+      store.dispatch(openPaper(node.id));
+      store.dispatch(navigateTo(routeForName("papers")));
+    }
+  }
+
   function select(nodeId: string) {
     store.dispatch(selectGraphNode(nodeId));
   }
+
+  const handleNodeClick: NodeEventWithPointer<MouseEvent | TouchEvent, GraphFlowNode> = ({ node }) => {
+    activateNode({ id: node.id, kind: node.data.kind });
+  };
 </script>
 
 <Card
@@ -47,13 +78,16 @@
     <div>
       <h2 id="paper-graph-title" class="font-semibold">Paper graph</h2>
       <p class="text-xs text-muted-foreground">Authors, papers, and topics</p>
+      <p class="text-[10px] text-muted-foreground" aria-label="Graph edge legend">
+        Edges: authored by · has topic
+      </p>
     </div>
     <Button type="button" variant="outline" size="sm" onclick={retry} disabled={$status === "loading"}>
       Retry
     </Button>
   </header>
 
-  <section aria-labelledby="paper-graph-title" class="min-h-0 flex-1 overflow-auto">
+  <section aria-labelledby="paper-graph-title" class="min-h-0 flex-1 overflow-hidden">
     {#if $status === "loading"}
       <div class="flex items-center gap-2 p-4 text-sm" role="status" aria-live="polite">
         <LoaderCircle class="size-4 animate-spin" /> Loading paper graph…
@@ -79,51 +113,23 @@
         <strong>Graph transport error.</strong> {$message}
       </div>
     {:else}
-      <div class="relative" style={`width: ${layout.width}px; height: ${layout.height}px`}>
-        <svg
-          class="absolute inset-0"
-          width={layout.width}
-          height={layout.height}
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
-          aria-hidden="true"
+      <div class="h-full min-h-[260px] w-full" aria-label="Interactive paper graph">
+        <SvelteFlow
+          {nodeTypes}
+          nodes={flowNodes}
+          edges={flowEdges}
+          fitView
+          fitViewOptions={{ padding: 0.2, minZoom: 0.35, maxZoom: 1.5 }}
+          colorMode={colorMode}
+          nodesConnectable={false}
+          nodesFocusable={false}
+          panOnDrag
+          zoomOnScroll
+          onnodeclick={handleNodeClick}
         >
-          {#each $edges as edge (`${edge.kind}:${edge.sourceId}:${edge.targetId}`)}
-            {@const source = positions.get(edge.sourceId)}
-            {@const target = positions.get(edge.targetId)}
-            {#if source && target}
-              <line
-                x1={source.x}
-                y1={source.y}
-                x2={target.x}
-                y2={target.y}
-                class="stroke-border"
-                stroke-width="2"
-              />
-              <text
-                x={(source.x + target.x) / 2}
-                y={(source.y + target.y) / 2 - 4}
-                class="fill-muted-foreground text-[9px]"
-                text-anchor="middle"
-              >
-                {edge.kind === "authored_by" ? "authored by" : "has topic"}
-              </text>
-            {/if}
-          {/each}
-        </svg>
-        {#each layout.nodes as node (node.id)}
-          <button
-            type="button"
-            class={`absolute w-40 -translate-x-1/2 -translate-y-1/2 truncate rounded-md border px-2 py-1.5 text-xs shadow-sm ${nodeClasses[node.kind]}`}
-            class:ring-2={$selectedId === node.id}
-            style={`left: ${node.x}px; top: ${node.y}px`}
-            aria-pressed={$selectedId === node.id}
-            aria-label={`${node.kind}: ${node.label}`}
-            title={node.label}
-            onclick={() => select(node.id)}
-          >
-            {node.label}
-          </button>
-        {/each}
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
+          <Controls />
+        </SvelteFlow>
       </div>
     {/if}
   </section>
@@ -148,7 +154,13 @@
             <h4 class="mt-3 text-xs font-semibold uppercase text-muted-foreground">Connected {kind}s</h4>
             <div class="mt-1 flex flex-wrap gap-1">
               {#each matches as node (node.id)}
-                <Button type="button" variant="secondary" size="sm" onclick={() => select(node.id)}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  aria-pressed={$selectedId === node.id}
+                  onclick={() => select(node.id)}
+                >
                   {node.label}
                 </Button>
               {/each}
