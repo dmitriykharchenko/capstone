@@ -2,6 +2,7 @@
   import { store } from "../store";
   import {
     selectMessages,
+    selectActiveTurn,
     selectPending,
     selectStreaming,
     selectChatMode,
@@ -25,6 +26,7 @@
   import { cn } from "$lib/utils";
 
   const messages = selectMessages();
+  const activeTurn = selectActiveTurn();
   const pending = selectPending();
   const streaming = selectStreaming();
   const chatMode = selectChatMode();
@@ -85,7 +87,7 @@
 
 <div class="relative flex h-full min-h-0 flex-col">
   <div class="absolute inset-x-0 top-0 z-20 flex items-center gap-3 bg-transparent px-4 py-3 backdrop-blur-md">
-    <Select type="single" value={$sessionId} onValueChange={switchSession}>
+    <Select type="single" value={$sessionId} onValueChange={switchSession} disabled={$pending}>
       <SelectTrigger
         class="w-[320px] max-w-full"
         aria-label={$sessionId ? sessionLabel($sessionId) : "Select session"}
@@ -123,9 +125,7 @@
             )}
           >
             <span class="font-mono text-[0.7rem] font-medium uppercase opacity-70">{m.role}</span>
-            <p class="m-0 whitespace-pre-wrap text-sm">{m.content}{#if $streaming && i === $messages.length - 1 && m.role === "assistant"}<span
-                  class="ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 animate-pulse bg-current align-baseline"
-                ></span>{/if}</p>
+            <p class="m-0 whitespace-pre-wrap text-sm">{m.content}</p>
             {#if m.role === "assistant" && m.sources?.length}
               <section
                 class="mt-2 w-full border-t border-border/70 pt-2"
@@ -156,7 +156,59 @@
             {/if}
           </div>
         {/each}
-        {#if $pending && !$streaming}
+        {#if $activeTurn}
+          <section
+            class="flex w-full max-w-[90%] flex-col gap-3 self-start rounded-lg bg-muted px-3 py-3"
+            aria-label="Multihop answer progress"
+            aria-live="polite"
+            aria-busy={$pending}
+          >
+            <span class="font-mono text-[0.7rem] font-medium uppercase opacity-70">assistant</span>
+            {#if $activeTurn.subqueries.length}
+              <div class="flex flex-col gap-2">
+                <h2 class="m-0 text-sm font-semibold">Retrieval plan</h2>
+                <ol class="m-0 flex flex-col gap-2 pl-5">
+                  {#each $activeTurn.subqueries as subquery (subquery.id)}
+                    <li aria-label={`Subquery ${subquery.index}: ${subquery.status}`}>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-sm font-medium">{subquery.query}</span>
+                        <Badge variant={subquery.status === "complete" ? "secondary" : "outline"}>
+                          {subquery.status}
+                        </Badge>
+                        {#if subquery.status === "active"}
+                          <LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />
+                        {/if}
+                      </div>
+                      {#if subquery.answer}
+                        <p class="mt-1 mb-0 whitespace-pre-wrap text-sm">{subquery.answer}</p>
+                        <span class="text-xs text-muted-foreground">
+                          {subquery.sources.length} retrieved {subquery.sources.length === 1 ? "source" : "sources"}
+                        </span>
+                      {/if}
+                    </li>
+                  {/each}
+                </ol>
+              </div>
+            {/if}
+            {#if $activeTurn.finalAnswer || $streaming}
+              <section class="border-t border-border/70 pt-2" aria-label="Final composed answer">
+                <div class="mb-1 flex items-center gap-2">
+                  <h2 class="m-0 text-sm font-semibold">Final composed answer</h2>
+                  {#if $streaming}<Badge variant="outline">streaming</Badge>{/if}
+                </div>
+                <p class="m-0 whitespace-pre-wrap text-sm">{$activeTurn.finalAnswer}{#if $streaming}<span
+                      class="ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 animate-pulse bg-current align-baseline"
+                      aria-hidden="true"
+                    ></span>{/if}</p>
+              </section>
+            {:else if !$activeTurn.subqueries.length}
+              <div class="flex items-center gap-2 text-sm text-muted-foreground italic">
+                <LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
+                <span>Planning answer…</span>
+              </div>
+            {/if}
+          </section>
+        {:else if $pending && !$streaming}
           <div
             class="flex items-center gap-2 self-start rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground italic"
           >
@@ -165,7 +217,7 @@
           </div>
         {/if}
         {#if $error}
-          <p class="text-sm text-destructive">{$error}</p>
+          <p class="text-sm text-destructive" role="alert">Failed: {$error}</p>
         {/if}
       </div>
     </ScrollArea>
