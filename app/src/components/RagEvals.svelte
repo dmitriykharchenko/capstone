@@ -9,6 +9,7 @@
     SelectTrigger,
   } from "$lib/components/ui/select";
   import { parseEvaluationTestCases } from "$lib/evaluation-upload";
+  import { evaluationScoreColor } from "$lib/evaluation-score";
   import { EVALUATION_RETRIEVAL_TYPE } from "$lib/evaluation-types";
   import type {
     EvaluationJudgeScores,
@@ -82,6 +83,20 @@
 
   function criterionDetails(scores: EvaluationJudgeScores, key: keyof EvaluationJudgeScores) {
     return scores[key];
+  }
+
+  function summaryCriterion(scores: EvaluationJudgeScores, key: keyof EvaluationJudgeScores) {
+    const criterion = scores[key];
+    return Number.isFinite(criterion?.score) ? criterion : null;
+  }
+
+  function summaryScoreAriaLabel(scores: EvaluationJudgeScores) {
+    return `Judge scores: ${criteria
+      .map(([key, label]) => {
+        const criterion = summaryCriterion(scores, key);
+        return `${label} ${criterion ? criterion.score.toFixed(2) : "not scored"}`;
+      })
+      .join(", ")}`;
   }
 
   function criterionEvidence(
@@ -209,7 +224,33 @@
             {#if result}
               <details class="rounded-lg border bg-card" data-case-index={result.case_index}>
                 <summary class="flex items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
-                  <span>Test {index + 1}: {result.input.question}</span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate">Test {index + 1}: {result.input.question}</span>
+                    {#if result.error}
+                      <span class="block truncate text-xs font-normal text-muted-foreground">
+                        No judge scores available — evaluation failed.
+                      </span>
+                    {:else if !result.judge_scores}
+                      <span class="block truncate text-xs font-normal text-muted-foreground">
+                        No judge scores available yet.
+                      </span>
+                    {:else}
+                      <span
+                        class="block truncate whitespace-nowrap text-xs font-normal"
+                        aria-label={summaryScoreAriaLabel(result.judge_scores)}
+                      >
+                        {#each criteria as [key, label], scoreIndex}
+                          {@const criterion = summaryCriterion(result.judge_scores, key)}
+                          <span class="whitespace-nowrap">
+                            {label}:
+                            <span style={criterion ? `color: ${evaluationScoreColor(criterion.score)}` : undefined}>
+                              {criterion ? criterion.score.toFixed(2) : "not scored"}
+                            </span>{#if scoreIndex < criteria.length - 1} · {/if}
+                          </span>
+                        {/each}
+                      </span>
+                    {/if}
+                  </span>
                   <span class={result.error ? "text-destructive" : "text-muted-foreground"}>
                     {result.error ? "Failed" : "Completed"}
                   </span>
