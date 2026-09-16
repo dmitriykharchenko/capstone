@@ -1,53 +1,37 @@
 <script lang="ts">
   import { Controls, SvelteFlow } from "@xyflow/svelte";
   import GraphNode from "../../src/components/GraphNode.svelte";
-  import { reconcileFlowNodes, toFlowEdges, type GraphFlowNode } from "../../src/lib/graph-flow";
+  import { toFlowEdges, toFlowNodes } from "../../src/lib/graph-flow";
   import type { GraphEdge, GraphNode as InputGraphNode } from "../../src/lib/graph-types";
 
   const nodeTypes = { graph: GraphNode };
-  const graphNodes: InputGraphNode[] = [
+  const allGraphNodes: InputGraphNode[] = [
     { id: "author-a", kind: "author", label: "Ada" },
     { id: "paper-a", kind: "paper", label: "Paper A" },
     { id: "topic-a", kind: "topic", label: "Retrieval" },
   ];
-  const graphEdges: GraphEdge[] = [
+  const allGraphEdges: GraphEdge[] = [
     { sourceId: "paper-a", targetId: "author-a", kind: "authored_by" },
     { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
   ];
-  const initial = reconcileFlowNodes(null, [], graphNodes, graphEdges, () => {});
-  let layoutKey = initial.layoutKey;
-  let nodes = $state.raw<GraphFlowNode[]>(initial.nodes);
-  let edges = $state.raw(toFlowEdges(graphEdges));
-
-  function moveTopic() {
-    nodes = nodes.map((node) =>
-      node.id === "topic-a"
-        ? { ...node, position: { x: node.position.x + 120, y: node.position.y + 80 } }
-        : node,
-    );
-  }
-
-  function refreshUnchanged() {
-    const next = reconcileFlowNodes(layoutKey, nodes, [...graphNodes].reverse(), [...graphEdges].reverse(), () => {});
-    layoutKey = next.layoutKey;
-    nodes = next.nodes;
-  }
+  let graphNodes = $state.raw(allGraphNodes);
+  let graphEdges = $state.raw(allGraphEdges);
+  let selectedId = $state<string | null>(null);
+  const nodes = $derived(toFlowNodes(graphNodes, graphEdges, (node) => { selectedId = node.id; })
+    .map((node) => ({ ...node, selected: node.id === selectedId })));
+  const edges = $derived(toFlowEdges(graphEdges));
 
   function filterGraph() {
-    const filteredNodes = graphNodes.filter((node) => node.id !== "author-a");
-    const filteredEdges = graphEdges.filter((edge) => edge.kind === "has_topic");
-    const next = reconcileFlowNodes(layoutKey, nodes, filteredNodes, filteredEdges, () => {});
-    layoutKey = next.layoutKey;
-    nodes = next.nodes;
-    edges = toFlowEdges(filteredEdges);
+    graphNodes = allGraphNodes.filter((node) => node.id !== "author-a");
+    graphEdges = allGraphEdges.filter((edge) => edge.kind === "has_topic");
+    selectedId = null;
   }
 </script>
 
-<button id="move-topic" type="button" onclick={moveTopic}>Move topic</button>
-<button id="refresh-unchanged" type="button" onclick={refreshUnchanged}>Refresh unchanged graph</button>
 <button id="filter-graph" type="button" onclick={filterGraph}>Filter graph</button>
+<output id="selected-node">{selectedId ?? "none"}</output>
 <div style="width: 900px; height: 500px">
-  <SvelteFlow bind:nodes {edges} {nodeTypes} nodesConnectable={false} nodesFocusable={false}>
+  <SvelteFlow {nodes} {edges} {nodeTypes} nodesConnectable={false} nodesDraggable={false} nodesFocusable={false}>
     <Controls />
   </SvelteFlow>
 </div>

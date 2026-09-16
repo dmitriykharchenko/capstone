@@ -132,6 +132,11 @@ test("mounted Svelte Flow renders and keeps both canonical edges attached", asyn
         node: handle.dataset.nodeid,
         connectable: handle.classList.contains('connectable'),
       })),
+      nodes: [...document.querySelectorAll('.svelte-flow__node')].map((node) => ({
+        id: node.dataset.id,
+        draggable: node.classList.contains('draggable'),
+        transform: node.style.transform,
+      })),
       transform: document.querySelector('.svelte-flow__viewport').style.transform,
     };
   })()`);
@@ -141,22 +146,18 @@ test("mounted Svelte Flow renders and keeps both canonical edges attached", asyn
     ["has_topic", "paper-a"], ["has_topic", "topic-a"],
   ]);
   assert.ok(initial.handles.every((handle) => !handle.connectable));
+  assert.ok(initial.nodes.every((node) => !node.draggable));
 
   await evaluate(`document.querySelector('button[aria-label="Fit View"]').click()`);
   const fittedTransform = await waitFor(`document.querySelector('.svelte-flow__viewport').style.transform !== ${JSON.stringify(initial.transform)} && document.querySelector('.svelte-flow__viewport').style.transform`);
   assert.notEqual(fittedTransform, initial.transform);
 
-  await evaluate(`document.querySelector('#move-topic').click()`);
-  const movedPaths = await waitFor(`(() => {
-    const paths = Object.fromEntries([...document.querySelectorAll('.svelte-flow__edge-path')].map((path) => [path.closest('.svelte-flow__edge').dataset.id, path.getAttribute('d')]));
-    return paths['has_topic:paper-a:topic-a'] !== ${JSON.stringify(initial.paths["has_topic:paper-a:topic-a"])} && paths;
-  })()`);
-  assert.equal(movedPaths["authored_by:paper-a:author-a"], initial.paths["authored_by:paper-a:author-a"]);
-  assert.notEqual(movedPaths["has_topic:paper-a:topic-a"], initial.paths["has_topic:paper-a:topic-a"]);
-
-  const movedTopicTransform = await evaluate(`document.querySelector('[data-id="topic-a"]').style.transform`);
-  await evaluate(`document.querySelector('#refresh-unchanged').click()`);
-  assert.equal(await evaluate(`document.querySelector('[data-id="topic-a"]').style.transform`), movedTopicTransform);
+  await evaluate(`document.querySelector('[data-id="topic-a"] button').click()`);
+  await waitFor(`document.querySelector('#selected-node').textContent === 'topic-a' && document.querySelector('[data-id="topic-a"] button').getAttribute('aria-pressed') === 'true'`);
+  assert.deepEqual(
+    await evaluate(`[...document.querySelectorAll('.svelte-flow__node')].map((node) => ({ id: node.dataset.id, transform: node.style.transform }))`),
+    initial.nodes.map(({ id, transform }) => ({ id, transform })),
+  );
 
   await evaluate(`document.querySelector('#filter-graph').click()`);
   const filtered = await waitFor(`(() => {
@@ -166,5 +167,5 @@ test("mounted Svelte Flow renders and keeps both canonical edges attached", asyn
       && paths[0].getAttribute('d') && nodes.length === 2 ? { path: paths[0].getAttribute('d'), nodes } : null;
   })()`);
   assert.deepEqual(filtered.nodes, ["paper-a", "topic-a"]);
-  assert.notEqual(filtered.path, movedPaths["has_topic:paper-a:topic-a"]);
+  assert.notEqual(filtered.path, initial.paths["has_topic:paper-a:topic-a"]);
 });

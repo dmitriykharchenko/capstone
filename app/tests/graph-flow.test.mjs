@@ -6,8 +6,6 @@ import { createServer } from "vite";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 let vite;
-let graphLayoutKey;
-let reconcileFlowNodes;
 let toFlowEdges;
 let toFlowNodes;
 
@@ -18,7 +16,7 @@ before(async () => {
     logLevel: "silent",
     server: { middlewareMode: true },
   });
-  ({ graphLayoutKey, reconcileFlowNodes, toFlowEdges, toFlowNodes } = await vite.ssrLoadModule("/src/lib/graph-flow.ts"));
+  ({ toFlowEdges, toFlowNodes } = await vite.ssrLoadModule("/src/lib/graph-flow.ts"));
 });
 
 after(async () => vite.close());
@@ -44,30 +42,23 @@ test("adapts graph nodes to stable, typed flow positions and activation callback
     flowNodes.map(({ id, position }) => [id, position]),
     toFlowNodes([...nodes].reverse(), [...edges].reverse(), () => {}).map(({ id, position }) => [id, position]),
   );
+  assert.ok(flowNodes.every((node) => node.draggable === false && node.selectable === true));
   flowNodes.find((node) => node.id === "paper-a").data.onActivate();
   assert.deepEqual(activated, ["paper-a"]);
 });
 
-test("preserves bound dragged positions until the visible subgraph changes", () => {
+test("recomputes fixed positions when the visible subgraph changes", () => {
   const edges = [
     { sourceId: "paper-a", targetId: "author-a", kind: "authored_by" },
     { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
   ];
-  const initial = reconcileFlowNodes(null, [], nodes, edges, () => {});
-  const dragged = initial.nodes.map((node) => node.id === "topic-a"
-    ? { ...node, position: { x: node.position.x + 123, y: node.position.y + 77 } }
-    : node);
-  const unchanged = reconcileFlowNodes(initial.layoutKey, dragged, [...nodes].reverse(), [...edges].reverse(), () => {});
-  assert.equal(unchanged.nodes, dragged);
-  assert.deepEqual(unchanged.nodes.find((node) => node.id === "topic-a").position, dragged.find((node) => node.id === "topic-a").position);
-
+  const initial = toFlowNodes(nodes, edges, () => {});
   const filteredNodes = nodes.filter((node) => node.id !== "author-a");
   const filteredEdges = edges.filter((edge) => edge.kind === "has_topic");
-  const filtered = reconcileFlowNodes(unchanged.layoutKey, unchanged.nodes, filteredNodes, filteredEdges, () => {});
-  assert.notEqual(filtered.layoutKey, unchanged.layoutKey);
-  assert.notEqual(filtered.nodes, dragged);
-  assert.deepEqual(filtered.nodes.map((node) => node.id), ["paper-a", "topic-a"]);
-  assert.equal(graphLayoutKey(filteredNodes, filteredEdges), filtered.layoutKey);
+  const filtered = toFlowNodes(filteredNodes, filteredEdges, () => {});
+  assert.deepEqual(filtered.map((node) => node.id), ["paper-a", "topic-a"]);
+  assert.notDeepEqual(filtered.find((node) => node.id === "paper-a").position, initial.find((node) => node.id === "paper-a").position);
+  assert.ok(filtered.every((node) => node.draggable === false));
 });
 
 test("adapts canonical edge kinds to labeled flow edges", () => {
@@ -98,6 +89,7 @@ test("keeps paper routing and keyboard-accessible node activation in the compone
   assert.match(graph, /<Controls/);
   assert.match(graph, /panOnDrag/);
   assert.match(graph, /zoomOnScroll/);
+  assert.match(graph, /nodesDraggable=\{false\}/);
   assert.match(node, /<button/);
   assert.match(node, /aria-label=/);
   assert.match(node, /aria-pressed=/);

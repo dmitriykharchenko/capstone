@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/svelte";
 import { layoutGraph } from "./graph-layout";
-import { compareEdges, type GraphEdge, type GraphNode, type GraphNodeKind } from "./graph-types";
+import type { GraphEdge, GraphNode, GraphNodeKind } from "./graph-types";
 
 export interface GraphFlowNodeData extends Record<string, unknown> {
   kind: GraphNodeKind;
@@ -10,19 +10,6 @@ export interface GraphFlowNodeData extends Record<string, unknown> {
 
 export type GraphFlowNode = Node<GraphFlowNodeData, "graph">;
 export type GraphFlowEdge = Edge<{ kind: GraphEdge["kind"] }, "straight">;
-
-export interface GraphFlowLayoutState {
-  layoutKey: string;
-  nodes: GraphFlowNode[];
-}
-
-export function graphLayoutKey(nodes: GraphNode[], edges: GraphEdge[]): string {
-  return JSON.stringify({
-    nodes: nodes.map(({ id, kind }) => [id, kind]).sort((left, right) =>
-      left[0].localeCompare(right[0]) || left[1].localeCompare(right[1])),
-    edges: [...edges].sort(compareEdges).map(({ sourceId, targetId, kind }) => [sourceId, targetId, kind]),
-  });
-}
 
 export function toFlowNodes(
   nodes: GraphNode[],
@@ -40,23 +27,10 @@ export function toFlowNodes(
     },
     class: `graph-node-${node.kind}`,
     selectable: true,
-    draggable: true,
+    draggable: false,
     focusable: false,
     ariaLabel: `${node.kind}: ${node.label}`,
   }));
-}
-
-export function reconcileFlowNodes(
-  currentLayoutKey: string | null,
-  currentNodes: GraphFlowNode[],
-  nodes: GraphNode[],
-  edges: GraphEdge[],
-  onActivate: (node: GraphNode) => void,
-): GraphFlowLayoutState {
-  const layoutKey = graphLayoutKey(nodes, edges);
-  return layoutKey === currentLayoutKey
-    ? { layoutKey, nodes: currentNodes }
-    : { layoutKey, nodes: toFlowNodes(nodes, edges, onActivate) };
 }
 
 export function toFlowEdges(edges: GraphEdge[]): GraphFlowEdge[] {
