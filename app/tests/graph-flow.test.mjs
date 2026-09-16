@@ -6,6 +6,7 @@ import { createServer } from "vite";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 let vite;
+let filterGraphByQuery;
 let toFlowEdges;
 let toFlowNodes;
 
@@ -16,7 +17,7 @@ before(async () => {
     logLevel: "silent",
     server: { middlewareMode: true },
   });
-  ({ toFlowEdges, toFlowNodes } = await vite.ssrLoadModule("/src/lib/graph-flow.ts"));
+  ({ filterGraphByQuery, toFlowEdges, toFlowNodes } = await vite.ssrLoadModule("/src/lib/graph-flow.ts"));
 });
 
 after(async () => vite.close());
@@ -26,6 +27,42 @@ const nodes = [
   { id: "paper-a", kind: "paper", label: "Paper A" },
   { id: "author-a", kind: "author", label: "Ada" },
 ];
+
+const filterEdges = [
+  { sourceId: "paper-a", targetId: "author-a", kind: "authored_by" },
+  { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
+  { sourceId: "paper-b", targetId: "author-a", kind: "authored_by" },
+];
+
+test("filters case-insensitive partial labels across kinds and keeps one-hop edges", () => {
+  assert.deepEqual(
+    filterGraphByQuery([
+      ...nodes,
+      { id: "paper-b", kind: "paper", label: "Second Paper" },
+      { id: "topic-b", kind: "topic", label: "Unrelated" },
+    ], filterEdges, "  PaPeR  "),
+    {
+      nodes: [nodes[0], nodes[1], nodes[2], { id: "paper-b", kind: "paper", label: "Second Paper" }],
+      edges: filterEdges,
+    },
+  );
+  assert.deepEqual(filterGraphByQuery(nodes, filterEdges, "ada").nodes.map((node) => node.id), ["paper-a", "author-a"]);
+  assert.deepEqual(filterGraphByQuery(nodes, filterEdges, "retriev").nodes.map((node) => node.id), [
+    "topic-a", "paper-a",
+  ]);
+});
+
+test("deduplicates overlapping neighborhoods, prunes edges, and resets on clear or no match", () => {
+  const expanded = filterGraphByQuery([
+    ...nodes,
+    { id: "paper-b", kind: "paper", label: "Second Paper" },
+    { id: "topic-b", kind: "topic", label: "Unrelated" },
+  ], filterEdges, "paper");
+  assert.deepEqual(expanded.nodes.map((node) => node.id), ["topic-a", "paper-a", "author-a", "paper-b"]);
+  assert.deepEqual(expanded.edges, filterEdges);
+  assert.deepEqual(filterGraphByQuery(nodes, filterEdges, "missing"), { nodes: [], edges: [] });
+  assert.deepEqual(filterGraphByQuery(nodes, filterEdges, "   "), { nodes, edges: filterEdges });
+});
 
 test("adapts graph nodes to stable, typed flow positions and activation callbacks", () => {
   const activated = [];

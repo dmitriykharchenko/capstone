@@ -9,7 +9,7 @@
   } from "@xyflow/svelte";
   import "@xyflow/svelte/dist/style.css";
   import { connectedNodes } from "../lib/graph-layout";
-  import { toFlowEdges, toFlowNodes, type GraphFlowNode } from "$lib/graph-flow";
+  import { filterGraphByQuery, toFlowEdges, toFlowNodes, type GraphFlowNode } from "$lib/graph-flow";
   import {
     selectGraphEdges,
     selectGraphMessage,
@@ -33,8 +33,12 @@
   const selectedId = selectGraphNodeId();
   const message = selectGraphMessage();
 
-  const flowNodes = $derived(toFlowNodes($nodes, $edges, activateNode));
-  const flowEdges = $derived(toFlowEdges($edges));
+  let searchQuery = $state("");
+  const visibleGraph = $derived(filterGraphByQuery($nodes, $edges, searchQuery));
+  const queryActive = $derived(searchQuery.trim().length > 0);
+  const noMatches = $derived(queryActive && visibleGraph.nodes.length === 0);
+  const flowNodes = $derived(toFlowNodes(visibleGraph.nodes, visibleGraph.edges, activateNode));
+  const flowEdges = $derived(toFlowEdges(visibleGraph.edges));
   const selected = $derived($nodes.find((node) => node.id === $selectedId) ?? null);
   const connected = $derived(connectedNodes($selectedId, $nodes, $edges));
   const nodeTypes = { graph: GraphNode };
@@ -82,9 +86,20 @@
         Edges: authored by · has topic
       </p>
     </div>
-    <Button type="button" variant="outline" size="sm" onclick={retry} disabled={$status === "loading"}>
-      Retry
-    </Button>
+    <div class="flex items-center gap-2">
+      <label for="graph-search" class="sr-only">Search papers, authors, or topics</label>
+      <input
+        id="graph-search"
+        type="search"
+        bind:value={searchQuery}
+        class="h-8 w-56 rounded-md border bg-background px-3 text-sm"
+        placeholder="Search graph nodes"
+        aria-label="Search papers, authors, or topics"
+      />
+      <Button type="button" variant="outline" size="sm" onclick={retry} disabled={$status === "loading"}>
+        Retry
+      </Button>
+    </div>
   </header>
 
   <section aria-labelledby="paper-graph-title" class="min-h-0 flex-1 overflow-hidden">
@@ -113,25 +128,31 @@
         <strong>Graph transport error.</strong> {$message}
       </div>
     {:else}
-      <div class="h-full min-h-[260px] w-full" aria-label="Interactive paper graph">
-        <SvelteFlow
-          {nodeTypes}
-          nodes={flowNodes}
-          edges={flowEdges}
-          fitView
-          fitViewOptions={{ padding: 0.2, minZoom: 0.35, maxZoom: 1.5 }}
-          colorMode={colorMode}
-          nodesConnectable={false}
-          nodesDraggable={false}
-          nodesFocusable={false}
-          panOnDrag
-          zoomOnScroll
-          onnodeclick={handleNodeClick}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
-          <Controls />
-        </SvelteFlow>
-      </div>
+      {#if noMatches}
+        <p class="p-4 text-sm text-muted-foreground" role="status" aria-live="polite">
+          No graph nodes match “{searchQuery.trim()}”.
+        </p>
+      {:else}
+        <div class="h-full min-h-[260px] w-full" aria-label="Interactive paper graph">
+          <SvelteFlow
+            {nodeTypes}
+            nodes={flowNodes}
+            edges={flowEdges}
+            fitView
+            fitViewOptions={{ padding: 0.2, minZoom: 0.35, maxZoom: 1.5 }}
+            colorMode={colorMode}
+            nodesConnectable={false}
+            nodesDraggable={false}
+            nodesFocusable={false}
+            panOnDrag
+            zoomOnScroll
+            onnodeclick={handleNodeClick}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
+            <Controls />
+          </SvelteFlow>
+        </div>
+      {/if}
     {/if}
   </section>
 

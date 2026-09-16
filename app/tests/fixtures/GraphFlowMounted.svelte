@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Controls, SvelteFlow } from "@xyflow/svelte";
   import GraphNode from "../../src/components/GraphNode.svelte";
-  import { toFlowEdges, toFlowNodes } from "../../src/lib/graph-flow";
+  import { filterGraphByQuery, toFlowEdges, toFlowNodes } from "../../src/lib/graph-flow";
   import type { GraphEdge, GraphNode as InputGraphNode } from "../../src/lib/graph-types";
 
   const nodeTypes = { graph: GraphNode };
@@ -14,20 +14,24 @@
     { sourceId: "paper-a", targetId: "author-a", kind: "authored_by" },
     { sourceId: "paper-a", targetId: "topic-a", kind: "has_topic" },
   ];
-  let graphNodes = $state.raw(allGraphNodes);
-  let graphEdges = $state.raw(allGraphEdges);
+  let query = $state("");
   let selectedId = $state<string | null>(null);
-  const nodes = $derived(toFlowNodes(graphNodes, graphEdges, (node) => { selectedId = node.id; })
+  const visibleGraph = $derived(filterGraphByQuery(allGraphNodes, allGraphEdges, query));
+  const nodes = $derived(toFlowNodes(visibleGraph.nodes, visibleGraph.edges, (node) => { selectedId = node.id; })
     .map((node) => ({ ...node, selected: node.id === selectedId })));
-  const edges = $derived(toFlowEdges(graphEdges));
+  const edges = $derived(toFlowEdges(visibleGraph.edges));
 
   function filterGraph() {
-    graphNodes = allGraphNodes.filter((node) => node.id !== "author-a");
-    graphEdges = allGraphEdges.filter((edge) => edge.kind === "has_topic");
+    query = "Retrieval";
     selectedId = null;
   }
 </script>
 
+<label for="graph-search">Search graph nodes</label>
+<input id="graph-search" type="search" bind:value={query} aria-label="Search graph nodes" />
+{#if query.trim() && visibleGraph.nodes.length === 0}
+  <p role="status">No graph nodes match “{query.trim()}”.</p>
+{/if}
 <button id="filter-graph" type="button" onclick={filterGraph}>Filter graph</button>
 <output id="selected-node">{selectedId ?? "none"}</output>
 <div style="width: 900px; height: 500px">

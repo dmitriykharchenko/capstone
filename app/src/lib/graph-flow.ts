@@ -11,6 +11,37 @@ export interface GraphFlowNodeData extends Record<string, unknown> {
 export type GraphFlowNode = Node<GraphFlowNodeData, "graph">;
 export type GraphFlowEdge = Edge<{ kind: GraphEdge["kind"] }, "straight">;
 
+export interface VisibleGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export function filterGraphByQuery(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  query: string,
+): VisibleGraph {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return { nodes: [...nodes], edges: [...edges] };
+
+  const matchingIds = new Set(
+    nodes
+      .filter((node) => node.label.trim().toLowerCase().includes(normalizedQuery))
+      .map((node) => node.id),
+  );
+  if (matchingIds.size === 0) return { nodes: [], edges: [] };
+
+  const visibleIds = new Set(matchingIds);
+  for (const edge of edges) {
+    if (matchingIds.has(edge.sourceId)) visibleIds.add(edge.targetId);
+    if (matchingIds.has(edge.targetId)) visibleIds.add(edge.sourceId);
+  }
+  return {
+    nodes: nodes.filter((node) => visibleIds.has(node.id)),
+    edges: edges.filter((edge) => visibleIds.has(edge.sourceId) && visibleIds.has(edge.targetId)),
+  };
+}
+
 export function toFlowNodes(
   nodes: GraphNode[],
   edges: GraphEdge[],

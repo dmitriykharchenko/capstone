@@ -169,3 +169,25 @@ test("mounted Svelte Flow renders and keeps both canonical edges attached", asyn
   assert.deepEqual(filtered.nodes, ["paper-a", "topic-a"]);
   assert.notEqual(filtered.path, initial.paths["has_topic:paper-a:topic-a"]);
 });
+
+test("mounted search matches every node kind, resets, and reports no matches", async () => {
+  const search = `document.querySelector('#graph-search')`;
+  await evaluate(`${search}.value = 'ADA'; ${search}.dispatchEvent(new Event('input', { bubbles: true }))`);
+  await waitFor(`document.querySelectorAll('.svelte-flow__node').length === 2`);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.svelte-flow__node')].map((node) => node.dataset.id).sort()`), ["author-a", "paper-a"]);
+
+  await evaluate(`${search}.value = 'retriev'; ${search}.dispatchEvent(new Event('input', { bubbles: true }))`);
+  await waitFor(`document.querySelectorAll('.svelte-flow__node').length === 2`);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.svelte-flow__node')].map((node) => node.dataset.id).sort()`), ["paper-a", "topic-a"]);
+
+  await evaluate(`${search}.value = 'paper'; ${search}.dispatchEvent(new Event('input', { bubbles: true }))`);
+  await waitFor(`document.querySelectorAll('.svelte-flow__node').length === 3`);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.svelte-flow__node')].map((node) => node.dataset.id).sort()`), ["author-a", "paper-a", "topic-a"]);
+
+  await evaluate(`${search}.value = 'missing'; ${search}.dispatchEvent(new Event('input', { bubbles: true }))`);
+  await waitFor(`document.querySelector('[role="status"]')?.textContent.includes('No graph nodes match')`);
+  assert.equal(await evaluate(`document.querySelectorAll('.svelte-flow__node').length`), 0);
+
+  await evaluate(`${search}.value = '   '; ${search}.dispatchEvent(new Event('input', { bubbles: true }))`);
+  await waitFor(`document.querySelectorAll('.svelte-flow__node').length === 3`);
+});
