@@ -466,7 +466,7 @@ class CozoGraphStore:
             client = self._require_client()
             nodes = self._all_nodes(client)
             if identity not in nodes:
-                raise KeyError(f"graph node does not exist: {identity!r}")
+                return GraphNeighborhood((), ())
             edges = self._all_edges(client)
             adjacency: dict[str, set[str]] = {node: set() for node in nodes}
             for edge in edges:
@@ -485,7 +485,11 @@ class CozoGraphStore:
             selected_nodes = tuple(
                 sorted(
                     (nodes[current] for current in visited),
-                    key=lambda node: (node.kind, node.label, node.node_id),
+                    key=lambda node: (
+                        node.kind,
+                        normalize_node_name(node.label),
+                        node.node_id,
+                    ),
                 )
             )
             selected_edges = tuple(
@@ -624,11 +628,17 @@ def _rows(result: Any) -> list[list[Any]]:
 
 
 def _author_rows(result: Any) -> tuple[AuthorNode, ...]:
-    return tuple(AuthorNode(row[0], row[1]) for row in _rows(result))
+    nodes = (AuthorNode(row[0], row[1]) for row in _rows(result))
+    return tuple(
+        sorted(nodes, key=lambda node: (normalize_node_name(node.name), node.author_id))
+    )
 
 
 def _topic_rows(result: Any) -> tuple[TopicNode, ...]:
-    return tuple(TopicNode(row[0], row[1]) for row in _rows(result))
+    nodes = (TopicNode(row[0], row[1]) for row in _rows(result))
+    return tuple(
+        sorted(nodes, key=lambda node: (normalize_node_name(node.name), node.topic_id))
+    )
 
 
 __all__ = [

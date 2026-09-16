@@ -8,6 +8,7 @@ import pytest
 
 from src.graph_store import (
     CozoGraphStore,
+    GraphNeighborhood,
     GraphStoreClosedError,
     GraphStoreConfigurationError,
     GraphStorePersistenceError,
@@ -61,10 +62,8 @@ def test_replacement_is_idempotent_and_cleans_stale_orphans(tmp_path):
         assert [topic.name for topic in replaced.topics] == ["Knowledge Graphs"]
         stale_author_id = stable_node_id("author", "Grace Hopper")
         stale_topic_id = stable_node_id("topic", "Databases")
-        with pytest.raises(KeyError):
-            store.neighborhood(stale_author_id)
-        with pytest.raises(KeyError):
-            store.neighborhood(stale_topic_id)
+        assert store.neighborhood(stale_author_id) == GraphNeighborhood((), ())
+        assert store.neighborhood(stale_topic_id) == GraphNeighborhood((), ())
 
 
 def test_shared_nodes_survive_replacement_and_remove(tmp_path):

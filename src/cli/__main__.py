@@ -16,13 +16,26 @@ import json
 import sys
 from typing import Any
 
-from .commands import (
-    dispatch,
-    handle_chat_stream,
-    handle_evaluation_stream,
-    handle_index_papers_stream,
-)
 from .config import CLIConfig, load_dotenv_if_present
+from .dispatcher import dispatch
+
+
+def handle_chat_stream(config: CLIConfig, request: dict[str, Any]) -> Any:
+    from .commands import handle_chat_stream as handler
+
+    return handler(config, request)
+
+
+def handle_index_papers_stream(config: CLIConfig) -> Any:
+    from .commands import handle_index_papers_stream as handler
+
+    return handler(config)
+
+
+def handle_evaluation_stream(config: CLIConfig, request: dict[str, Any]) -> Any:
+    from .commands import handle_evaluation_stream as handler
+
+    return handler(config, request)
 
 
 def main() -> int:
