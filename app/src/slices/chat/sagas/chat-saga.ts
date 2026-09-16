@@ -1,4 +1,4 @@
-import { call, fork, put, select, take, takeLatest, takeEvery, takeLeading } from "typed-redux-saga";
+import { call, fork, put, race, select, take, takeLatest, takeEvery, takeLeading } from "typed-redux-saga";
 import { eventChannel, END, type EventChannel } from "redux-saga";
 import { api, type ChatStreamEvent } from "../../../lib/api";
 import { navigateTo, replaceWith, routeChanged } from "../../router/router-slice";
@@ -8,6 +8,7 @@ import {
   appendMessage,
   chatChunk,
   chatFailed,
+  chatHydrationFailed,
   chatPlanReceived,
   chatStarted,
   chatSubanswerReceived,
@@ -77,7 +78,7 @@ function* hydrateChatRoute(route: ChatRoute, services: ChatRouteServices) {
     yield* call(services.afterRender);
     yield* call(services.scrollToExchange, route.exchangeId);
   } catch (error) {
-    yield* put(chatFailed(String(error)));
+    yield* put(chatHydrationFailed(String(error)));
   }
 }
 
@@ -152,7 +153,11 @@ export function* streamChatTurn(
   // (dispatched after the streaming invoke settles).
   try {
     while (true) {
-      const event = yield* take(channel);
+      const { event, reset } = yield* race({
+        event: take(channel),
+        reset: take([selectSession, createSession, setSessionId, loadSession]),
+      });
+      if (reset || !event) return;
       if (event.event === "plan") {
         yield* put(chatPlanReceived(event.subqueries));
       } else if (event.event === "subquery") {
@@ -187,9 +192,9 @@ export function* streamChatTurn(
   }
 }
 
-export function* chatSaga() {
+export function* chatSaga(chatStream: ChatStreamService = api.chatStream) {
   yield* takeLeading(sendMessage, function* (action) {
-    yield* streamChatTurn(action, api.chatStream);
+    yield* streamChatTurn(action, chatStream);
   });
 
   yield* takeEvery(loadSession, function* (action) {
@@ -198,7 +203,7 @@ export function* chatSaga() {
       const result = yield* call(api.getMessages, sessionId);
       yield* put(setMessages(result.messages));
     } catch (error) {
-      yield* put(chatFailed(String(error)));
+      yield* put(chatHydrationFailed(String(error)));
     }
   });
 

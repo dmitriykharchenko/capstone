@@ -28,6 +28,7 @@ export const chatSucceeded = createAction<
   [reply: string, chatMode: string, sources: ChatSource[]]
 >("chat/succeeded");
 export const chatFailed = createAction<[error: string]>("chat/failed");
+export const chatHydrationFailed = createAction<[error: string]>("chat/hydrationFailed");
 
 export const chatReducer: StoreReducerFunction<ChatState> = createReducer<ChatState>(
   initialChatState,
@@ -148,6 +149,22 @@ export const chatReducer: StoreReducerFunction<ChatState> = createReducer<ChatSt
     },
   )
   .with(chatFailed, (state: ChatState, action: StoreAction<[string]>) => {
+    if (!state.pending) return state;
+    const last = state.messages[state.messages.length - 1];
+    const messages =
+      state.streaming && last?.role === "assistant"
+        ? state.messages.slice(0, -1)
+        : state.messages;
+    return {
+      ...state,
+      messages,
+      pending: false,
+      streaming: false,
+      activeTurn: null,
+      error: action.payload[0],
+    };
+  })
+  .with(chatHydrationFailed, (state: ChatState, action: StoreAction<[string]>) => {
     const last = state.messages[state.messages.length - 1];
     const messages =
       state.streaming && last?.role === "assistant"

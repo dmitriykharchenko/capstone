@@ -97,4 +97,11 @@ test("failure and session intents discard ephemeral progress and remain retryabl
   const stale = chatReducer(state, actions.chatChunk("late chunk"));
   assert.equal(stale.activeTurn, null);
   assert.equal(stale.streaming, false);
+  const lateFailure = chatReducer(stale, actions.chatFailed("late old-session failure"));
+  assert.equal(lateFailure.error, null);
+  const hydrationFailure = chatReducer(
+    lateFailure,
+    actions.chatHydrationFailed("history unavailable"),
+  );
+  assert.equal(hydrationFailure.error, "history unavailable");
 });

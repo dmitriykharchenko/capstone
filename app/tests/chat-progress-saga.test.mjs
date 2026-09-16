@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
-import { runSaga } from "redux-saga";
+import { runSaga, stdChannel } from "redux-saga";
 import { createServer } from "vite";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-let vite, sendMessage, streamChatTurn;
+let vite, chatSaga, sendMessage, setSessionId, streamChatTurn;
 
 const source = {
   rank: 1,
@@ -26,16 +26,22 @@ before(async () => {
     logLevel: "silent",
     server: { middlewareMode: true },
   });
-  ({ streamChatTurn } = await vite.ssrLoadModule("/src/slices/chat/sagas/chat-saga.ts"));
-  ({ sendMessage } = await vite.ssrLoadModule("/src/slices/chat/chat-slice.ts"));
+  ({ chatSaga, streamChatTurn } = await vite.ssrLoadModule(
+    "/src/slices/chat/sagas/chat-saga.ts",
+  ));
+  ({ sendMessage, setSessionId } = await vite.ssrLoadModule(
+    "/src/slices/chat/chat-slice.ts",
+  ));
 });
 
 after(async () => vite.close());
 
 function runTurn(service) {
+  const input = stdChannel();
   const actions = [];
   const task = runSaga(
     {
+      channel: input,
       dispatch: (action) => actions.push(action),
       getState: () => ({ chat: { sessionId: "session-1" } }),
     },
@@ -43,7 +49,7 @@ function runTurn(service) {
     sendMessage("Question"),
     service,
   );
-  return { actions, task };
+  return { actions, input, task };
 }
 
 test("saga maps every ordered multihop event to chat progress actions", async () => {
@@ -92,4 +98,50 @@ test("transport failure emits one retryable terminal action", async () => {
   await run.task.toPromise();
   assert.equal(run.actions.at(-1).type, "chat/failed");
   assert.equal(run.actions.filter((action) => action.type === "chat/failed").length, 1);
+});
+
+test("session reset cancels the old worker and immediately permits a new send", async () => {
+  const input = stdChannel();
+  const actions = [];
+  const callbacks = [];
+  let sessionId = "old-session";
+  const service = (_sessionId, _message, callback) => {
+    callbacks.push(callback);
+    return new Promise(() => {});
+  };
+  const task = runSaga(
+    {
+      channel: input,
+      dispatch: (action) => actions.push(action),
+      getState: () => ({ chat: { sessionId } }),
+    },
+    chatSaga,
+    service,
+  );
+  await settle();
+
+  input.put(sendMessage("Old question"));
+  await settle();
+  input.put(setSessionId("new-session"));
+  sessionId = "new-session";
+  await settle();
+  callbacks[0]({ event: "error", message: "late old-session failure" });
+  await settle();
+
+  input.put(sendMessage("New question"));
+  await settle();
+  assert.equal(callbacks.length, 2);
+  assert.equal(actions.some((action) => action.type === "chat/failed"), false);
+
+  callbacks[1]({
+    event: "done",
+    reply: "New answer",
+    chatMode: "rag",
+    indexed: true,
+    sources: [],
+  });
+  await settle();
+  assert.equal(actions.at(-2).type, "chat/succeeded");
+  task.cancel();
+  await task.toPromise();
 });
