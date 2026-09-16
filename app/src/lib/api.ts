@@ -92,9 +92,32 @@ export interface ChatResult {
   sources: ChatSource[];
 }
 
+export interface ChatSubquery {
+  id: string;
+  index: number;
+  query: string;
+}
+
 // Discriminated union mirroring the Rust `ChatStreamEvent` (internally tagged
-// on `event`): incremental `delta`s, a terminal `done`, or an `error`.
+// on `event`). `delta` remains the final-answer token event for compatibility.
 export type ChatStreamEvent =
+  | { event: "plan"; subqueries: ChatSubquery[] }
+  | {
+      event: "subquery";
+      id: string;
+      index: number;
+      total: number;
+      query: string;
+    }
+  | {
+      event: "subanswer";
+      id: string;
+      index: number;
+      total: number;
+      query: string;
+      answer: string;
+      sources: ChatSource[];
+    }
   | { event: "delta"; delta: string }
   | {
       event: "done";

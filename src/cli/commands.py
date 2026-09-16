@@ -12,6 +12,14 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any, Iterator
 
+from ..agent_loop import (
+    AgentIncompleteResponseError,
+    MultihopCompletedEvent,
+    MultihopFinalDeltaEvent,
+    MultihopHopCompletedEvent,
+    MultihopHopStartedEvent,
+    MultihopPlanEvent,
+)
 from ..chat_logger import log_chat
 from ..evaluation_runner import JUDGE_CRITERIA, validate_test_cases
 from ..paper_search import EVALUATION_RETRIEVAL_STRATEGIES
@@ -86,26 +94,31 @@ def handle_chat(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
 def handle_chat_stream(
     config: CLIConfig, request: dict[str, Any]
 ) -> Iterator[dict[str, Any]]:
-    """Stream one chat turn, yielding ``{delta}`` events then a final ``{done}``.
+    """Stream public multihop progress followed by authoritative completion.
 
     Each yielded dict is emitted as its own JSON line by the bridge entrypoint.
-    The terminating event carries the full reply and metadata so the caller can
-    reconcile the streamed text with the authoritative persisted answer.
+    The terminating event comes from the core's post-persistence completion
+    record, so callers must reconcile streamed deltas to its reply and sources.
     """
 
-    session_id = _require_str(request.get("session_id"), "session_id")
-    message = _require_str(request.get("message"), "message")
-    store = build_history_store(config)
+    store = None
     try:
+        session_id = _require_str(request.get("session_id"), "session_id")
+        message = _require_str(request.get("message"), "message")
+        store = build_history_store(config)
         index = build_index(config, store)
         paper_retriever = build_paper_search_index(config)
         loop = build_agent_loop(config, store, index, paper_retriever)
-        parts: list[str] = []
-        for delta in loop.stream(session_id, message):
-            parts.append(delta)
-            yield {"delta": delta}
-        reply = "".join(parts)
-        sources = [_source_payload(source) for source in loop.last_sources]
+        completed = None
+        for progress in _chat_progress_events(loop, session_id, message):
+            if isinstance(progress, MultihopCompletedEvent):
+                completed = progress
+                break
+            yield progress if isinstance(progress, dict) else _chat_progress_payload(progress)
+        if completed is None:
+            raise RuntimeError("chat stream ended before terminal completion")
+        reply = completed.answer
+        sources = [_source_payload(source) for source in completed.sources]
         context = loop.last_context
         chat_mode = "real" if config.has_api_key else "mock"
         log_retrieval(
@@ -125,6 +138,7 @@ def handle_chat_stream(
             sources=sources,
         )
         yield {
+            "event": "done",
             "ok": True,
             "done": True,
             "session_id": session_id,
@@ -133,8 +147,70 @@ def handle_chat_stream(
             "chat_mode": chat_mode,
             "indexed": index is not None,
         }
+    except AgentIncompleteResponseError:
+        yield {
+            "event": "error",
+            "ok": False,
+            "error": "Chat response was incomplete; shorten the request and try again",
+        }
+    except Exception:  # noqa: BLE001 - transport errors must not expose internals
+        yield {
+            "event": "error",
+            "ok": False,
+            "error": "Chat failed. Check backend logs and retry.",
+        }
     finally:
-        store.close()
+        if store is not None:
+            store.close()
+
+
+def _chat_progress_events(loop: Any, session_id: str, message: str) -> Iterator[Any]:
+    stream_events = getattr(loop, "stream_events", None)
+    if callable(stream_events):
+        yield from stream_events(session_id, message)
+        return
+
+    parts: list[str] = []
+    for delta in loop.stream(session_id, message):
+        parts.append(delta)
+        yield {"delta": delta}
+    yield MultihopCompletedEvent("".join(parts), tuple(loop.last_sources))
+
+
+def _chat_progress_payload(progress: Any) -> dict[str, Any]:
+    if isinstance(progress, MultihopPlanEvent):
+        return {
+            "event": "plan",
+            "subqueries": [
+                {"id": _subquery_id(index), "index": index, "query": query}
+                for index, query in enumerate(progress.subqueries, start=1)
+            ],
+        }
+    if isinstance(progress, MultihopHopStartedEvent):
+        return {
+            "event": "subquery",
+            "id": _subquery_id(progress.index),
+            "index": progress.index,
+            "total": progress.total,
+            "query": progress.subquery,
+        }
+    if isinstance(progress, MultihopHopCompletedEvent):
+        return {
+            "event": "subanswer",
+            "id": _subquery_id(progress.index),
+            "index": progress.index,
+            "total": progress.total,
+            "query": progress.subquery,
+            "answer": progress.answer,
+            "sources": [_source_payload(source) for source in progress.sources],
+        }
+    if isinstance(progress, MultihopFinalDeltaEvent):
+        return {"event": "delta", "delta": progress.text}
+    raise TypeError("unsupported chat progress event")
+
+
+def _subquery_id(index: int) -> str:
+    return f"subquery-{index}"
 
 
 def handle_sessions(config: CLIConfig) -> dict[str, Any]:
