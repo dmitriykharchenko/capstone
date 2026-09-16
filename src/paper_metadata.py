@@ -84,11 +84,11 @@ class PaperMetadata:
         }
 
 
-def _clean_text(value: Any, field: str) -> str:
+def _clean_text(value: Any, field: str, *, allow_blank: bool = False) -> str:
     if not isinstance(value, str):
         raise MetadataValidationError(f"{field} must contain only strings")
     cleaned = " ".join(value.split())
-    if not cleaned:
+    if not cleaned and not allow_blank:
         raise MetadataValidationError(f"{field} must not contain blank values")
     return cleaned
 
@@ -99,7 +99,9 @@ def _unique_values(values: Any, field: str, *, lowercase: bool) -> tuple[str, ..
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
-        cleaned = _clean_text(value, field)
+        cleaned = _clean_text(value, field, allow_blank=True)
+        if not cleaned:
+            continue
         normalized = cleaned.casefold()
         if normalized in seen:
             continue

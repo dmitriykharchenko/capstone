@@ -60,6 +60,30 @@ def test_duplicate_values_keep_deterministic_first_seen_order():
     assert result.topics == ("topic c", "topic a", "topic b")
 
 
+def test_blank_authors_and_topics_are_skipped_before_deduplication():
+    result = parse_metadata_output(
+        payload(
+            authors=[" Alice ", "  ", "Bob"],
+            topics=["One", "\n", " Two ", "Three"],
+        )
+    )
+
+    assert result.authors == ("Alice", "Bob")
+    assert result.topics == ("one", "two", "three")
+
+
+@pytest.mark.parametrize(
+    "authors,topics",
+    [
+        ([" ", "\n"], ["one", "two", "three"]),
+        (["Alice"], [" ", "\n"]),
+    ],
+)
+def test_all_blank_metadata_lists_still_fail_validation(authors, topics):
+    with pytest.raises(MetadataOutputError):
+        parse_metadata_output(payload(authors=authors, topics=topics))
+
+
 def test_prompt_contains_a_bounded_deterministic_text_representation():
     model = FakeModel(SimpleNamespace(content=payload()))
     PaperMetadataExtractor(model).extract("  first   line\n\n" + "x" * 20_000)
