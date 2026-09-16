@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -16,9 +18,11 @@ from .chroma_persistence import (
 )
 from .chunking import split_into_paragraphs
 from .embeddings import EmbeddingBackend, EmbeddingConfig, create_embedding
+from .paper_metadata import PaperMetadata, PaperMetadataExtractor
 
 DEFAULT_PAPERS_DIRECTORY = Path("ResearchPapers")
 DEFAULT_CHROMA_DIRECTORY = Path("data/chroma")
+PAPER_METADATA_VERSION = 1
 _SAFE_PAPER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -144,6 +148,8 @@ class PaperIndexer:
         embedder: Callable[[str], Sequence[float]] | None = None,
         embedding_config: EmbeddingConfig | None = None,
         embedding_backend: EmbeddingBackend | Any | None = None,
+        metadata_extractor: Callable[[str], PaperMetadata] | None = None,
+        graph_store: Any | None = None,
     ) -> None:
         if not isinstance(papers_directory, (str, Path)):
             raise TypeError("papers_directory must be a string or Path")
@@ -151,6 +157,13 @@ class PaperIndexer:
             raise TypeError("extractor and chunker must be callable")
         if embedder is not None and not callable(embedder):
             raise TypeError("embedder must be callable")
+        if metadata_extractor is not None and not callable(metadata_extractor):
+            raise TypeError("metadata_extractor must be callable")
+        if graph_store is not None and (
+            not callable(getattr(graph_store, "replace_paper", None))
+            or not callable(getattr(graph_store, "remove_paper", None))
+        ):
+            raise TypeError("graph_store must provide replace_paper and remove_paper")
         self.papers_directory = Path(papers_directory)
         self.collection = (
             collection
@@ -162,6 +175,14 @@ class PaperIndexer:
         self._embedding_config = embedding_config
         self._embedding_backend = embedding_backend
         self._embedder = embedder or self._create_embedding
+        self._metadata_extractor = (
+            metadata_extractor
+            if metadata_extractor is not None
+            else PaperMetadataExtractor()
+            if graph_store is not None
+            else None
+        )
+        self._graph_store = graph_store
 
     def _create_embedding(self, text: str) -> Sequence[float]:
         return create_embedding(
@@ -182,14 +203,9 @@ class PaperIndexer:
             raise ValueError(f"not a readable PDF file: {path}")
         return path
 
-    def index_paper(self, pdf_path: str | Path) -> PaperIndexOutcome:
-        """Replace all stored chunks for one top-level PDF."""
-
-        path = self._resolve_pdf(pdf_path)
-        paper_id = _paper_id(path)
-        chunks: list[str] = []
-        page_numbers: list[int] = []
-        for page in self._extractor(path):
+    def _extract_pages(self, path: Path) -> list[ExtractedPage]:
+        pages = list(self._extractor(path))
+        for page in pages:
             if not isinstance(page, ExtractedPage):
                 raise TypeError("extractor must return ExtractedPage values")
             if (
@@ -198,20 +214,69 @@ class PaperIndexer:
                 or page.page_number < 1
                 or not isinstance(page.text, str)
             ):
-                raise ValueError("extracted pages require a positive page number and text")
+                raise ValueError(
+                    "extracted pages require a positive page number and text"
+                )
+        return pages
+
+    @staticmethod
+    def _content_fingerprint(pages: Sequence[ExtractedPage]) -> str:
+        payload = json.dumps(
+            [[page.page_number, page.text] for page in pages],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def index_paper(self, pdf_path: str | Path) -> PaperIndexOutcome:
+        """Replace all stored chunks for one top-level PDF."""
+
+        path = self._resolve_pdf(pdf_path)
+        paper_id = _paper_id(path)
+        pages = self._extract_pages(path)
+        chunks: list[str] = []
+        page_numbers: list[int] = []
+        for page in pages:
             page_chunks = list(self._chunker(page.text))
-            if any(not isinstance(chunk, str) or not chunk.strip() for chunk in page_chunks):
+            if any(
+                not isinstance(chunk, str) or not chunk.strip() for chunk in page_chunks
+            ):
                 raise ValueError("chunker must return non-empty strings")
             chunks.extend(page_chunks)
             page_numbers.extend([page.page_number] * len(page_chunks))
 
-        embeddings = [list(self._embedder(chunk)) for chunk in chunks]
-        delete_records(self.collection, where={"paper_id": paper_id})
         if not chunks:
+            if self._graph_store is not None:
+                self._graph_store.remove_paper(paper_id)
+            delete_records(self.collection, where={"paper_id": paper_id})
             return PaperIndexOutcome(paper_id, path.name, "empty")
 
+        metadata = None
+        if self._metadata_extractor is not None:
+            metadata = self._metadata_extractor(
+                "\n\n".join(page.text for page in pages)
+            )
+            if not isinstance(metadata, PaperMetadata):
+                raise TypeError("metadata_extractor must return PaperMetadata")
+        embeddings = [list(self._embedder(chunk)) for chunk in chunks]
         ids = [f"{paper_id}:chunk:{index:06d}" for index in range(len(chunks))]
-        title = re.sub(r"[_-]+", " ", paper_id).strip()
+        title = (
+            metadata.title
+            if metadata is not None
+            else re.sub(r"[_-]+", " ", paper_id).strip()
+        )
+        enrichment: dict[str, str | int] = {}
+        if metadata is not None:
+            enrichment = {
+                "authors": json.dumps(
+                    metadata.authors, ensure_ascii=False, separators=(",", ":")
+                ),
+                "topics": json.dumps(
+                    metadata.topics, ensure_ascii=False, separators=(",", ":")
+                ),
+                "content_fingerprint": self._content_fingerprint(pages),
+                "metadata_version": PAPER_METADATA_VERSION,
+            }
         metadatas = [
             {
                 "paper_id": paper_id,
@@ -219,9 +284,17 @@ class PaperIndexer:
                 "filename": path.name,
                 "title": title,
                 "page": page_numbers[index],
+                **enrichment,
             }
             for index in range(len(chunks))
         ]
+        if self._graph_store is not None:
+            if metadata is None:
+                raise RuntimeError("graph metadata extraction is unavailable")
+            self._graph_store.replace_paper(
+                paper_id, metadata.title, metadata.authors, metadata.topics
+            )
+        delete_records(self.collection, where={"paper_id": paper_id})
         upsert_records(self.collection, ids, chunks, embeddings, metadatas)
         return PaperIndexOutcome(paper_id, path.name, "indexed", len(chunks))
 
@@ -275,6 +348,7 @@ def index_papers_directory(
 __all__ = [
     "DEFAULT_CHROMA_DIRECTORY",
     "DEFAULT_PAPERS_DIRECTORY",
+    "PAPER_METADATA_VERSION",
     "ExtractedPage",
     "PDFExtractionError",
     "PaperIndexOutcome",

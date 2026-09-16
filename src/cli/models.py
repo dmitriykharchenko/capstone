@@ -21,12 +21,15 @@ from ..agent_loop import AgentLoop, ChatOpenAIConfig
 from ..chat_history_index import ChatHistoryIndex
 from ..embeddings import EmbeddingConfig
 from ..evaluation_runner import EvaluationRunner
+from ..graph_store import CozoGraphStore
 from ..paper_indexer import PaperIndexer
+from ..paper_metadata import PaperMetadataExtractor
 from ..paper_search import PaperSearchIndex
 from ..sqlite_history import SQLiteHistoryStore
 from .config import CLIConfig
 
 _EMBED_DIM = 256
+_GRAPH_DATABASE_FILENAME = "paper_graph.db"
 
 
 @dataclass
@@ -74,6 +77,21 @@ class MockChatModel:
             )
         if "MULTIHOP_SUBANSWER" in stage_markers:
             return "[offline mock evidence summary] " + user_text.strip()
+        if user_text.startswith("METADATA_EXTRACTION_INPUT"):
+            paper_text = user_text.partition("<paper_text>\n")[2].partition(
+                "\n</paper_text>"
+            )[0]
+            title = next(
+                (line.strip() for line in paper_text.splitlines() if line.strip()),
+                "Untitled paper",
+            )
+            return json.dumps(
+                {
+                    "title": title[:200],
+                    "authors": ["Unknown author"],
+                    "topics": ["research", "paper", "local corpus"],
+                }
+            )
         if "MULTIHOP_COMPOSER" in stage_markers:
             try:
                 question = json.loads(user_text)["original_question"]
@@ -199,19 +217,35 @@ def build_paper_indexer(config: CLIConfig):
 
     if not chromadb_available():
         return None
+    graph_store = None
     try:
+        graph_store = CozoGraphStore(
+            config.chroma_directory.parent / _GRAPH_DATABASE_FILENAME
+        )
         if config.has_api_key:
             return PaperIndexer(
                 config.papers_directory,
                 persist_directory=config.chroma_directory,
                 embedding_config=_embedding_config(config),
+                metadata_extractor=PaperMetadataExtractor(
+                    config=ChatOpenAIConfig(
+                        model=config.chat_model,
+                        base_url=config.chat_base_url,
+                        api_key=config.api_key,
+                    )
+                ),
+                graph_store=graph_store,
             )
         return PaperIndexer(
             config.papers_directory,
             persist_directory=config.chroma_directory,
             embedder=make_local_embedder(),
+            metadata_extractor=PaperMetadataExtractor(model=MockChatModel()),
+            graph_store=graph_store,
         )
     except Exception:
+        if graph_store is not None:
+            graph_store.close()
         return None
 
 
