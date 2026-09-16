@@ -104,6 +104,10 @@ test("route parsing and serialization safely round-trip parameters", () => {
     name: "evals",
   });
   assert.equal(serializeRoute({ name: "evals" }), "/evals");
+  assert.deepEqual(parseRoute({ pathname: "/graph", search: "?ignored=1" }), {
+    name: "graph",
+  });
+  assert.equal(serializeRoute({ name: "graph" }), "/graph");
 });
 
 test("unknown paths and empty parameters fall back to canonical chat", () => {
@@ -207,6 +211,30 @@ test("direct evaluation navigation survives startup and back-forward events", as
   await task.toPromise();
 });
 
+test("direct graph navigation is canonical and survives back-forward events", async () => {
+  const browser = fakeNavigation("/graph");
+  const actions = [];
+  const input = stdChannel();
+  const task = runSaga(
+    { channel: input, dispatch: (action) => actions.push(action), getState: () => ({}) },
+    routerSaga,
+    browser.adapter,
+  );
+  await settle();
+  assert.deepEqual(browser.replacements, []);
+  assert.deepEqual(actions.at(-1).payload[0], { name: "graph" });
+
+  input.put(navigateTo({ name: "papers" }));
+  await settle();
+  assert.deepEqual(browser.pushes, ["/papers"]);
+  browser.emit("/graph?ignored=1");
+  await settle();
+  assert.deepEqual(browser.replacements, ["/graph"]);
+  assert.deepEqual(actions.at(-1).payload[0], { name: "graph" });
+  task.cancel();
+  await task.toPromise();
+});
+
 test("App dispatches route intents and leaves browser APIs to the saga", async () => {
   const componentPaths = [
     "../src/App.svelte",
@@ -214,6 +242,7 @@ test("App dispatches route intents and leaves browser APIs to the saga", async (
     "../src/components/HistorySearch.svelte",
     "../src/components/PapersList.svelte",
     "../src/components/RagEvals.svelte",
+    "../src/components/GraphExplorer.svelte",
   ];
   const components = await Promise.all(
     componentPaths.map((path) => readFile(new URL(path, import.meta.url), "utf8")),

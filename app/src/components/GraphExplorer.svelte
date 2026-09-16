@@ -19,7 +19,6 @@
   const edges = selectGraphEdges();
   const selectedId = selectGraphNodeId();
   const message = selectGraphMessage();
-  let graphOpen = $state(true);
 
   const layout = $derived(layoutGraph($nodes));
   const positions = $derived(new Map(layout.nodes.map((node) => [node.id, node])));
@@ -41,23 +40,17 @@
   }
 </script>
 
-{#if graphOpen}
 <Card
-  class="absolute top-16 right-4 bottom-4 z-20 flex w-[420px] max-w-[calc(100%-2rem)] flex-col overflow-hidden bg-background/90 shadow-lg backdrop-blur-md"
+  class="flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-background shadow-none"
 >
   <header class="flex items-center justify-between border-b px-4 py-3">
     <div>
       <h2 id="paper-graph-title" class="font-semibold">Paper graph</h2>
       <p class="text-xs text-muted-foreground">Authors, papers, and topics</p>
     </div>
-    <div class="flex gap-1">
-      <Button type="button" variant="outline" size="sm" onclick={retry} disabled={$status === "loading"}>
-        Retry
-      </Button>
-      <Button type="button" variant="ghost" size="sm" onclick={() => (graphOpen = false)}>
-        Hide graph
-      </Button>
-    </div>
+    <Button type="button" variant="outline" size="sm" onclick={retry} disabled={$status === "loading"}>
+      Retry
+    </Button>
   </header>
 
   <section aria-labelledby="paper-graph-title" class="min-h-0 flex-1 overflow-auto">
@@ -166,14 +159,3 @@
     </aside>
   {/if}
 </Card>
-{:else}
-  <Button
-    type="button"
-    variant="outline"
-    class="absolute top-16 right-4 z-20 bg-background/90 backdrop-blur-md"
-    onclick={() => (graphOpen = true)}
-    aria-controls="paper-graph-title"
-  >
-    Show graph
-  </Button>
-{/if}

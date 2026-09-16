@@ -39,12 +39,15 @@ def test_graph_state_and_saga_follow_store_ownership_patterns():
     assert "api.graphNeighborhood" in saga
 
 
-def test_graph_component_is_accessible_and_coexists_with_papers_experience():
+def test_graph_component_is_accessible_and_owns_a_dedicated_page():
+    app = read("app/src/App.svelte")
     papers = read("app/src/components/PapersList.svelte")
     graph = read("app/src/components/GraphExplorer.svelte")
 
     assert "<PdfViewer />" in papers
-    assert "<GraphExplorer />" in papers
+    assert "<GraphExplorer />" not in papers
+    assert 'value="graph"' in app
+    assert "<GraphExplorer />" in app
     assert "runPaperSearch" in papers
     assert "runPaperIndex" in papers
     for text in (
@@ -57,11 +60,11 @@ def test_graph_component_is_accessible_and_coexists_with_papers_experience():
         "Retry",
         "Selected node connections",
         "aria-pressed",
-        "Show graph",
-        "Hide graph",
         "authored by",
         "has topic",
     ):
         assert text in graph
+    assert "Show graph" not in graph
+    assert "Hide graph" not in graph
     assert "prompt" not in graph.lower()
     assert "model output" not in graph.lower()

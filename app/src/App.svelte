@@ -6,6 +6,7 @@
   import Chat from "./components/Chat.svelte";
   import HistorySearch from "./components/HistorySearch.svelte";
   import PapersList from "./components/PapersList.svelte";
+  import GraphExplorer from "./components/GraphExplorer.svelte";
   import RagEvals from "./components/RagEvals.svelte";
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { Button } from "$lib/components/ui/button";
@@ -43,6 +44,7 @@
     { id: "chat", label: "Chat" },
     { id: "history", label: "History Search" },
     { id: "papers", label: "Papers" },
+    { id: "graph", label: "Graph" },
     { id: "evals", label: "RAG Evals" },
   ];
 
@@ -102,6 +104,10 @@
     {:else if $activeRoute.name === "papers"}
       <TabsContent value="papers" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-0 pt-[38px] pb-0">
         <PapersList />
+      </TabsContent>
+    {:else if $activeRoute.name === "graph"}
+      <TabsContent value="graph" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-0 pt-[38px] pb-0">
+        <GraphExplorer />
       </TabsContent>
     {:else}
       <TabsContent value="evals" class="relative flex min-h-0 flex-1 flex-col overflow-hidden px-5 pt-[38px] pb-0">
