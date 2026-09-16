@@ -2,7 +2,6 @@ import { call, put, take, takeLeading } from "typed-redux-saga";
 import { END, eventChannel, type EventChannel } from "redux-saga";
 import {
   api,
-  type EvaluationRetrievalType,
   type EvaluationStreamEvent,
   type EvaluationTestCase,
 } from "../../../lib/api";
@@ -28,14 +27,13 @@ const EVALUATION_TRANSPORT_ERROR =
   "Evaluation transport failed. Check the backend logs and retry.";
 
 function createEvaluationChannel(
-  retrievalType: EvaluationRetrievalType,
   testCases: EvaluationTestCase[],
   services: EvaluationServices,
 ): EventChannel<EvaluationStreamEvent> {
   return eventChannel<EvaluationStreamEvent>((emit) => {
     let terminalEventSeen = false;
     services
-      .runEvaluation(retrievalType, testCases, (event) => {
+      .runEvaluation(testCases, (event) => {
         terminalEventSeen ||= event.event === "complete" || event.event === "error";
         emit(event);
       })
@@ -60,13 +58,13 @@ function createEvaluationChannel(
 
 export function* evaluationSaga(services: EvaluationServices = evaluationServices) {
   yield* takeLeading(runEvaluation, function* (action) {
-    const [retrievalType, testCases] = action.payload;
-    const channel = createEvaluationChannel(retrievalType, testCases, services);
+    const [testCases] = action.payload;
+    const channel = createEvaluationChannel(testCases, services);
     try {
       while (true) {
         const event = yield* take(channel);
         if (event.event === "runStart") {
-          yield* put(evaluationStarted(event.retrievalType, testCases, event.total));
+          yield* put(evaluationStarted(testCases, event.total));
         } else if (event.event === "caseStart") {
           yield* put(evaluationCaseStarted(event.caseIndex));
         } else if (event.event === "caseSuccess") {

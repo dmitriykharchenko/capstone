@@ -52,9 +52,10 @@ function startSaga(service) {
 }
 
 test("run intent locks controls immediately before transport events arrive", () => {
-  const state = evaluationReducer(undefined, runEvaluation("vector", testCases));
-  const duplicate = evaluationReducer(state, runEvaluation("hybrid", testCases));
+  const state = evaluationReducer(undefined, runEvaluation(testCases));
+  const duplicate = evaluationReducer(state, runEvaluation(testCases));
   assert.equal(state.running, true);
+  assert.equal(state.retrievalType, "multihop-hybrid");
   assert.equal(state.total, 1);
   assert.deepEqual(state.testCases, testCases);
   assert.equal(duplicate, state);
@@ -64,15 +65,15 @@ test("takeLeading ignores duplicate evaluation requests until completion", async
   const callbacks = [];
   const resolves = [];
   let calls = 0;
-  const service = (_retrievalType, _cases, onEvent) => {
+  const service = (_cases, onEvent) => {
     calls += 1;
     callbacks.push(onEvent);
     return new Promise((resolve) => resolves.push(resolve));
   };
   const run = startSaga(service);
   await settle();
-  run.input.put(runEvaluation("hybrid", testCases));
-  run.input.put(runEvaluation("vector", testCases));
+  run.input.put(runEvaluation(testCases));
+  run.input.put(runEvaluation(testCases));
   await settle();
   assert.equal(calls, 1);
 
@@ -100,7 +101,7 @@ test("takeLeading ignores duplicate evaluation requests until completion", async
     ["evaluation/started", "evaluation/caseStarted", "evaluation/completed"],
   );
 
-  run.input.put(runEvaluation("vector", testCases));
+  run.input.put(runEvaluation(testCases));
   await settle();
   assert.equal(calls, 2);
   run.task.cancel();
@@ -113,7 +114,7 @@ test("transport rejection emits one terminal failure action", async () => {
     throw new Error("api_key=secret at /private/secret/tests/judge.md");
   });
   await settle();
-  run.input.put(runEvaluation("bm25", testCases));
+  run.input.put(runEvaluation(testCases));
   await settle();
   await settle();
 

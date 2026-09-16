@@ -4,7 +4,6 @@ import { createReducer } from "@augmentcode/themis/utils/store/create-reducer";
 import type {
   EvaluationAggregateScores,
   EvaluationCaseResult,
-  EvaluationRetrievalType,
   EvaluationTestCase,
 } from "../../lib/api";
 import {
@@ -18,10 +17,10 @@ import {
 } from "./evaluation-types";
 
 export const runEvaluation = createAction<
-  [retrievalType: EvaluationRetrievalType, testCases: EvaluationTestCase[]]
+  [testCases: EvaluationTestCase[]]
 >("evaluation/run");
 export const evaluationStarted = createAction<
-  [retrievalType: EvaluationRetrievalType, testCases: EvaluationTestCase[], total: number]
+  [testCases: EvaluationTestCase[], total: number]
 >("evaluation/started");
 export const evaluationCaseStarted = createAction<[caseIndex: number]>(
   "evaluation/caseStarted",
@@ -51,15 +50,14 @@ export const evaluationReducer: StoreReducerFunction<EvaluationState> =
       runEvaluation,
       (
         state: EvaluationState,
-        action: StoreAction<[EvaluationRetrievalType, EvaluationTestCase[]]>,
+        action: StoreAction<[EvaluationTestCase[]]>,
       ) =>
         state.running
           ? state
           : beginEvaluation(
               state,
               action.payload[0],
-              action.payload[1],
-              action.payload[1].length,
+              action.payload[0].length,
             ),
     )
     .with(
@@ -67,7 +65,6 @@ export const evaluationReducer: StoreReducerFunction<EvaluationState> =
       (
         state: EvaluationState,
         action: StoreAction<[
-          EvaluationRetrievalType,
           EvaluationTestCase[],
           number,
         ]>,

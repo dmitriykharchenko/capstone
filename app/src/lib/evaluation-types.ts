@@ -1,4 +1,8 @@
-export type EvaluationRetrievalType = "vector" | "bm25" | "hybrid";
+export const EVALUATION_RETRIEVAL_TYPE = "multihop-hybrid" as const;
+export type EvaluationRetrievalType = typeof EVALUATION_RETRIEVAL_TYPE;
+
+export const EVALUATION_WIRE_RETRIEVAL_TYPE = "hybrid" as const;
+export type EvaluationWireRetrievalType = typeof EVALUATION_WIRE_RETRIEVAL_TYPE;
 
 export interface EvaluationTestCase {
   question: string;
@@ -64,7 +68,7 @@ export interface EvaluationCaseError {
 export interface EvaluationCaseResult {
   case_index: number;
   input: EvaluationTestCase;
-  retrieval_strategy: EvaluationRetrievalType;
+  retrieval_strategy: EvaluationWireRetrievalType;
   retrieved_chunks: EvaluationRetrievedChunk[];
   generated_answer: string | null;
   judge_scores: EvaluationJudgeScores | null;
@@ -84,14 +88,14 @@ export interface EvaluationAggregateScores {
 export type EvaluationStreamEvent =
   | {
       event: "runStart";
-      retrievalType: EvaluationRetrievalType;
+      retrievalType: EvaluationWireRetrievalType;
       total: number;
     }
   | {
       event: "caseStart";
       caseIndex: number;
       total: number;
-      retrievalType: EvaluationRetrievalType;
+      retrievalType: EvaluationWireRetrievalType;
       input: EvaluationTestCase;
     }
   | {
@@ -108,7 +112,7 @@ export type EvaluationStreamEvent =
     }
   | {
       event: "complete";
-      retrievalType: EvaluationRetrievalType;
+      retrievalType: EvaluationWireRetrievalType;
       completed: number;
       total: number;
       succeeded: number;

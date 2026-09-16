@@ -9,6 +9,7 @@
     SelectTrigger,
   } from "$lib/components/ui/select";
   import { parseEvaluationTestCases } from "$lib/evaluation-upload";
+  import { EVALUATION_RETRIEVAL_TYPE } from "$lib/evaluation-types";
   import type {
     EvaluationJudgeScores,
     EvaluationRetrievalType,
@@ -47,18 +48,12 @@
   const aggregates = selectEvaluationAggregateScores();
   const transportError = selectEvaluationError();
 
-  let retrievalType = $state<EvaluationRetrievalType>("vector");
+  const retrievalType: EvaluationRetrievalType = EVALUATION_RETRIEVAL_TYPE;
   let fileInput = $state<HTMLInputElement>();
   let uploadError = $state<string | null>(null);
   const progressPercent = $derived(
     $total > 0 ? Math.round(($completed / $total) * 100) : 0,
   );
-
-  function selectRetrieval(value: string) {
-    if (value === "vector" || value === "bm25" || value === "hybrid") {
-      retrievalType = value;
-    }
-  }
 
   async function addTests(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -82,7 +77,7 @@
       uploadError = parsed.error;
       return;
     }
-    store.dispatch(runEvaluation(retrievalType, parsed.testCases));
+    store.dispatch(runEvaluation(parsed.testCases));
   }
 
   function criterionDetails(scores: EvaluationJudgeScores, key: keyof EvaluationJudgeScores) {
@@ -113,14 +108,12 @@
 
 <div class="flex h-full min-h-0 flex-col">
   <div class="flex shrink-0 items-center gap-2 py-3">
-    <Select type="single" value={retrievalType} onValueChange={selectRetrieval} disabled={$running}>
+    <Select type="single" value={retrievalType} disabled={$running}>
       <SelectTrigger class="w-40" aria-label="Retrieval strategy" title="Retrieval strategy">
-        <span class="capitalize">{retrievalType}</span>
+        <span>Multihop Hybrid</span>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="vector" label="vector">vector</SelectItem>
-        <SelectItem value="bm25" label="bm25">bm25</SelectItem>
-        <SelectItem value="hybrid" label="hybrid">hybrid</SelectItem>
+        <SelectItem value="multihop-hybrid" label="Multihop Hybrid">Multihop Hybrid</SelectItem>
       </SelectContent>
     </Select>
     <input

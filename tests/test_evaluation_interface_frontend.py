@@ -12,11 +12,12 @@ def test_evaluation_interface_dispatches_validated_intent_without_transport_or_u
 
     assert validation < dispatch
     assert 'accept=".json"' in component
-    assert re.findall(r'<SelectItem value="([^"]+)"', component) == [
-        "vector",
-        "bm25",
-        "hybrid",
-    ]
+    assert re.findall(r'<SelectItem value="([^"]+)"', component) == ["multihop-hybrid"]
+    assert '<SelectItem value="multihop-hybrid" label="Multihop Hybrid">' in component
+    assert "runEvaluation(parsed.testCases)" in component
+    assert 'value="vector"' not in component
+    assert 'value="bm25"' not in component
+    assert 'value="hybrid"' not in component
     assert "api.runEvaluation" not in component
     assert "window.location" not in component
     assert "window.history" not in component

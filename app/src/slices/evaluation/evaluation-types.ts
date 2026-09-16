@@ -35,13 +35,12 @@ export const initialEvaluationState: EvaluationState = {
 
 export function beginEvaluation(
   state: EvaluationState,
-  retrievalType: EvaluationRetrievalType,
   testCases: EvaluationTestCase[],
   total: number,
 ): EvaluationState {
   return {
     ...state,
-    retrievalType,
+    retrievalType: "multihop-hybrid",
     testCases: [...testCases],
     running: true,
     total,

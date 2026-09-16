@@ -9,9 +9,14 @@ import {
 } from "./graph-types";
 
 import type {
-  EvaluationRetrievalType,
   EvaluationStreamEvent,
   EvaluationTestCase,
+} from "./evaluation-types";
+import { EVALUATION_WIRE_RETRIEVAL_TYPE } from "./evaluation-types";
+
+export {
+  EVALUATION_RETRIEVAL_TYPE,
+  EVALUATION_WIRE_RETRIEVAL_TYPE,
 } from "./evaluation-types";
 
 export type {
@@ -224,14 +229,13 @@ export const api = {
     return invoke<void>("index_papers_stream", { onEvent: channel });
   },
   runEvaluation: (
-    retrievalType: EvaluationRetrievalType,
     testCases: EvaluationTestCase[],
     onEvent: (event: EvaluationStreamEvent) => void,
   ) => {
     const channel = new Channel<EvaluationStreamEvent>();
     channel.onmessage = onEvent;
     return invoke<void>("evaluate_stream", {
-      retrievalType,
+      retrievalType: EVALUATION_WIRE_RETRIEVAL_TYPE,
       testCases,
       onEvent: channel,
     });

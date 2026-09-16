@@ -36,8 +36,13 @@ test("RAG Evals source contract auto-starts and renders every required state", a
   const dispatched = component.indexOf("store.dispatch(runEvaluation", parsed);
   assert.ok(parsed >= 0 && dispatched > parsed, "validation must precede auto-start dispatch");
   assert.match(component, /accept="\.json"/);
-  assert.equal([...component.matchAll(/<SelectItem value="([^"]+)"/g)].map((m) => m[1]).join(","), "vector,bm25,hybrid");
-  assert.match(component, /retrievalType = \$state<EvaluationRetrievalType>\("vector"\)/);
+  assert.deepEqual(
+    [...component.matchAll(/<SelectItem value="([^"]+)" label="([^"]+)"/g)].map((m) => m.slice(1)),
+    [["multihop-hybrid", "Multihop Hybrid"]],
+  );
+  assert.match(component, /const retrievalType: EvaluationRetrievalType = EVALUATION_RETRIEVAL_TYPE/);
+  assert.match(component, /store\.dispatch\(runEvaluation\(parsed\.testCases\)\)/);
+  assert.doesNotMatch(component, /value="(?:vector|bm25|hybrid)"|>Hybrid</);
   assert.ok((component.match(/disabled=\{\$running\}/g) ?? []).length >= 3);
   for (const contract of [
     'role="alert"',

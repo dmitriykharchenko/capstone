@@ -5,14 +5,15 @@ import test from "node:test";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-test("evaluation API uses one typed Channel request without backend configuration", async () => {
+test("evaluation API always requests the canonical multihop hybrid pipeline", async () => {
   const api = await readFile(`${root}/src/lib/api.ts`, "utf8");
   const start = api.indexOf("runEvaluation:");
   const transport = api.slice(start, api.indexOf("\n  },", start) + 5);
 
   assert.match(transport, /new Channel<EvaluationStreamEvent>/);
   assert.match(transport, /invoke<void>\("evaluate_stream"/);
-  assert.match(transport, /retrievalType/);
+  assert.match(transport, /retrievalType: EVALUATION_WIRE_RETRIEVAL_TYPE/);
+  assert.doesNotMatch(transport, /retrievalType: EvaluationRetrievalType/);
   assert.match(transport, /testCases/);
   assert.doesNotMatch(transport, /apiKey|config|Path|directory/i);
 });
@@ -33,4 +34,7 @@ test("evaluation contracts preserve provenance, judge detail, and aggregates", a
   for (const event of ["runStart", "caseStart", "caseSuccess", "caseFailure", "complete"]) {
     assert.ok(types.includes(`event: "${event}"`), event);
   }
+  assert.match(types, /EVALUATION_RETRIEVAL_TYPE = "multihop-hybrid" as const/);
+  assert.match(types, /EVALUATION_WIRE_RETRIEVAL_TYPE = "hybrid" as const/);
+  assert.doesNotMatch(types, /"vector"|"bm25"/);
 });

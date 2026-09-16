@@ -38,12 +38,13 @@ const aggregates = {
 };
 
 test("evaluation state preserves input and result order", () => {
-  const started = beginEvaluation(initialEvaluationState, "hybrid", cases, 2);
+  const started = beginEvaluation(initialEvaluationState, cases, 2);
   const current = startEvaluationCase(started, 2);
   const second = recordEvaluationCase(current, failedResult(2), 1, 2);
   const first = recordEvaluationCase(second, failedResult(1), 2, 2);
 
   assert.deepEqual(started.testCases, cases);
+  assert.equal(started.retrievalType, "multihop-hybrid");
   assert.notEqual(started.testCases, cases);
   assert.equal(current.currentCaseIndex, 2);
   assert.deepEqual(first.results.map((result) => result.case_index), [1, 2]);
@@ -52,7 +53,7 @@ test("evaluation state preserves input and result order", () => {
 
 test("terminal completion records every aggregate and unlocks the run", () => {
   const state = completeEvaluation(
-    beginEvaluation(initialEvaluationState, "vector", cases, 2),
+    beginEvaluation(initialEvaluationState, cases, 2),
     2,
     2,
     1,
@@ -69,10 +70,10 @@ test("terminal completion records every aggregate and unlocks the run", () => {
 
 test("transport failure terminates cleanly and remains retryable", () => {
   const failed = failEvaluation(
-    beginEvaluation(initialEvaluationState, "bm25", cases, 2),
+    beginEvaluation(initialEvaluationState, cases, 2),
     "bridge disconnected",
   );
-  const retry = beginEvaluation(failed, "bm25", cases, 2);
+  const retry = beginEvaluation(failed, cases, 2);
 
   assert.equal(failed.running, false);
   assert.equal(failed.error, "bridge disconnected");
