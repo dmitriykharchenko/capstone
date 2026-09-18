@@ -19,14 +19,19 @@ export function publicError(code = 'transport') {
 // One owner, one child, no automatic request replay (especially mutations).
 export class Backend {
   constructor({ executable, args = [], cwd, env = {}, spawnChild = spawn,
-    rotateAfter = 4000, requestTimeout = 30 * 60_000, cancelTimeout = 5000 } = {}) {
-    Object.assign(this, { executable, args, cwd, env, spawnChild, requestTimeout, cancelTimeout });
+    rotateAfter = 4000, requestTimeout = 30 * 60_000, cancelTimeout = 5000,
+    shutdownTimeout = 30_000, killTimeout = 1000 } = {}) {
+    for (const timeout of [shutdownTimeout, killTimeout]) {
+      if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 2_147_483_647) throw new RangeError('Invalid shutdown deadline.');
+    }
+    Object.assign(this, { executable, args, cwd, env, spawnChild, requestTimeout, cancelTimeout, shutdownTimeout, killTimeout });
     this.rotateAfter = Math.min(4000, Math.max(1, rotateAfter));
     this.pending = new Map();
     this.acks = new Map();
     this.count = 0;
     this.child = null;
     this.stopping = null;
+    this.teardown = null;
     this.closed = false;
     this.failed = false;
     this.buffer = Buffer.alloc(0);
@@ -39,7 +44,7 @@ export class Backend {
       if (this.pending.size || this.acks.size) throw publicError('busy');
       await this.stop(false);
     }
-    if (this.closed) throw publicError();
+    if (this.closed || this.stopping) throw publicError();
     if (this.child) return;
     const child = this.spawnChild(this.executable, this.args, {
       cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
@@ -68,6 +73,9 @@ export class Backend {
       this.child = null;
       this.count = 0;
       this.buffer = Buffer.alloc(0);
+      this.teardown?.finish();
+      this.teardown = null;
+      this.stopping = null;
     });
   }
 
@@ -83,8 +91,8 @@ export class Backend {
       if (!job || job !== submitted || job.cancelled) return;
       job.cancelled = true;
       if (this.stopping) return; // EOF already requests cancellation and drains commits.
-      // A missing acknowledgment retires the connection gracefully, never kills
-      // a possibly sealed write. An acknowledgment is NOT a terminal outcome.
+      // A missing acknowledgment starts bounded EOF retirement, not a cancel-
+      // kill timer. An acknowledgment (including refusal) is NOT terminal.
       this.acks.set(id, setTimeout(() => { void this.stop(false); }, this.cancelTimeout));
       try { this.write({ v: 1, type: 'cancel', id }); } catch { void this.fail(); }
     };
@@ -176,11 +184,8 @@ export class Backend {
     if (this.failed) return this.stopping;
     this.failed = true;
     this.rejectAll(code);
-    const child = this.child;
     const stopped = this.stop(false);
-    // Irrecoverable output loss/timeout is unknown, not cancellation/rollback.
-    const timer = setTimeout(() => child?.kill('SIGKILL'), 1000);
-    void stopped.finally(() => clearTimeout(timer));
+    this.teardown?.force(); // A genuine transport/operation deadline, not refusal.
     return stopped;
   }
 
@@ -189,14 +194,33 @@ export class Backend {
     if (this.stopping) return this.stopping;
     const child = this.child;
     if (!child) return Promise.resolve();
-    // No commit-drain deadline: Rust cancels ordinary jobs and joins sealed
-    // writes on EOF. Keep pending requests and late acks until stdout drains.
-    for (const job of this.pending.values()) clearTimeout(job.timer);
+    // Preserve original operation deadlines while EOF drains sealed writes.
+    // Independently allow 30s for shutdown/retirement, then SIGKILL and at most
+    // 1s for close (both injectable). Forced outcomes are UNKNOWN, never rollback.
     for (const timer of this.acks.values()) clearTimeout(timer);
-    this.stopping = new Promise((resolve) => {
-      child.once('close', resolve);
-      child.stdin.end();
-    }).finally(() => { this.stopping = null; });
-    return this.stopping;
+    let resolve, deadline, killTimer, finished = false, forced = false;
+    const stopping = this.stopping = new Promise((done) => { resolve = done; });
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      clearTimeout(killTimer);
+      resolve();
+      // Without confirmed close, keep the retired child/stopping guard. A
+      // bounded shutdown attempt is not proof it exited; never overlap children.
+    };
+    const force = () => {
+      if (finished || forced) return;
+      forced = true;
+      clearTimeout(deadline);
+      this.failed = true;
+      this.rejectAll();
+      killTimer = setTimeout(finish, this.killTimeout);
+      try { child.kill('SIGKILL'); } catch { /* Still unknown; bounded wait remains. */ }
+    };
+    this.teardown = { finish, force };
+    deadline = setTimeout(force, this.shutdownTimeout);
+    try { child.stdin.end(); } catch { void this.fail(); }
+    return stopping;
   }
 }

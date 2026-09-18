@@ -253,28 +253,33 @@ test('stale request handles cannot cancel reused request IDs after child replace
   h.clean();
 });
 
-test('graceful EOF drains sealed output past deadlines, including output after exit', async (t) => {
-  const h = host(t);
-  const request = h.api.resetAllIndices();
-  const state = observe(request.done);
-  await flush();
-  const child = h.children[0], { id } = child.frames[0];
-  request.cancel();
-  child.frame({ id, type: 'cancel_ack', accepted: false });
-  const stopped = observe(h.backend.stop());
-  await h.tick(100_000);
-  assert.equal(child.eof, 1);
-  assert.equal(child.kills, 0);
-  assert.equal(state.settled, false);
-  assert.equal(stopped.settled, false);
-  child.emit('exit', 0);
-  child.frame({ id, seq: 0, type: 'result', data: reset });
-  await state.done;
-  assert.deepEqual(state.value, reset);
-  child.close();
-  await stopped.done;
-  h.clean();
-});
+for (const outcome of ['result', 'error']) {
+  test(`graceful EOF drains sealed ${outcome} before genuine deadlines, including output after exit`, async (t) => {
+    const h = host(t);
+    const request = h.api.resetAllIndices();
+    const state = observe(request.done);
+    await flush();
+    const child = h.children[0], { id } = child.frames[0];
+    request.cancel();
+    child.frame({ id, type: 'cancel_ack', accepted: false });
+    const stopped = observe(h.backend.stop());
+    await h.tick(2000);
+    assert.equal(child.eof, 1);
+    assert.equal(child.kills, 0);
+    assert.equal(state.settled, false);
+    assert.equal(stopped.settled, false);
+    child.emit('exit', 0);
+    child.frame({ id, seq: 0, type: outcome, ...(outcome === 'result' ? { data: reset } : { error: { code: 'internal' } }) });
+    await state.done;
+    if (outcome === 'result') assert.deepEqual(state.value, reset);
+    else assert.equal(state.error.message, 'Backend operation failed.');
+    child.close();
+    await stopped.done;
+    h.clean();
+    await h.tick(100_000);
+    assert.equal(child.kills, 0);
+  });
+}
 
 test('missing acknowledgment causes EOF, not kill or synthesized cancellation of a sealed write', async (t) => {
   const h = host(t);
@@ -321,7 +326,7 @@ test('shutdown racing an unsubmitted request cannot fail or kill an existing sea
   const unsubmitted = h.api.resetAllIndices();
   const rejected = observe(unsubmitted.done);
   const stopping = h.backend.stop();
-  await h.tick(20_000);
+  await h.tick(2000);
   await rejected.done;
   assert.ok(rejected.error);
   assert.equal(child.frames.length, 1);
@@ -332,6 +337,102 @@ test('shutdown racing an unsubmitted request cannot fail or kill an existing sea
   assert.deepEqual(outcome.value, reset);
   child.close();
   await stopping;
+  h.clean();
+});
+
+test('operation deadline remains absolute during graceful drain and forces only UNKNOWN', async (t) => {
+  const h = host(t, { requestTimeout: 100, shutdownTimeout: 500, killTimeout: 10 });
+  const request = h.api.resetAllIndices();
+  const state = observe(request.done);
+  await flush();
+  const child = h.children[0], { id } = child.frames[0];
+  const timer = h.backend.pending.get(id).timer;
+  request.cancel();
+  child.frame({ id, type: 'cancel_ack', accepted: false });
+  await h.tick(60);
+  const stopping = h.backend.stop();
+  assert.equal(h.backend.pending.get(id).timer, timer);
+  await h.tick(39);
+  assert.equal(state.settled, false);
+  assert.equal(child.kills, 0);
+  await h.tick(1);
+  await state.done;
+  await stopping;
+  assert.match(state.error.message, /outcome is unknown/);
+  assert.doesNotMatch(state.error.message, /cancelled|rollback|Please retry/);
+  assert.equal(child.kills, 1);
+  h.clean();
+  await h.tick(1000);
+  assert.equal(child.kills, 1);
+});
+
+for (const kill of ['never-closes', 'throws']) {
+  test(`bounded retirement when SIGKILL ${kill} keeps a no-overlap guard and settles once`, async (t) => {
+    const h = host(t, { requestTimeout: 1000, shutdownTimeout: 100, killTimeout: 10 });
+    const request = h.api.resetAllIndices();
+    const state = observe(request.done);
+    let settlements = 0;
+    void state.done.then(() => settlements++);
+    await flush();
+    const child = h.children[0], { id } = child.frames[0];
+    child.kill = () => { child.kills++; if (kill === 'throws') throw new Error('fixture kill failed'); return false; };
+    request.cancel();
+    child.frame({ id, type: 'cancel_ack', accepted: false });
+    await h.tick(50); // Refusal alone did not retire or kill the child.
+    assert.equal(child.eof, 0);
+    assert.equal(child.kills, 0);
+    const stopping = h.backend.stop(false);
+    const stopped = observe(stopping);
+    assert.equal(h.backend.stop(false), stopping);
+    await h.tick(99);
+    assert.equal(state.settled, false);
+    assert.equal(child.kills, 0);
+    await h.tick(1);
+    await state.done;
+    assert.match(state.error.message, /outcome is unknown/);
+    assert.equal(child.kills, 1);
+    assert.equal(stopped.settled, false);
+    h.clean();
+    await h.tick(10);
+    await stopped.done;
+    assert.equal(child.closed, false);
+    assert.equal(h.backend.child, child);
+    assert.equal(h.backend.stop(false), stopping);
+    await assert.rejects(h.api.resetAllIndices().done, /outcome is unknown/);
+    assert.equal(h.children.length, 1);
+    child.frame({ id, seq: 0, type: 'result', data: reset }); // Late output cannot rewrite UNKNOWN.
+    await h.tick(10_000);
+    assert.equal(child.kills, 1);
+    assert.equal(settlements, 1);
+    assert.equal(child.frames.filter((frame) => frame.type === 'request').length, 1);
+    child.close(); // Only confirmed close permits a replacement child.
+    await flush();
+    assert.equal(h.backend.teardown, null);
+    assert.equal(h.backend.stopping, null);
+    const next = h.api.resetAllIndices();
+    await flush();
+    const replacement = h.children[1];
+    replacement.frame({ id: replacement.frames[0].id, seq: 0, type: 'result', data: reset });
+    assert.deepEqual(await next.done, reset);
+    h.clean();
+  });
+}
+
+test('idle child retirement and shutdown after known success are also bounded without revoking success', async (t) => {
+  const h = host(t, { shutdownTimeout: 50, killTimeout: 10 });
+  const request = h.api.resetAllIndices();
+  await flush();
+  const child = h.children[0], { id } = child.frames[0];
+  child.frame({ id, seq: 0, type: 'result', data: reset });
+  assert.deepEqual(await request.done, reset);
+  child.kill = () => { child.kills++; return false; };
+  const stopping = h.backend.stop();
+  await h.tick(50);
+  await h.tick(10);
+  await stopping;
+  assert.deepEqual(await request.done, reset);
+  assert.equal(child.kills, 1);
+  await assert.rejects(h.api.resetAllIndices().done, /outcome is unknown/);
   h.clean();
 });
 
