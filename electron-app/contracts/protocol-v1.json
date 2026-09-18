@@ -11,9 +11,18 @@
     {"v":1,"id":"chat-1","seq":1,"type":"result","data":{"reply":"Public answer","sources":[]}},
     {"v":1,"id":"chat-2","seq":0,"type":"cancelled"},
     {"v":1,"id":"chat-2","type":"cancel_ack","accepted":true},
+    {"v":1,"id":"committing-1","type":"cancel_ack","accepted":false},
+    {"v":1,"id":"committing-1","seq":0,"type":"result","data":{"committed":true}},
     {"v":1,"id":"missing-1","seq":0,"type":"error","error":{"code":"unavailable","message":"This capability is not implemented in the foundation build."}},
     {"v":1,"id":null,"type":"protocol_error","error":{"code":"duplicate_id","message":"Request IDs must not be reused within a connection."}}
   ],
+  "cancellation_contract": {
+    "accepted": "Before final commit, cancellation atomically wins, prevents begin_commit, and produces exactly one cancelled terminal followed by cancel_ack accepted:true.",
+    "rejected": "cancel_ack accepted:false means unknown/completed ID OR an active request already sealed for final commit. It is not terminal; an active caller must await its actual result/error, not reject on the local cancel signal.",
+    "final_commit": "Cancellation::begin_commit returns a one-way CommitPermit. Dropping it never unseals cancellation, including COMMIT failure or panic. Protection lasts through queued terminal publication; success/error remains authoritative. Sealed handlers returning Cancelled are reported as internal error, not rollback.",
+    "shutdown": "EOF/input shutdown cancels pre-commit work and drains sealed work. Output failure/stall stops publication but still drains sealed work before serve returns a transport error. No commit timeout is imposed; handlers must join bounded native finalization. Forced termination or lost output means unknown outcome, never proof of success/rollback; do not automatically replay mutations.",
+    "partial_progress": "This seal is for final-request commit/publication, NOT each intermediate indexing transaction. Durable partial-progress and later cancellation semantics must be defined by indexing integration."
+  },
   "invalid_requests": [
     {"v":2,"type":"request","id":"a","command":"health","params":{}},
     {"v":1,"type":"request","id":"","command":"health","params":{}},

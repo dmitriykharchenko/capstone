@@ -4,7 +4,7 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
     time::Duration,
 };
@@ -22,26 +22,72 @@ use crate::{
     registry::{BackendResult, Registry},
 };
 
+const CANCELLABLE: u8 = 0;
+const CANCELLED: u8 = 1;
+const COMMITTING: u8 = 2;
+
 #[derive(Clone, Default)]
-pub struct Cancellation(Arc<AtomicBool>);
+pub struct Cancellation(Arc<AtomicU8>);
+
+/// Proof that this request won its one-way final-commit boundary.
+///
+/// Dropping this permit does NOT unseal the request, even on failure or panic.
+/// The shared cancellation state protects the handler and its queued result all
+/// the way through terminal publication. A permit is not proof of durable success.
+#[derive(Debug)]
+#[must_use = "acquire immediately before the final commit, then report its actual outcome"]
+pub struct CommitPermit {
+    _private: (),
+}
 
 impl Cancellation {
     pub fn check(&self) -> BackendResult<()> {
-        if self.0.load(Ordering::Acquire) {
+        if self.0.load(Ordering::Acquire) == CANCELLED {
             Err(ErrorCode::Cancelled)
         } else {
             Ok(())
         }
     }
 
-    fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+    /// Signal cancellation, returning whether cancellation has won. Idempotent;
+    /// returns false once final commit is sealed. Also usable by native tests.
+    pub fn cancel(&self) -> bool {
+        matches!(
+            self.0
+                .compare_exchange(CANCELLABLE, CANCELLED, Ordering::AcqRel, Ordering::Acquire),
+            Ok(_) | Err(CANCELLED)
+        )
+    }
+
+    /// Atomically seal the request immediately before its irreversible final
+    /// COMMIT/atomic publication. Cancellation wins => no commit may start.
+    /// Commit wins => check() stays Ok and cancellation is rejected permanently.
+    /// A second begin_commit is a programming error, not another permit.
+    ///
+    /// Join offloaded native work and return the real result/error. Do not detach
+    /// it, retry a mutation on transport loss, or use this seal for intermediate
+    /// indexing transactions: partial-progress cancellation is a domain contract.
+    pub fn begin_commit(&self) -> BackendResult<CommitPermit> {
+        self.0
+            .compare_exchange(CANCELLABLE, COMMITTING, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| CommitPermit { _private: () })
+            .map_err(|state| {
+                if state == CANCELLED {
+                    ErrorCode::Cancelled
+                } else {
+                    ErrorCode::Internal
+                }
+            })
+    }
+
+    fn is_committing(&self) -> bool {
+        self.0.load(Ordering::Acquire) == COMMITTING
     }
 }
 
 // Modules emit public progress only. The dispatcher alone assigns sequence numbers
 // and terminal outcomes. Blocking work must be offloaded and check cancellation
-// before each mutation; dropping a future cannot stop an already-running syscall.
+// before each mutation, then seal before final commit; a check alone races cancel.
 #[derive(Clone)]
 pub struct RequestContext {
     id: String,
@@ -72,7 +118,13 @@ impl RequestContext {
         self.messages
             .send(WorkerMessage::Event(self.id.clone(), probe.body))
             .await
-            .map_err(|_| ErrorCode::Cancelled)
+            .map_err(|_| {
+                if self.cancellation.is_committing() {
+                    ErrorCode::Internal
+                } else {
+                    ErrorCode::Cancelled
+                }
+            })
     }
 }
 
@@ -89,8 +141,9 @@ struct Active {
 
 impl Drop for Active {
     fn drop(&mut self) {
-        self.cancellation.cancel();
-        self.task.abort();
+        if self.cancellation.cancel() {
+            self.task.abort();
+        }
     }
 }
 
@@ -122,6 +175,35 @@ fn error_body(code: ErrorCode) -> OutputBody {
     OutputBody::Error { error: code.into() }
 }
 
+fn terminal_body(result: BackendResult<Value>, cancellation: &Cancellation) -> OutputBody {
+    if cancellation.check().is_err() {
+        return OutputBody::Cancelled;
+    }
+    match result {
+        Ok(data) => OutputBody::Result { data },
+        // A sealed handler cannot claim cancellation/rollback after committing.
+        Err(ErrorCode::Cancelled) if cancellation.is_committing() => {
+            error_body(ErrorCode::Internal)
+        }
+        Err(ErrorCode::Cancelled) => OutputBody::Cancelled,
+        Err(code) => error_body(code),
+    }
+}
+
+async fn publish_if_connected<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    output: Output,
+    transport: &mut io::Result<()>,
+) {
+    if transport.is_ok() {
+        *transport = write_output(writer, output).await;
+    }
+}
+
+/// Serve until input closes or transport fails. Shutdown cancels ordinary jobs
+/// and drains sealed jobs without a commit timeout: stopping an in-flight native
+/// commit cannot prove rollback. Callers must await this future for graceful
+/// shutdown; forced process termination or lost output leaves the outcome unknown.
 pub async fn serve<R, W>(reader: R, mut writer: W, registry: Registry) -> io::Result<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -153,19 +235,25 @@ where
     let (messages, mut events) = mpsc::channel(QUEUE_CAPACITY);
     let mut active: BTreeMap<String, Active> = BTreeMap::new();
     let mut seen = HashSet::new();
+    let mut input_error = None;
+    let mut transport = async {
     loop {
         tokio::select! {
             incoming = input_rx.recv() => {
                 let Some(incoming) = incoming else { break; };
-                let input = match incoming? {
+                let incoming = match incoming {
+                    Ok(incoming) => incoming,
+                    Err(error) => { input_error = Some(error); break; }
+                };
+                let input = match incoming {
                     Ok(input) => input,
                     Err(code) => { write_output(&mut writer, Output::protocol_error(code)).await?; continue; }
                 };
                 match input {
                     Input::Cancel { id, .. } => {
-                        let cancelled = active.remove(&id);
-                        let accepted = cancelled.is_some();
-                        if let Some(job) = cancelled {
+                        let accepted = active.get(&id).is_some_and(|job| job.cancellation.cancel());
+                        if accepted {
+                            let job = active.remove(&id).expect("accepted cancellation is active");
                             let seq = job.seq;
                             drop(job);
                             write_output(&mut writer, Output::request(&id, seq, OutputBody::Cancelled)).await?;
@@ -230,11 +318,7 @@ where
                     }
                     WorkerMessage::Finished(id, result) => {
                         if let Some(job) = active.remove(&id) {
-                            let body = match result {
-                                Ok(data) => OutputBody::Result { data },
-                                Err(ErrorCode::Cancelled) => OutputBody::Cancelled,
-                                Err(code) => error_body(code),
-                            };
+                            let body = terminal_body(result, &job.cancellation);
                             write_output(&mut writer, Output::request(&id, job.seq, body)).await?;
                         }
                     }
@@ -242,18 +326,53 @@ where
             }
         }
     }
-    // EOF is owner shutdown, not permission to keep mutating after Electron exits.
+    Ok(())
+    }.await;
+    // Stop admitting input, then decide ALL pre-commit cancellations before any
+    // potentially stalled output. A concurrent begin_commit has the same CAS winner.
+    drop(_reader);
     let cancelled: Vec<_> = active
         .iter()
-        .map(|(id, job)| (id.clone(), job.seq))
+        .filter_map(|(id, job)| job.cancellation.cancel().then_some((id.clone(), job.seq)))
         .collect();
-    drop(active);
+    for (id, _) in &cancelled {
+        active.remove(id);
+    }
     for (id, seq) in cancelled {
-        write_output(
+        publish_if_connected(
             &mut writer,
             Output::request(&id, seq, OutputBody::Cancelled),
+            &mut transport,
         )
-        .await?;
+        .await;
     }
-    Ok(())
+    // Keep consuming bounded worker queues even with broken stdout, so a sealed
+    // handler can finish. Never abort it or manufacture cancellation/success.
+    while !active.is_empty() {
+        match events.recv().await.expect("dispatcher retains a sender") {
+            WorkerMessage::Event(id, body) => {
+                if let Some(job) = active.get_mut(&id) {
+                    publish_if_connected(
+                        &mut writer,
+                        Output::request(&id, job.seq, body),
+                        &mut transport,
+                    )
+                    .await;
+                    job.seq += 1;
+                }
+            }
+            WorkerMessage::Finished(id, result) => {
+                if let Some(job) = active.remove(&id) {
+                    let body = terminal_body(result, &job.cancellation);
+                    publish_if_connected(
+                        &mut writer,
+                        Output::request(&id, job.seq, body),
+                        &mut transport,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+    transport.and(input_error.map_or(Ok(()), Err))
 }
