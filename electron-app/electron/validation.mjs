@@ -68,10 +68,25 @@ const judges = object({
   completeness: object({ ...criterion, missing_elements: array(text) }),
   hallucination_rate: object({ ...criterion, unsupported_claims: array(text) }),
 });
+const caseErrorMessages = Object.freeze({
+  planner: 'Question planning failed for this case. Check backend configuration and retry.',
+  retrieval: 'Retrieval failed for this case. Check the paper index and retry.',
+  subanswer: 'Subanswer generation failed for this case. Check backend configuration and retry.',
+  coverage: 'Coverage review failed for this case. Check backend configuration and retry.',
+  followup_retrieval: 'Follow-up retrieval failed for this case. Check the paper index and retry.',
+  followup_subanswer: 'Follow-up subanswer generation failed for this case. Check backend configuration and retry.',
+  composer: 'Final answer composition failed for this case. Check backend configuration and retry.',
+  model: 'Answer generation failed for this case. Check backend configuration and retry.',
+  judge: 'Judge evaluation failed for this case. Check backend configuration and retry.',
+  evaluation: 'Evaluation failed for this case. Check backend configuration and retry.',
+  // Retain compatibility stage labels with the model/composer safe messages.
+  generation: 'Answer generation failed for this case. Check backend configuration and retry.',
+  composition: 'Final answer composition failed for this case. Check backend configuration and retry.',
+});
 const caseError = (v) => {
   const parsed = object({ stage: nonempty, message: text })(v);
-  return { stage: ['planner', 'retrieval', 'generation', 'composition', 'judge'].includes(parsed.stage) ? parsed.stage : 'evaluation',
-    message: 'Evaluation case failed. Check backend configuration and retry.' };
+  const stage = Object.hasOwn(caseErrorMessages, parsed.stage) ? parsed.stage : 'evaluation';
+  return { stage, message: caseErrorMessages[stage] };
 };
 export const caseResult = object({ case_index: positive, input: testCase, retrieval_strategy: oneOf('hybrid'),
   retrieved_chunks: array(object({ rank: positive, text, score: number, paper_id: nonempty, chunk_index: uint,

@@ -225,9 +225,32 @@ pub fn node_validate(frames: &[Value]) {
     let mut child = Command::new("node").arg("--input-type=module").arg("-e").arg(r#"
       import { parseEvent, terminalEvent } from './electron/adapters.mjs';
       import assert from 'node:assert/strict';
+      const messages = {
+        planner: 'Question planning failed for this case. Check backend configuration and retry.',
+        retrieval: 'Retrieval failed for this case. Check the paper index and retry.',
+        subanswer: 'Subanswer generation failed for this case. Check backend configuration and retry.',
+        coverage: 'Coverage review failed for this case. Check backend configuration and retry.',
+        followup_retrieval: 'Follow-up retrieval failed for this case. Check the paper index and retry.',
+        followup_subanswer: 'Follow-up subanswer generation failed for this case. Check backend configuration and retry.',
+        composer: 'Final answer composition failed for this case. Check backend configuration and retry.',
+        judge: 'Judge evaluation failed for this case. Check backend configuration and retry.',
+        evaluation: 'Evaluation failed for this case. Check backend configuration and retry.',
+      };
       let input=''; for await (const chunk of process.stdin) input+=chunk;
       for (const frame of JSON.parse(input)) {
-        if(frame.type==='event') { const ui=parseEvent('evaluate_stream',frame.event,frame.data); assert(!('case_index' in ui)); }
+        if(frame.type==='event') {
+          const ui=parseEvent('evaluate_stream',frame.event,frame.data);
+          assert(!('case_index' in ui));
+          if(frame.event==='case_failure') {
+            const stage=frame.data.result.error.stage;
+            assert(Object.hasOwn(messages,stage));
+            assert.equal(ui.result.error.stage,stage);
+            assert.equal(ui.result.error.message,messages[stage]);
+            assert.deepEqual(ui.result,{...frame.data.result,error:{stage,message:messages[stage]}});
+            assert.equal(ui.completed,frame.data.completed);
+            assert.equal(ui.total,frame.data.total);
+          } else if(frame.event==='case_success') assert.deepEqual(ui.result,frame.data.result);
+        }
         else if(frame.type==='result') assert.equal(terminalEvent('evaluate_stream',frame.data).event,'complete');
       }
     "#).current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
