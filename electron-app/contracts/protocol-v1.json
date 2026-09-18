@@ -45,6 +45,6 @@
     "chat_coverage":{"event":"coverage","data":{"status":"complete","total":2,"subqueries":[]}},
     "pdf_chunk":{"event":"pdf_chunk","data":{"offset":0,"bytes":[37,80,68,70]}},
     "index_progress":{"event":"progress","data":{"completed":1,"total":2,"paper_id":"paper-1","filename":"paper.pdf","status":"indexed","chunk_count":1,"error":null}},
-    "evaluation_case_start":{"event":"case_start","data":{"case_index":0,"input":{"question":"What is retrieval?","grading_notes":"Describe evidence lookup.","sources":["paper-1"]}}}
+    "evaluation_case_start":{"event":"case_start","data":{"case_index":1,"total":1,"retrieval_type":"hybrid","input":{"question":"What is retrieval?","grading_notes":"Describe evidence lookup.","sources":["paper-1"]}}}
   }
 }

@@ -35,6 +35,27 @@ fn shared_protocol_fixture_matches_rust_types_and_limits() {
 }
 
 #[test]
+fn evaluation_case_start_fixture_has_required_fields_and_one_based_bounds() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../contracts/protocol-v1.json")).unwrap();
+    let event = &fixture["stream_payload_examples"]["evaluation_case_start"];
+    assert_eq!(event["event"], "case_start");
+    let data = &event["data"];
+    let case_index = data["case_index"].as_u64().expect("case_index is required");
+    let total = data["total"].as_u64().expect("total is required");
+    assert!(case_index > 0 && case_index <= total);
+    let strategy: RetrievalStrategy =
+        serde_json::from_value(data["retrieval_type"].clone()).expect("retrieval_type is required");
+    assert_eq!(strategy, RetrievalStrategy::Hybrid);
+    let input: EvaluationCase =
+        serde_json::from_value(data["input"].clone()).expect("full input is required");
+    assert!(!input.question.trim().is_empty());
+    assert!(!input.grading_notes.trim().is_empty());
+    assert!(input.sources.iter().all(|source| !source.trim().is_empty()));
+    assert_eq!(data["input"], fixture["evaluation_case"]);
+}
+
+#[test]
 fn inventory_contains_all_ui_commands_and_non_ui_capabilities() {
     let health = Registry::foundation().health();
     let commands = health["commands"].as_array().unwrap();
