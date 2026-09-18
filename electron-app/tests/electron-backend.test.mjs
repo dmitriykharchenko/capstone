@@ -76,10 +76,10 @@ test('safe errors ignore backend message strings and do not replay failed mutati
   assert.equal(value.count, 1);
 });
 
-test('hung cancellation kills child and allows a new request only after close', { timeout: 5000 }, async (t) => {
+test('missing cancel acknowledgment retires via EOF and lost output is unknown, not cancelled', { timeout: 5000 }, async (t) => {
   const value = backend(t, 'ignore-cancel', { cancelTimeout: 20 });
   const request = value.request('hold', {});
-  const rejected = assert.rejects(request.done, /cancelled/);
+  const rejected = assert.rejects(request.done, /outcome is unknown/);
   await settle();
   const child = value.child;
   const closed = new Promise((resolve) => child.once('close', resolve));
@@ -88,6 +88,9 @@ test('hung cancellation kills child and allows a new request only after close', 
   await closed;
   assert.equal(value.child, null);
   assert.equal(value.pending.size, 0);
+  assert.equal(value.acks.size, 0);
+  assert.equal(child.killed, false);
+  assert.equal((await value.request('health', {}).done).ok, true);
 });
 
 test('oversized request is rejected and all pending work is settled', async (t) => {

@@ -2,28 +2,35 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const active = new Map();
 let sequence = 0;
+let disposed = false;
 const session = crypto.randomUUID();
+function cancel(token) {
+  const job = active.get(token);
+  if (!job || job.cancelled) return;
+  job.callback = null;
+  job.cancelled = true;
+  void ipcRenderer.invoke('research:cancel', token).catch(() => {});
+}
 ipcRenderer.on('research:event', (_event, token, value, seq) => {
-  const callback = active.get(token);
+  const callback = active.get(token)?.callback;
   void ipcRenderer.invoke('research:ack', token, seq).catch(() => {});
   if (callback) {
     try { callback(value); }
-    catch { active.delete(token); void ipcRenderer.invoke('research:cancel', token).catch(() => {}); }
+    catch { cancel(token); }
   }
 });
 function request(method, args = {}, callback) {
+  if (disposed) throw new Error('The desktop view is closed.');
   const token = `${session}-${++sequence}`;
   if (active.size >= 32) throw new Error('Too many active requests.');
-  active.set(token, callback ?? null);
+  active.set(token, { callback: callback ?? null, cancelled: false });
   const done = ipcRenderer.invoke('research:run', { token, method, args }).then((result) => {
     if (!result.ok) throw new Error(result.error);
     return result.data;
+  }, () => {
+    throw new Error('The backend connection closed. The operation outcome is unknown; check its state before retrying. No operation was replayed.');
   }).finally(() => active.delete(token));
-  return { done, cancel: () => {
-    if (!active.has(token)) return;
-    active.delete(token);
-    void ipcRenderer.invoke('research:cancel', token).catch(() => {});
-  } };
+  return { done, cancel: () => cancel(token) };
 }
 contextBridge.exposeInMainWorld('research', Object.freeze({
   health: () => request('health'), listPapers: () => request('listPapers'),
@@ -44,7 +51,8 @@ contextBridge.exposeInMainWorld('research', Object.freeze({
   toggleMaximize: () => ipcRenderer.invoke('research:toggle-maximize'),
 }));
 window.addEventListener('beforeunload', () => {
-  active.clear();
+  disposed = true;
+  for (const job of active.values()) { job.callback = null; job.cancelled = true; }
   ipcRenderer.removeAllListeners('research:event');
   void ipcRenderer.invoke('research:cancel-all').catch(() => {});
 });

@@ -26,7 +26,7 @@ async function host({ locked = true } = {}) {
     request(command, params, options) {
       const job = { command, params, options, cancelled: false };
       job.done = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
-      job.cancel = () => { job.cancelled = true; job.reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })); };
+      job.cancel = () => { job.cancelled = true; };
       jobs.push(job); return job;
     }
     async stop() { this.stopped = true; }
@@ -78,15 +78,21 @@ test('main creates one isolated window/backend and validates every privileged ha
   assert.equal(h.window.maximized, false);
 });
 
-test('reload, renderer crash and destruction cancel pending streams without replay', async () => {
+test('reload, renderer crash and destruction detach streams but retain authoritative results', async () => {
   const h = await host();
   for (const type of ['reload', 'render-process-gone', 'destroyed']) {
     const result = h.handlers.get('research:run')(h.event(), { token: type, method: 'chatStream', args: { session_id: 's', message: '?' } });
     const job = h.jobs.at(-1);
+    let settled = false;
+    void result.then(() => { settled = true; });
     if (type === 'reload') h.window.webContents.emit('did-start-navigation', {}, h.window.url, false, true);
     else h.window.webContents.emit(type);
     assert.equal(job.cancelled, true);
-    assert.equal((await result).ok, false);
+    await Promise.resolve();
+    assert.equal(settled, false);
+    for (let i = 0; i < 40; i++) job.options.onEvent('delta', { delta: 'late' });
+    job.resolve({ session_id: 's', reply: 'committed', chat_mode: 'rag', indexed: true, sources: [] });
+    assert.equal((await result).ok, true);
   }
   assert.equal(h.jobs.length, 3);
   let prevented = false;

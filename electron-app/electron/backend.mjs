@@ -7,8 +7,8 @@ const MESSAGES = {
   busy: 'The backend is busy. Please retry after current work finishes.',
   cancelled: 'Request cancelled.',
   invalid_params: 'Invalid command parameters.',
-  transport: 'The backend connection closed. Please retry; no operation was replayed.',
-  protocol: 'The backend returned an invalid response.',
+  transport: 'The backend connection closed. The operation outcome is unknown; check its state before retrying. No operation was replayed.',
+  protocol: 'The backend returned an invalid response. The operation outcome is unknown; check its state before retrying.',
 };
 export function publicError(code = 'transport') {
   const error = new Error(MESSAGES[code] ?? 'Backend operation failed.');
@@ -28,6 +28,7 @@ export class Backend {
     this.child = null;
     this.stopping = null;
     this.closed = false;
+    this.failed = false;
     this.buffer = Buffer.alloc(0);
   }
 
@@ -44,18 +45,23 @@ export class Backend {
       cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     this.child = child;
+    this.failed = false;
     this.count = 0;
     this.buffer = Buffer.alloc(0);
     child.stdout.on('data', (bytes) => {
-      if (this.child !== child || this.stopping) return;
+      if (this.child !== child || this.failed) return;
       try { this.consume(bytes); } catch { void this.fail('protocol'); }
     });
     // Drain, never accumulate, log, or forward backend diagnostics/credentials.
     child.stderr.on('data', () => {});
-    child.stdout.on('end', () => { if (!this.stopping) void this.fail(); });
-    child.stdin.on('error', () => { void this.fail(); });
-    child.on('error', () => { void this.fail(); });
-    child.on('exit', () => this.rejectAll());
+    child.stdout.on('end', () => {
+      if (this.child !== child) return;
+      this.rejectAll(); // All stdout has drained; remaining outcomes are unknown.
+      void this.stop(false);
+    });
+    child.stdin.on('error', () => { if (this.child === child) void this.fail(); });
+    child.on('error', () => { if (this.child === child) void this.fail(); });
+    // 'exit' can precede the last stdout data. Only EOF/close loses a result.
     child.on('close', () => {
       if (this.child !== child) return;
       this.rejectAll();
@@ -67,33 +73,39 @@ export class Backend {
 
   request(command, params, { onEvent = () => {}, signal } = {}) {
     let id;
+    let submitted;
     let cancelled = false;
+    let rejectLocal;
     const cancel = () => {
       cancelled = true;
-      if (!id) return;
+      if (!id) { rejectLocal(publicError('cancelled')); return; }
       const job = this.pending.get(id);
-      if (!job || job.cancelled) return;
+      if (!job || job !== submitted || job.cancelled) return;
       job.cancelled = true;
-      job.reject(publicError('cancelled'));
-      clearTimeout(job.timer);
-      job.timer = setTimeout(() => { void this.fail(); }, this.cancelTimeout);
-      this.acks.set(id, setTimeout(() => { void this.fail(); }, this.cancelTimeout));
+      if (this.stopping) return; // EOF already requests cancellation and drains commits.
+      // A missing acknowledgment retires the connection gracefully, never kills
+      // a possibly sealed write. An acknowledgment is NOT a terminal outcome.
+      this.acks.set(id, setTimeout(() => { void this.stop(false); }, this.cancelTimeout));
       try { this.write({ v: 1, type: 'cancel', id }); } catch { void this.fail(); }
     };
-    const done = (async () => {
-      if (signal?.aborted) throw publicError('cancelled');
-      await this.ready();
-      if (cancelled || signal?.aborted) throw publicError('cancelled');
-      if (this.pending.size >= MAX_PENDING || this.acks.size >= MAX_PENDING ||
-          this.count >= this.rotateAfter) throw publicError('busy');
-      id = `r${++this.count}`;
-      return new Promise((resolve, reject) => {
+    const done = new Promise((resolve, reject) => {
+      rejectLocal = reject;
+      void (async () => {
+        if (signal?.aborted) throw publicError('cancelled');
+        await this.ready();
+        if (cancelled || signal?.aborted) throw publicError('cancelled');
+        if (this.closed) throw publicError();
+        if (this.stopping) throw publicError('busy');
+        if (this.pending.size >= MAX_PENDING || this.acks.size >= MAX_PENDING ||
+            this.count >= this.rotateAfter) throw publicError('busy');
+        id = `r${++this.count}`;
         const timer = setTimeout(() => { void this.fail(); }, this.requestTimeout);
-        this.pending.set(id, { resolve, reject, seq: 0, onEvent, timer, cancelled: false });
+        submitted = { resolve, reject, seq: 0, onEvent, timer, cancelled: false };
+        this.pending.set(id, submitted);
         try { this.write({ v: 1, type: 'request', id, command, params }); }
         catch { void this.fail(); }
-      });
-    })().finally(() => signal?.removeEventListener('abort', cancel));
+      })().catch(reject);
+    }).finally(() => signal?.removeEventListener('abort', cancel));
     signal?.addEventListener('abort', cancel, { once: true });
     return { done, cancel };
   }
@@ -137,7 +149,7 @@ export class Backend {
     if (!job || frame.seq !== job.seq++) throw publicError('protocol');
     if (frame.type === 'event') {
       if (typeof frame.event !== 'string' || !Object.hasOwn(frame, 'data')) throw publicError('protocol');
-      if (!job.cancelled) job.onEvent(frame.event, frame.data);
+      job.onEvent(frame.event, frame.data);
       return;
     }
     if (!['result', 'error', 'cancelled'].includes(frame.type)) throw publicError('protocol');
@@ -161,19 +173,28 @@ export class Backend {
   }
 
   fail(code = 'transport') {
+    if (this.failed) return this.stopping;
+    this.failed = true;
     this.rejectAll(code);
-    return this.stop(false);
+    const child = this.child;
+    const stopped = this.stop(false);
+    // Irrecoverable output loss/timeout is unknown, not cancellation/rollback.
+    const timer = setTimeout(() => child?.kill('SIGKILL'), 1000);
+    void stopped.finally(() => clearTimeout(timer));
+    return stopped;
   }
 
   stop(permanent = true) {
     if (permanent) this.closed = true;
     if (this.stopping) return this.stopping;
-    this.rejectAll();
     const child = this.child;
     if (!child) return Promise.resolve();
+    // No commit-drain deadline: Rust cancels ordinary jobs and joins sealed
+    // writes on EOF. Keep pending requests and late acks until stdout drains.
+    for (const job of this.pending.values()) clearTimeout(job.timer);
+    for (const timer of this.acks.values()) clearTimeout(timer);
     this.stopping = new Promise((resolve) => {
-      const timer = setTimeout(() => child.kill('SIGKILL'), 1000);
-      child.once('close', () => { clearTimeout(timer); resolve(); });
+      child.once('close', resolve);
       child.stdin.end();
     }).finally(() => { this.stopping = null; });
     return this.stopping;
