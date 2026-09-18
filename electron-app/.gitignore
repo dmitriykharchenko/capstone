@@ -3,3 +3,7 @@ node_modules/
 dist/
 release/
 .DS_Store
+.npm-cache/
+.env
+.env.*
+*.log
