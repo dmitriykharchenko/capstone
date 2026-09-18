@@ -141,10 +141,10 @@ async fn cancel_is_terminal_once_unknown_and_late_cancels_are_acknowledged() {
     client
         .send(json!({"v":1,"type":"cancel","id":"slow"}))
         .await;
+    assert_eq!(client.next().await["accepted"], true);
     let cancelled = client.next().await;
     assert_eq!(cancelled["type"], "cancelled");
     assert_eq!(cancelled["seq"], 1);
-    assert_eq!(client.next().await["accepted"], true);
     for id in ["slow", "unknown"] {
         client.send(json!({"v":1,"type":"cancel","id":id})).await;
         let ack = client.next().await;
@@ -360,11 +360,14 @@ async fn completion_cancel_races_never_double_terminate_or_emit_after_terminal()
         client.send(json!({"v":1,"type":"cancel","id":id})).await;
         let mut terminal_count = 0;
         let mut expected_seq = 0;
-        loop {
+        let mut acknowledged = false;
+        while !acknowledged || terminal_count == 0 {
             let output = client.next().await;
             assert_eq!(output["id"], id);
             if output["type"] == "cancel_ack" {
-                break;
+                assert!(!acknowledged);
+                acknowledged = true;
+                continue;
             }
             assert_eq!(terminal_count, 0, "nothing may follow a terminal frame");
             assert_eq!(output["seq"], expected_seq);

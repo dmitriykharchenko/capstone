@@ -46,3 +46,9 @@ pub trait Retriever: Send + Sync {
     ) -> BackendFuture<Value>;
     fn index_exchange(&self, exchange_id: i64, cancellation: Cancellation) -> BackendFuture<()>;
 }
+
+#[cfg(test)]
+mod rag_native_cancellation {
+    include!("../../tests/rag_native_cancellation.rs");
+    rag_native_cancellation_tests!();
+}

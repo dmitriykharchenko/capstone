@@ -279,8 +279,8 @@ async fn cancellation_closes_stream_and_has_exactly_one_terminal_no_late_events(
         .await;
     assert_eq!(runtime.next().await["id"], "health");
     runtime.send(json!({"v":1,"type":"cancel","id":"p"})).await;
-    assert_eq!(runtime.next().await["type"], "cancelled");
     assert_eq!(runtime.next().await["accepted"], true);
+    assert_eq!(runtime.next().await["type"], "cancelled");
     fake.wait_closed().await;
     assert!(runtime.finish().await.is_empty());
 }
@@ -353,8 +353,8 @@ async fn cloned_cancellation_interrupts_model_and_embedding_reads_and_prevents_n
         fake.request().await;
         let token = rx.recv().await.unwrap();
         runtime.send(json!({"v":1,"type":"cancel","id":"p"})).await;
-        assert_eq!(runtime.next().await["type"], "cancelled");
         assert_eq!(runtime.next().await["accepted"], true);
+        assert_eq!(runtime.next().await["type"], "cancelled");
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(1), outcomes.recv())
                 .await

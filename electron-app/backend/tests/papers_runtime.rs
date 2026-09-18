@@ -182,8 +182,14 @@ async fn cancelling_real_transfer_discards_late_chunks_and_remains_responsive() 
     assert_eq!(client.next().await["event"], "pdf_chunk");
     client.send(json!({"v":1,"type":"cancel","id":"pdf"})).await;
     let mut sequence = 1;
+    let mut acknowledged = false;
     loop {
         let message = client.next().await;
+        if message["type"] == "cancel_ack" {
+            assert_eq!(message["accepted"], true);
+            acknowledged = true;
+            continue;
+        }
         assert_eq!(message["seq"], sequence);
         if message["type"] == "cancelled" {
             break;
@@ -191,7 +197,7 @@ async fn cancelling_real_transfer_discards_late_chunks_and_remains_responsive() 
         assert_eq!(message["type"], "event");
         sequence += 1;
     }
-    assert_eq!(client.next().await["accepted"], true);
+    assert!(acknowledged);
     client.request("health", "health", json!({})).await;
     let health = client.next().await;
     assert_eq!(health["id"], "health");
@@ -228,8 +234,8 @@ async fn actual_runtime_cancellation_is_checked_before_read_and_extract() {
     client
         .send(json!({"v":1,"type":"cancel","id":"capture"}))
         .await;
-    assert_eq!(client.next().await["type"], "cancelled");
     assert_eq!(client.next().await["accepted"], true);
+    assert_eq!(client.next().await["type"], "cancelled");
     let cancellation = token.get().unwrap();
     let root = tempfile::tempdir().unwrap();
     let repository = NativePaperRepository::new(root.path()).unwrap();

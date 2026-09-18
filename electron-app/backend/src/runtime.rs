@@ -9,7 +9,11 @@ use std::{
     time::Duration,
 };
 
-use futures_util::FutureExt;
+use futures_util::{
+    StreamExt,
+    future::{AbortHandle, Abortable},
+    stream::FuturesUnordered,
+};
 use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
@@ -136,14 +140,23 @@ enum WorkerMessage {
 struct Active {
     seq: u64,
     cancellation: Cancellation,
-    task: JoinHandle<()>,
+    abort: AbortHandle,
+}
+
+impl Active {
+    fn cancel(&self) -> bool {
+        if self.cancellation.cancel() {
+            self.abort.abort();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Drop for Active {
     fn drop(&mut self) {
-        if self.cancellation.cancel() {
-            self.task.abort();
-        }
+        self.cancel();
     }
 }
 
@@ -201,8 +214,8 @@ async fn publish_if_connected<W: AsyncWrite + Unpin>(
 }
 
 /// Serve until input closes or transport fails. Shutdown cancels ordinary jobs
-/// and drains sealed jobs without a commit timeout: stopping an in-flight native
-/// commit cannot prove rollback. Callers must await this future for graceful
+/// and joins ALL admitted jobs without a native-work timeout: stopping an in-flight
+/// native call cannot prove teardown/rollback. Callers must await this future for graceful
 /// shutdown; forced process termination or lost output leaves the outcome unknown.
 pub async fn serve<R, W>(reader: R, mut writer: W, registry: Registry) -> io::Result<()>
 where
@@ -234,6 +247,7 @@ where
     }));
     let (messages, mut events) = mpsc::channel(QUEUE_CAPACITY);
     let mut active: BTreeMap<String, Active> = BTreeMap::new();
+    let mut joins = FuturesUnordered::new();
     let mut seen = HashSet::new();
     let mut input_error = None;
     let mut transport = async {
@@ -251,13 +265,9 @@ where
                 };
                 match input {
                     Input::Cancel { id, .. } => {
-                        let accepted = active.get(&id).is_some_and(|job| job.cancellation.cancel());
-                        if accepted {
-                            let job = active.remove(&id).expect("accepted cancellation is active");
-                            let seq = job.seq;
-                            drop(job);
-                            write_output(&mut writer, Output::request(&id, seq, OutputBody::Cancelled)).await?;
-                        }
+                        // Retain capacity and ownership until the request runner has
+                        // dropped its future AND joined any owned native work.
+                        let accepted = active.get(&id).is_some_and(Active::cancel);
                         write_output(&mut writer, Output {v: VERSION, id: Some(id), seq: None, body: OutputBody::CancelAck { accepted }}).await?;
                     }
                     Input::Request { id, command, params, .. } => {
@@ -293,25 +303,43 @@ where
                         let context = RequestContext { id: id.clone(), streaming: registry.is_streaming(&command), cancellation: cancellation.clone(), messages: messages.clone() };
                         let sender = messages.clone();
                         let request_id = id.clone();
-                        let task = tokio::spawn(async move {
-                            let outcome = AssertUnwindSafe(async { handler.call(params, context).await }).catch_unwind().await.unwrap_or(Err(ErrorCode::Internal));
+                        let (abort, registration) = AbortHandle::new_pair();
+                        let runtime = tokio::runtime::Handle::current();
+                        // Bounded by MAX_ACTIVE_REQUESTS, including cancellation
+                        // drains. Native join-on-drop can block; never poll/drop a
+                        // handler on the dispatcher executor (even current-thread).
+                        // Abortable drops immediately without weakening arbitrary
+                        // injected handlers' cancellation. The blocking JoinHandle
+                        // itself is NEVER aborted or detached on graceful shutdown.
+                        let task = tokio::task::spawn_blocking(move || {
+                            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                runtime.block_on(Abortable::new(async {
+                                    handler.call(params, context).await
+                                }, registration))
+                            })).unwrap_or(Ok(Err(ErrorCode::Internal)))
+                                .unwrap_or(Err(ErrorCode::Cancelled));
                             // Bound retained worker results before queueing them, not
                             // merely when stdout eventually becomes writable.
-                            let outcome = outcome.and_then(|data| {
+                            outcome.and_then(|data| {
                                 if serde_json::to_vec(&data).map_err(|_| ErrorCode::Internal)?.len() > MAX_FRAME_BYTES - 256 {
                                     Err(ErrorCode::ResponseTooLarge)
                                 } else { Ok(data) }
-                            });
+                            })
+                        });
+                        joins.push(async move {
+                            let outcome = task.await.unwrap_or(Err(ErrorCode::Internal));
+                            // Same bounded FIFO as events: every preceding event
+                            // is consumed before this sole, post-teardown terminal.
                             let _ = sender.send(WorkerMessage::Finished(request_id, outcome)).await;
                         });
-                        active.insert(id, Active { seq: 0, cancellation, task });
+                        active.insert(id, Active { seq: 0, cancellation, abort });
                     }
                 }
             }
             Some(event) = events.recv() => {
                 match event {
                     WorkerMessage::Event(id, body) => {
-                        if let Some(job) = active.get_mut(&id) {
+                        if let Some(job) = active.get_mut(&id).filter(|job| job.cancellation.check().is_ok()) {
                             write_output(&mut writer, Output::request(&id, job.seq, body)).await?;
                             job.seq += 1;
                         }
@@ -324,6 +352,7 @@ where
                     }
                 }
             }
+            Some(()) = joins.next(), if !joins.is_empty() => {}
         }
     }
     Ok(())
@@ -331,27 +360,17 @@ where
     // Stop admitting input, then decide ALL pre-commit cancellations before any
     // potentially stalled output. A concurrent begin_commit has the same CAS winner.
     drop(_reader);
-    let cancelled: Vec<_> = active
-        .iter()
-        .filter_map(|(id, job)| job.cancellation.cancel().then_some((id.clone(), job.seq)))
-        .collect();
-    for (id, _) in &cancelled {
-        active.remove(id);
-    }
-    for (id, seq) in cancelled {
-        publish_if_connected(
-            &mut writer,
-            Output::request(&id, seq, OutputBody::Cancelled),
-            &mut transport,
-        )
-        .await;
+    for job in active.values() {
+        job.cancel();
     }
     // Keep consuming bounded worker queues even with broken stdout, so a sealed
     // handler can finish. Never abort it or manufacture cancellation/success.
-    while !active.is_empty() {
-        match events.recv().await.expect("dispatcher retains a sender") {
+    while !active.is_empty() || !joins.is_empty() {
+        tokio::select! {
+        Some(()) = joins.next(), if !joins.is_empty() => {}
+        Some(event) = events.recv() => match event {
             WorkerMessage::Event(id, body) => {
-                if let Some(job) = active.get_mut(&id) {
+                if let Some(job) = active.get_mut(&id).filter(|job| job.cancellation.check().is_ok()) {
                     publish_if_connected(
                         &mut writer,
                         Output::request(&id, job.seq, body),
@@ -372,6 +391,7 @@ where
                     .await;
                 }
             }
+        }
         }
     }
     transport.and(input_error.map_or(Ok(()), Err))

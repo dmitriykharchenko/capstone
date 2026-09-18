@@ -301,8 +301,8 @@ async fn cancel_before_commit_prevents_native_mutation_even_after_async_abort() 
     client.request("job", "chat", "precommit").await;
     notified(&work.entered).await;
     client.cancel("job").await;
-    assert_eq!(client.next().await["type"], "cancelled");
     assert_eq!(client.next().await["accepted"], true);
+    assert_eq!(client.next().await["type"], "cancelled");
     work.gate.release();
     notified(&work.finished).await;
     assert_eq!(work.mutations.load(Ordering::SeqCst), 0);
@@ -326,8 +326,8 @@ async fn sealed_commit_rejects_cancel_without_blocking_health_or_other_cancellat
     client.request("read", "chat_stream", "").await;
     assert_eq!(client.next().await["type"], "event");
     client.cancel("read").await;
-    assert_eq!(client.next().await["type"], "cancelled");
     assert_eq!(client.next().await["accepted"], true);
+    assert_eq!(client.next().await["type"], "cancelled");
     work.gate.release();
     let result = client.next().await;
     assert_eq!(result["id"], "job");

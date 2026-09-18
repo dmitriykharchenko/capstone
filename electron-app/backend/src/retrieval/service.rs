@@ -38,6 +38,9 @@ impl HistorySearchRequest {
 /// The composition root must supply a provider matching store.identity(). The
 /// existing EmbeddingClient trait does not expose model identity; dimensions and
 /// all values are independently validated here. No implicit model migration.
+/// Dropping an in-flight native operation synchronously joins its worker. Run
+/// request futures on a blocking-capable runner, as runtime::serve does; a native
+/// syscall cannot be preempted and must not be abandoned on a timeout.
 #[derive(Clone)]
 pub struct NativeRetriever {
     store: VectorStore,
@@ -58,11 +61,11 @@ impl NativeRetriever {
     }
     pub async fn initialize(&self, c: Cancellation) -> RetrievalResult<()> {
         let store = self.store.clone();
-        blocking(move || store.initialize(&c)).await
+        blocking(c, move |c| store.initialize(&c)).await
     }
     pub async fn snapshot(&self, c: Cancellation) -> RetrievalResult<IndexSnapshot> {
         let store = self.store.clone();
-        blocking(move || store.snapshot(&c)).await
+        blocking(c, move |c| store.snapshot(&c)).await
     }
     pub async fn status(&self, c: Cancellation) -> RetrievalResult<IndexStatus> {
         Ok(self.snapshot(c).await?.status)
@@ -74,7 +77,7 @@ impl NativeRetriever {
         c: Cancellation,
     ) -> RetrievalResult<IndexStatus> {
         let store = self.store.clone();
-        blocking(move || store.apply(&operations, expected_revision, &c)).await
+        blocking(c, move |c| store.apply(&operations, expected_revision, &c)).await
     }
     /// Prepare from already-extracted chunks. Empty means explicit paper removal.
     /// Preparation never seals the request token, so the same linked token may be
@@ -147,7 +150,10 @@ impl NativeRetriever {
                     .remove(0),
             )
         };
-        blocking(move || ranking::retrieve(&snapshot, &request, vector.as_deref(), &c)).await
+        blocking(c, move |c| {
+            ranking::retrieve(&snapshot, &request, vector.as_deref(), &c)
+        })
+        .await
     }
     pub async fn search_papers(
         &self,
@@ -167,7 +173,7 @@ impl NativeRetriever {
             return Ok(vec![]);
         }
         let vector = self.embed(vec![query.clone()], c.clone()).await?.remove(0);
-        blocking(move || {
+        blocking(c, move |c| {
             let scores = ranking::candidate_scores(&snapshot.chunks, &query, &vector, limit, &c)?;
             check(&c)?;
             Ok(ranking::group(&snapshot.chunks, scores, limit))
@@ -189,8 +195,7 @@ impl NativeRetriever {
             nonempty(s)?;
         }
         let history = self.history.clone().ok_or(RetrievalError::History)?;
-        let read_c = c.clone();
-        let exchange = blocking(move || {
+        let exchange = blocking(c.clone(), move |read_c| {
             check(&read_c)?;
             if let Some(session) = session_id {
                 return history
@@ -246,7 +251,7 @@ impl NativeRetriever {
             return Ok(vec![]);
         }
         let vector = self.embed(vec![request.query], c.clone()).await?.remove(0);
-        blocking(move || {
+        blocking(c, move |c| {
             let mut ranked = vec![];
             for record in snapshot.exchanges {
                 check(&c)?;
@@ -340,11 +345,48 @@ impl Retriever for NativeRetriever {
     }
 }
 async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> RetrievalResult<T> + Send + 'static,
+    cancellation: Cancellation,
+    work: impl FnOnce(Cancellation) -> RetrievalResult<T> + Send + 'static,
 ) -> RetrievalResult<T> {
-    // Never select/drop this join on cancellation: native transactions must finish
-    // rollback/commit and report their actual outcome before terminal publication.
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|_| RetrievalError::Storage)?
+    // Native calls are cooperative, not preemptible. Drop may block until the
+    // current statement finishes (SQLite busy timeout is 1s). Request runners
+    // isolate this join from the dispatcher executor. Never timeout/detach it.
+    struct Worker {
+        thread: Option<std::thread::JoinHandle<()>>,
+        cancellation: Cancellation,
+    }
+    impl Drop for Worker {
+        fn drop(&mut self) {
+            if let Some(thread) = self.thread.take() {
+                self.cancellation.cancel();
+                let _ = thread.join();
+            }
+        }
+    }
+    check(&cancellation)?;
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let token = cancellation.clone();
+    let thread = std::thread::Builder::new()
+        .name("native-retrieval".into())
+        .spawn(move || {
+            let _ = send.send(work(token));
+        })
+        .map_err(|_| RetrievalError::Storage)?;
+    let mut worker = Worker {
+        thread: Some(thread),
+        cancellation,
+    };
+    let result = receive.await.map_err(|_| RetrievalError::Storage);
+    worker
+        .thread
+        .take()
+        .unwrap()
+        .join()
+        .map_err(|_| RetrievalError::Storage)?;
+    // In particular, do not replace an already sealed mutation's actual outcome.
+    result?
 }
+
+#[cfg(test)]
+#[path = "worker_tests.rs"]
+mod tests;

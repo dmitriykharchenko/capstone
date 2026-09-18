@@ -35,7 +35,12 @@ pub struct VectorStore {
     path: PathBuf,
     identity: EmbeddingIdentity,
     lexical_memo: Arc<Mutex<Option<(String, Bm25Index)>>>,
+    #[cfg(test)]
+    pub(super) snapshot_hook: Option<SnapshotHook>,
 }
+#[cfg(test)]
+type SnapshotHook = Arc<dyn Fn(&Connection, &Cancellation) + Send + Sync>;
+
 impl VectorStore {
     /// No I/O mutation. The caller supplies a distinct, app-owned root from config.
     pub fn new(root: &Path, path: &Path, identity: EmbeddingIdentity) -> RetrievalResult<Self> {
@@ -45,6 +50,8 @@ impl VectorStore {
             path: validate_database_path(root, path).map_err(|_| RetrievalError::InvalidPath)?,
             identity,
             lexical_memo: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            snapshot_hook: None,
         })
     }
     pub fn identity(&self) -> &EmbeddingIdentity {
@@ -137,6 +144,10 @@ impl VectorStore {
         check(c)?;
         let db = self.connection(false)?;
         db.execute("BEGIN")?;
+        #[cfg(test)]
+        if let Some(hook) = &self.snapshot_hook {
+            hook(&db, c);
+        }
         let snapshot = read_snapshot(&db, c, &self.lexical_memo)?;
         if snapshot.status.identity != self.identity {
             return Err(RetrievalError::ReindexRequired);

@@ -294,8 +294,8 @@ async fn runtime_cancellation_drops_every_inflight_model_and_retrieval_stage() {
                 .send(json!({"v":1,"type":"cancel","id":"rag"}))
                 .await;
             let output = runtime.terminal().await;
-            assert_eq!(output.last().unwrap()["type"], "cancelled");
-            assert_eq!(runtime.next().await["accepted"], true);
+            assert_eq!(output.last().unwrap()["accepted"], true);
+            assert_eq!(runtime.next().await["type"], "cancelled");
             assert!(!output.iter().any(|v| v["type"] == "result"));
             until_dropped(&dropped).await;
             assert!(runtime.finish().await.is_empty());
@@ -480,8 +480,8 @@ async fn cancellation_after_final_deltas_never_promotes_them_to_a_result() {
     runtime
         .send(json!({"v":1,"type":"cancel","id":"rag"}))
         .await;
-    assert_eq!(runtime.next().await["type"], "cancelled");
     assert_eq!(runtime.next().await["accepted"], true);
+    assert_eq!(runtime.next().await["type"], "cancelled");
     assert_eq!(
         events
             .iter()
