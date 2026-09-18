@@ -87,6 +87,14 @@ impl VectorStore {
     /// Creation publishes a complete temporary SQLite file without clobbering an
     /// existing target. It is itself a final mutation, with its own request token.
     pub fn initialize(&self, c: &Cancellation) -> RetrievalResult<()> {
+        self.initialize_inner(c, || Ok(()), || Ok(()))
+    }
+    fn initialize_inner(
+        &self,
+        c: &Cancellation,
+        before_publish: impl FnOnce() -> RetrievalResult<()>,
+        after_publish: impl FnOnce() -> RetrievalResult<()>,
+    ) -> RetrievalResult<()> {
         check(c)?;
         self.check_path()?;
         if self.path.exists() {
@@ -120,18 +128,10 @@ impl VectorStore {
         drop(db);
         file.sync_all()?;
         self.check_path()?;
-        let _permit = seal(c)?;
-        fs::hard_link(&staging.0, &self.path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                RetrievalError::Conflict
-            } else {
-                RetrievalError::Storage
-            }
-        })?;
-        // Remove the temporary link before path validation (hardlinks are rejected).
-        fs::remove_file(&staging.0)?;
-        fs::File::open(&self.root)?.sync_all()?;
-        Ok(())
+        before_publish()?;
+        super::publication::publish_no_replace(&staging.0, &self.path, c)?;
+        // The staging guard is still alive: publication must not rely on its Drop.
+        after_publish()
     }
     pub fn snapshot(&self, c: &Cancellation) -> RetrievalResult<IndexSnapshot> {
         check(c)?;

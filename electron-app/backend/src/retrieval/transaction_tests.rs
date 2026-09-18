@@ -43,6 +43,101 @@ fn assert_old(s: &VectorStore) {
     let reopen = VectorStore::new(&s.root, &s.path, s.identity.clone()).unwrap();
     assert_eq!(reopen.snapshot(&token()).unwrap().chunks[0].text, "old");
 }
+
+fn empty_store(root: &Path) -> VectorStore {
+    VectorStore::new(
+        root,
+        &root.join("vectors.sqlite"),
+        EmbeddingIdentity {
+            model: "fake".into(),
+            dimension: 1,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+#[cfg(unix)]
+fn retrieval_publication_is_reopenable_single_link_before_staging_cleanup() {
+    use std::os::unix::fs::MetadataExt;
+    let root = tempfile::tempdir().unwrap();
+    let s = empty_store(root.path());
+    let c = token();
+    let observed_publication = std::cell::Cell::new(false);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        s.initialize_inner(
+            &c,
+            || Ok(()),
+            || {
+                // No staging Drop has run; even an interruption here leaves valid data.
+                assert_eq!(fs::metadata(&s.path).unwrap().nlink(), 1);
+                assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+                assert_eq!(
+                    empty_store(root.path())
+                        .status(&token())
+                        .unwrap()
+                        .chunk_count,
+                    0
+                );
+                assert!(!c.cancel());
+                observed_publication.set(true);
+                panic!("controlled interruption immediately after publication");
+            },
+        )
+    }));
+    assert!(result.is_err());
+    assert!(observed_publication.get());
+    assert_eq!(
+        empty_store(root.path())
+            .status(&token())
+            .unwrap()
+            .chunk_count,
+        0
+    );
+    assert_eq!(fs::metadata(&s.path).unwrap().nlink(), 1);
+}
+
+#[test]
+fn retrieval_initialization_collision_never_clobbers_destination() {
+    let root = tempfile::tempdir().unwrap();
+    let s = empty_store(root.path());
+    let c = token();
+    let result = s.initialize_inner(
+        &c,
+        || {
+            fs::write(&s.path, b"concurrently created destination")?;
+            Ok(())
+        },
+        || panic!("collision must not publish"),
+    );
+    assert_eq!(result, Err(RetrievalError::Conflict));
+    assert!(!c.cancel());
+    assert_eq!(
+        fs::read(&s.path).unwrap(),
+        b"concurrently created destination"
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn retrieval_initialization_cancel_after_staging_never_publishes() {
+    let root = tempfile::tempdir().unwrap();
+    let s = empty_store(root.path());
+    let c = token();
+    let result = s.initialize_inner(
+        &c,
+        || {
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+            assert!(!s.path.exists());
+            assert!(c.cancel());
+            Ok(())
+        },
+        || panic!("cancelled initialization must not publish"),
+    );
+    assert_eq!(result, Err(RetrievalError::Cancelled));
+    assert!(!s.path.exists());
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+}
 #[test]
 fn retrieval_cancellation_after_staging_rolls_back_replacement_reset_and_lexical() {
     let (_dir, s) = setup();

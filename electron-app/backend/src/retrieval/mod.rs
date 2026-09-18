@@ -6,6 +6,7 @@
 //! Cross-store publication/reconciliation belongs to the indexing coordinator.
 //! Synchronous store methods must run on a joined blocking worker; `NativeRetriever`
 //! provides that boundary for the async trait and service operations.
+mod publication;
 mod ranking;
 mod service;
 mod store;
