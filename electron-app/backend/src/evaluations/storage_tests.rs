@@ -250,6 +250,41 @@ fn competing_instances_fail_fast_and_release_lock_on_drop() {
     drop(inherited);
 }
 #[test]
+fn prior_artifact_validation_error_unlocks_inherited_lease_for_competing_store() {
+    let (_tmp, paths, store) = setup();
+    let other = ArtifactStore::from_paths(&paths).unwrap();
+    let prior = artifact("prior");
+    store.publish(&prior, &Cancellation::default()).unwrap();
+    let target = paths.evaluation_results.join(RESULTS_FILENAME);
+    let next = artifact("after validation error").serialize().unwrap();
+    let token = Cancellation::default();
+    let inherited;
+    let result = {
+        let lease = store.acquire().unwrap();
+        inherited = lease.directory.try_clone().unwrap();
+        assert!(matches!(other.acquire(), Err(ErrorCode::Busy)));
+        // Corrupt the prior artifact after acquisition to exercise read_prior's
+        // validation error during publication, before the commit seal.
+        fs::write(&target, "{}").unwrap();
+        lease.publish(&next, &token)
+    };
+    assert_eq!(result, Err(ErrorCode::InvalidParams));
+    assert_eq!(fs::read(&target).unwrap(), b"{}");
+    assert_eq!(files(&paths), [RESULTS_FILENAME]);
+    assert!(token.cancel());
+
+    // Repair only the test fixture so the competitor can validate it. The cloned
+    // open-file description stays live: close alone cannot release this lock.
+    fs::write(&target, prior.serialize().unwrap()).unwrap();
+    let competing = other.acquire().unwrap();
+    assert!(matches!(store.acquire(), Err(ErrorCode::Busy)));
+    competing.publish(&next, &Cancellation::default()).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), next);
+    assert_eq!(files(&paths), [RESULTS_FILENAME]);
+    drop(competing);
+    drop(inherited);
+}
+#[test]
 fn reject_non_evaluation_files_symlinks_hardlinks_and_directory_targets() {
     for kind in 0..4 {
         let (_tmp, paths, store) = setup();
@@ -343,6 +378,14 @@ fn world_writable_output_and_invalid_complete_artifact_are_refused() {
         Err(ErrorCode::InvalidParams)
     );
     assert!(files(&paths).is_empty());
+    let other = ArtifactStore::from_paths(&paths).unwrap();
+    let next = artifact("after invalid serialization");
+    other.publish(&next, &Cancellation::default()).unwrap();
+    assert_eq!(
+        fs::read(paths.evaluation_results.join(RESULTS_FILENAME)).unwrap(),
+        next.serialize().unwrap()
+    );
+    assert_eq!(files(&paths), [RESULTS_FILENAME]);
     fs::set_permissions(&paths.evaluation_results, fs::Permissions::from_mode(0o777)).unwrap();
     assert!(
         store

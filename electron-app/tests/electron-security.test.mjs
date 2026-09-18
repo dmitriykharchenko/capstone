@@ -180,7 +180,11 @@ test('dev server never loads environment files and denies desktop/backend or leg
   const { createServer } = await import('vite');
   const root = fileURLToPath(new URL('..', import.meta.url));
   const server = await createServer({ root, logLevel: 'silent', server: { port: 0, strictPort: false } });
-  t.after(() => server.close());
+  t.after(async () => {
+    // Let Vite finish speculative request hooks before closing its plugin container.
+    await server.waitForRequestsIdle();
+    await server.close();
+  });
   assert.equal(server.config.envDir, false);
   assert.deepEqual(server.config.envPrefix, []);
   await server.listen();
