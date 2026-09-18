@@ -1,0 +1,21 @@
+[
+  {"v":1,"type":"request","id":"health","command":"health","params":{}},
+  {"v":1,"type":"request","id":"list_papers","command":"list_papers","params":{}},
+  {"v":1,"type":"request","id":"get_paper","command":"get_paper","params":{"paper_id":"paper-1"}},
+  {"v":1,"type":"request","id":"read_pdf","command":"read_pdf","params":{"paper_id":"paper-1"}},
+  {"v":1,"type":"request","id":"chat","command":"chat","params":{"session_id":"session-1","message":"Question?"}},
+  {"v":1,"type":"request","id":"chat_stream","command":"chat_stream","params":{"session_id":"session-1","message":"Question?"}},
+  {"v":1,"type":"request","id":"list_sessions","command":"list_sessions","params":{}},
+  {"v":1,"type":"request","id":"get_messages","command":"get_messages","params":{"session_id":"session-1"}},
+  {"v":1,"type":"request","id":"search","command":"search","params":{"query":"evidence","limit":5,"session_id":"session-1"}},
+  {"v":1,"type":"request","id":"search_papers","command":"search_papers","params":{"query":"evidence","limit":5}},
+  {"v":1,"type":"request","id":"retrieve_chunks","command":"retrieve_chunks","params":{"query":"evidence","strategy":"hybrid","scope":"full_corpus","limit":5}},
+  {"v":1,"type":"request","id":"graph_neighborhood","command":"graph_neighborhood","params":{"node_id":"paper-1","max_depth":1}},
+  {"v":1,"type":"request","id":"graph_query","command":"graph_query","params":{"query":"papers_by_author","author_id":"author-1"}},
+  {"v":1,"type":"request","id":"index_papers","command":"index_papers","params":{}},
+  {"v":1,"type":"request","id":"index_papers_stream","command":"index_papers_stream","params":{}},
+  {"v":1,"type":"request","id":"paper_statuses","command":"paper_statuses","params":{}},
+  {"v":1,"type":"request","id":"bm25_status","command":"bm25_status","params":{}},
+  {"v":1,"type":"request","id":"reset_all_indices","command":"reset_all_indices","params":{}},
+  {"v":1,"type":"request","id":"evaluate_stream","command":"evaluate_stream","params":{"retrieval_type":"hybrid","test_cases":[{"question":"What is retrieval?","grading_notes":"Describe evidence lookup.","sources":["paper-1"]}]}}
+]

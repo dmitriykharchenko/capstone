@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "limits": {"frame_bytes":1048576,"active_requests":32,"session_requests":4096,"request_id_bytes":64,"worker_queue":32},
+  "requests": [
+    {"v":1,"type":"request","id":"health-1","command":"health","params":{}},
+    {"v":1,"type":"request","id":"chat-1","command":"chat_stream","params":{"session_id":"session-1","message":"Question"}},
+    {"v":1,"type":"cancel","id":"chat-1"}
+  ],
+  "outputs": [
+    {"v":1,"id":"chat-1","seq":0,"type":"event","event":"delta","data":{"delta":"Public answer"}},
+    {"v":1,"id":"chat-1","seq":1,"type":"result","data":{"reply":"Public answer","sources":[]}},
+    {"v":1,"id":"chat-2","seq":0,"type":"cancelled"},
+    {"v":1,"id":"chat-2","type":"cancel_ack","accepted":true},
+    {"v":1,"id":"missing-1","seq":0,"type":"error","error":{"code":"unavailable","message":"This capability is not implemented in the foundation build."}},
+    {"v":1,"id":null,"type":"protocol_error","error":{"code":"duplicate_id","message":"Request IDs must not be reused within a connection."}}
+  ],
+  "invalid_requests": [
+    {"v":2,"type":"request","id":"a","command":"health","params":{}},
+    {"v":1,"type":"request","id":"","command":"health","params":{}},
+    {"v":1,"type":"request","id":"a","command":"health","params":[]},
+    {"v":1,"type":"request","id":"a","command":"health","params":{},"extra":true}
+  ],
+  "graph_queries": [
+    {"query":"paper_details","paper_id":"paper-1"},
+    {"query":"papers_by_author","author_id":"author-1"},
+    {"query":"papers_by_topic","topic_id":"topic-1"},
+    {"query":"topics_by_author","author_id":"author-1"},
+    {"query":"coauthors","author_id":"author-1"},
+    {"query":"neighborhood","node_id":"paper-1","max_depth":1}
+  ],
+  "retrieval_strategies": ["vector","bm25","hybrid"],
+  "evaluation_case": {"question":"What is retrieval?","grading_notes":"Describe evidence lookup.","sources":["paper-1"]},
+  "source": {"rank":1,"paper_id":"paper-1","chunk_index":0,"filename":"paper.pdf","title":"Paper","page":1,"score":0.8,"snippet":"Evidence"},
+  "stream_payload_examples": {
+    "chat_plan":{"event":"plan","data":{"subqueries":[{"id":"subquery-1","index":1,"query":"First?"},{"id":"subquery-2","index":2,"query":"Second?"}]}},
+    "chat_coverage":{"event":"coverage","data":{"status":"complete","total":2,"subqueries":[]}},
+    "pdf_chunk":{"event":"pdf_chunk","data":{"offset":0,"bytes":[37,80,68,70]}},
+    "index_progress":{"event":"progress","data":{"completed":1,"total":2,"paper_id":"paper-1","filename":"paper.pdf","status":"indexed","chunk_count":1,"error":null}},
+    "evaluation_case_start":{"event":"case_start","data":{"case_index":0,"input":{"question":"What is retrieval?","grading_notes":"Describe evidence lookup.","sources":["paper-1"]}}}
+  }
+}
