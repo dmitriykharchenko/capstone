@@ -1,0 +1,232 @@
+[
+  {
+    "question": "In 'The Counterfeit Conundrum: Can Code Language Models Grasp the Nuances of Their Incorrect Generations?' (Gu et al., ACL 2024), what are the three failure modes showing that models have a shallow understanding of counterfeit programs?",
+    "grading_notes": "The three failure modes: (1) models mistakenly classify counterfeits as correct; (2) models are worse at reasoning about the execution behaviour of counterfeits and often predict their execution results as if they were correct; (3) when asked to fix counterfeits, the likelihood of successfully repairing a counterfeit is often even lower than that of sampling a correct program from scratch. A counterfeit is a program sampled from a language model that (1) has high enough log-probability to be generated at a moderate temperature and (2) passes weak correctness checks (e.g., compiling). The paper recommends caution when relying on models to understand their own samples, especially without external feedback.",
+    "sources": ["DBLP_conf_acl_GuLJOLSS24.pdf"]
+  },
+  {
+    "question": "Quote the first sentence of the abstract of 'The Counterfeit Conundrum' and define what the authors mean by a 'counterfeit' program.",
+    "grading_notes": "First sentence (verbatim): 'While language models are increasingly more proficient at code generation, they still frequently generate incorrect programs.' A counterfeit is a program sampled from a language model that (1) has a high enough log-probability to be generated at a moderate temperature and (2) passes weak correctness checks such as being able to compile.",
+    "sources": ["DBLP_conf_acl_GuLJOLSS24.pdf"]
+  },
+  {
+    "question": "Quote, word for word, the first sentence of the abstract of 'The Sketching Approach to Program Synthesis', and name the author.",
+    "grading_notes": "Author: Armando Solar-Lezama (MIT), sole author. First sentence (verbatim): 'Sketching is a new form of localized software synthesis that aims to bridge the gap between a programmer's high-level insights about a problem and the computer's ability to manage low-level details.' In sketching, the programmer writes a partial program (a sketch) with holes encoding the solution structure, and an automated synthesizer fills the low-level details to satisfy a reference implementation or a set of test routines.",
+    "sources": ["DBLP_conf_aplas_Solar-Lezama09.pdf"]
+  },
+  {
+    "question": "What problem does VLMaterial address and what is its core approach? Include a direct quote.",
+    "grading_notes": "VLMaterial (Li et al., ICLR 2025) generates procedural materials—represented as functional node graphs—from an input image, a task that normally requires professional knowledge and significant effort. Core approach: convert procedural materials into standard Python programs and fine-tune a large pre-trained vision-language model (VLM) to generate such programs from input images. It also contributes an open-source procedural material dataset and performs program-level augmentation by prompting another pre-trained LLM. Acceptable quote: 'we leverage the ability to convert procedural materials into standard Python programs and fine-tune a large pre-trained vision-language model (VLM) to generate such programs from input images.' The method outperforms previous methods on both synthetic and real-world examples.",
+    "sources": ["DBLP_conf_iclr_LiWSZ0BM25.pdf"]
+  },
+  {
+    "question": "How does the StatusQuo system aim to address end-to-end goals such as performance, reliability, and security?",
+    "grading_notes": "StatusQuo (Cheung, Arden, Madden, Solar-Lezama, Myers; CIDR 2013) targets the strong separation between the application and database layers that makes end-to-end goals (performance, reliability, security) hard to satisfy. It uses program analysis and program synthesis to enable seamless movement of functionality between the database and application layers: it takes functionality originally written as imperative code and translates it into relational queries that execute in the database, and it makes runtime decisions about the optimal placement of computation to reduce data movement between the database and application server. It also adaptively alters the placement of code and data in response to environment changes such as machine load.",
+    "sources": ["DBLP_conf_cidr_CheungAMSM13.pdf"]
+  },
+  {
+    "question": "Which paper describes automatically deciding whether a piece of computation should run in the application server or inside the database, and how does it do it? Name the paper and summarize.",
+    "grading_notes": "StatusQuo (Cheung et al., CIDR 2013). It makes runtime decisions about the optimal placement of computation to reduce data movement between the database and application server, translating imperative application code into relational queries that run in the database, using program analysis and program synthesis. Note: the question deliberately paraphrases ('placement of computation') to test semantic/hybrid retrieval rather than exact keyword match.",
+    "sources": ["DBLP_conf_cidr_CheungAMSM13.pdf"]
+  },
+  {
+    "question": "What is LINC, and what result does it report on ProofWriter when augmenting StarCoder+?",
+    "grading_notes": "LINC = Logical Inference via Neurosymbolic Computation (Olausson, Gu, Lipkin, Zhang et al., EMNLP 2023). It reformulates logical reasoning as modular neurosymbolic programming: the LLM acts as a semantic parser that translates premises and conclusions from natural language into first-order logic, and those expressions are offloaded to an external theorem prover that performs deductive inference symbolically. Result: augmenting the comparatively small open-source StarCoder+ (15.5B parameters) with LINC outperforms GPT-3.5 and GPT-4 with Chain-of-Thought (CoT) prompting by an absolute 38% and 10%, respectively, on ProofWriter. With GPT-4, LINC scores 26% higher than CoT on ProofWriter while performing comparably on FOLIO. Evaluation datasets: FOLIO and a balanced subset of ProofWriter.",
+    "sources": ["DBLP_conf_emnlp_OlaussonGLZSTL23.pdf"]
+  },
+  {
+    "question": "In 'Representing Partial Programs with Blended Abstract Semantics', what is the key challenge and how do the authors address it?",
+    "grading_notes": "Nye, Pu, Bowers, Andreas, Tenenbaum, Solar-Lezama (ICLR 2021). Key challenge: representing the behavior of a partially written program before it can be executed, in order to judge whether it is on the right track and predict where to search next during program synthesis. Approach: inspired by abstract interpretation, they learn an approximate execution model implemented as a modular neural network, building compositional program representations. Partial programs are represented with a flexible combination of concrete execution state and learned neural representations, using the learned ('blended') approximate semantics where concrete semantics are unknown (unfinished parts). Result: these hybrid neuro-symbolic representations let execution-guided synthesizers use more powerful constructs such as loops and higher-order functions, and synthesize programs more accurately for a given search budget than pure neural approaches.",
+    "sources": ["DBLP_conf_iclr_NyePBATS21.pdf"]
+  },
+  {
+    "question": "What does 'Learning to Infer Graphics Programs from Hand-Drawn Images' do, and what two-step process does it use?",
+    "grading_notes": "Ellis, Ritchie, Solar-Lezama, Tenenbaum (NeurIPS 2018). It learns to convert simple hand drawings into graphics programs written in a subset of LaTeX, combining deep learning and program synthesis. Two steps: (1) a convolutional neural network proposes plausible drawing primitives (e.g., rectangles, lines, circles) that explain the image—these primitives form a specification (spec) of what the program must draw; (2) a model uses program synthesis techniques to recover a graphics program from that spec. The programs include constructs like variable bindings, iterative loops, and simple conditionals. With the program recovered, they can correct errors made by the deep network and extrapolate drawings.",
+    "sources": ["DBLP_conf_nips_EllisRST18.pdf"]
+  },
+  {
+    "question": "What is VIPER in 'Verifiable Reinforcement Learning via Policy Extraction', and what does it produce?",
+    "grading_notes": "Bastani, Pu, Solar-Lezama (NeurIPS 2018). VIPER is an algorithm that combines ideas from model compression and imitation learning to learn decision tree policies guided by a DNN policy (the 'oracle') and its Q-function. The goal is verifiable RL: decision tree policies are nonparametric (can represent complex policies) yet highly structured (efficiently verifiable). Demonstrations: (i) a provably robust decision tree policy for a variant of Atari Pong with a symbolic state space; (ii) a policy for a toy Pong-based game that provably never loses; (iii) a provably stable policy for cart-pole. In each case the decision tree policy matches the performance of the original DNN policy.",
+    "sources": ["DBLP_conf_nips_BastaniPS18.pdf"]
+  },
+  {
+    "question": "What method does 'Selecting Representative Examples for Program Synthesis' propose, and why is it needed?",
+    "grading_notes": "Pu, Miranda, Solar-Lezama, Kaelbling (ICML 2018). Program synthesis is framed as a constraint satisfaction problem where input-output examples are encoded as constraints and solved with a constraint solver; the key challenge is scalability, since a large set of examples incurs significant time and memory overhead. The method discovers a subset of examples that is both small and representative: the subset is built iteratively, using a neural network to predict the probability of unchosen examples conditioned on the already-chosen ones, and greedily adding the least probable example. Empirically, such subsets significantly improve synthesis time and stability. (The paper references CEGIS—counterexample-guided inductive synthesis—as the standard baseline.)",
+    "sources": ["DBLP_conf_icml_PuMSK18.pdf"]
+  },
+  {
+    "question": "Compare how the synthesis papers in this collection frame the program-synthesis problem—e.g., as constraint satisfaction, as sketching with holes, and as search over programs from examples. Cite each paper.",
+    "grading_notes": "A correct answer distinguishes the framings and cites the right papers: (a) Pu et al. (Selecting Representative Examples, ICML 2018) frame synthesis as a regression problem seeking an exact fit, commonly formulated as a constraint satisfaction problem where input-output examples become constraints solved by a constraint solver. (b) Solar-Lezama (The Sketching Approach, APLAS 2009) frames it as sketching: the programmer writes a partial program (sketch) with holes encoding the solution structure, and the synthesizer fills the low-level details to satisfy a reference implementation or test routines. (c) Nye et al. (Blended Abstract Semantics, ICLR 2021) frame inductive synthesis as search over a vast combinatorial space of programs from examples, emphasizing the challenge of representing partial-program behavior to guide the search. Answer should ground each framing in its specific source.",
+    "sources": ["DBLP_conf_icml_PuMSK18.pdf", "DBLP_conf_aplas_Solar-Lezama09.pdf", "DBLP_conf_iclr_NyePBATS21.pdf"]
+  },
+  {
+    "question": "Which papers in the collection combine neural networks with program synthesis or symbolic methods, and how does each use the neural component?",
+    "grading_notes": "A good answer names several and correctly describes the neural role: Nye et al. (Blended Abstract Semantics) learn an approximate execution model as a modular neural network to represent partial programs; Ellis et al. (Graphics Programs) use a CNN to propose drawing primitives, then program synthesis to recover a LaTeX program; Pu et al. (Representative Examples) use a neural network to predict example probabilities and select a representative subset for a constraint solver; Bastani et al. (VIPER) use imitation learning to distill a DNN policy into a verifiable decision tree; Olausson et al. (LINC) use the LLM as a semantic parser to first-order logic, offloaded to a symbolic theorem prover; Li et al. (VLMaterial) fine-tune a vision-language model to generate procedural-material Python programs. Answer should attribute each mechanism to the correct paper and not conflate them.",
+    "sources": ["DBLP_conf_iclr_NyePBATS21.pdf", "DBLP_conf_nips_EllisRST18.pdf", "DBLP_conf_icml_PuMSK18.pdf", "DBLP_conf_nips_BastaniPS18.pdf", "DBLP_conf_emnlp_OlaussonGLZSTL23.pdf", "DBLP_conf_iclr_LiWSZ0BM25.pdf"]
+  },
+  {
+    "question": "Which papers in this set are co-authored by Armando Solar-Lezama? List them with their venues.",
+    "grading_notes": "Solar-Lezama is an author on all of the following in this sample: The Counterfeit Conundrum (ACL 2024); The Sketching Approach to Program Synthesis (APLAS 2009, sole author); VLMaterial (ICLR 2025); StatusQuo (CIDR 2013); LINC (EMNLP 2023); Representing Partial Programs with Blended Abstract Semantics (ICLR 2021); Learning to Infer Graphics Programs from Hand-Drawn Images (NeurIPS 2018); Selecting Representative Examples for Program Synthesis (ICML 2018); Verifiable Reinforcement Learning via Policy Extraction (NeurIPS 2018). A correct answer lists these with venues and does not invent papers or omit the authorship link.",
+    "sources": ["DBLP_conf_acl_GuLJOLSS24.pdf", "DBLP_conf_aplas_Solar-Lezama09.pdf", "DBLP_conf_iclr_LiWSZ0BM25.pdf", "DBLP_conf_cidr_CheungAMSM13.pdf", "DBLP_conf_emnlp_OlaussonGLZSTL23.pdf", "DBLP_conf_iclr_NyePBATS21.pdf", "DBLP_conf_nips_EllisRST18.pdf", "DBLP_conf_icml_PuMSK18.pdf", "DBLP_conf_nips_BastaniPS18.pdf"]
+  },
+  {
+    "question": "(Conversational follow-up in the same session, after a turn about LINC) Which two datasets did it evaluate on, and which model did it augment to beat GPT-4 with Chain-of-Thought?",
+    "grading_notes": "Tests conversation memory plus grounding: the system must resolve 'it' to LINC from the prior turn. Datasets: FOLIO and a balanced subset of ProofWriter. The augmented model was StarCoder+ (15.5B parameters), which with LINC outperformed GPT-4 with Chain-of-Thought by an absolute 10% (and GPT-3.5 by 38%) on ProofWriter. A failing system loses the referent or fabricates datasets/numbers.",
+    "sources": ["DBLP_conf_emnlp_OlaussonGLZSTL23.pdf"]
+  },
+  {
+    "question": "What benchmark results does the paper 'Quantum Sketching for Real-Time Ray Tracing' by Solar-Lezama (SIGGRAPH 2017) report?",
+    "grading_notes": "Out-of-corpus / hallucination guard: no such paper exists in the indexed collection. A correctly grounded system should state that it cannot find any paper by that title in the corpus and must NOT fabricate authors, a venue, results, or a benchmark. Inventing any details is a failure.",
+    "sources": []
+  },
+  {
+    "question": "In 'Is Self-Repair a Silver Bullet for Code Generation?' (Olausson et al., ICLR 2024), what is the main finding once the cost of performing repair is taken into account?",
+    "grading_notes": "The paper analyzes Code Llama, GPT-3.5, and GPT-4 on problems from HumanEval and APPS. Main finding: when the cost of carrying out repair is taken into account, performance gains from self-repair are often modest, vary a lot between subsets of the data, and are sometimes not present at all. Self-repair is therefore not the 'silver bullet' it is sometimes assumed to be.",
+    "sources": ["DBLP_conf_iclr_OlaussonIW0S24.pdf"]
+  },
+  {
+    "question": "According to 'Is Self-Repair a Silver Bullet for Code Generation?', what bottlenecks self-repair, and what evidence supports this?",
+    "grading_notes": "The authors hypothesize that self-repair is bottlenecked by the model's ability to provide feedback on (i.e., critique) its own code. Evidence: (1) using a stronger model to artificially boost the quality of the feedback yields substantially larger performance gains; (2) a small-scale study providing GPT-4 with feedback from human participants shows that even for the strongest models, self-repair still lags far behind what can be achieved with human-level debugging.",
+    "sources": ["DBLP_conf_iclr_OlaussonIW0S24.pdf"]
+  },
+  {
+    "question": "Describe the typical self-repair workflow as laid out in 'Is Self-Repair a Silver Bullet for Code Generation?'.",
+    "grading_notes": "The workflow: (1) a program is sampled from a code generation model; (2) the program is run on a suite of unit tests provided as part of the specification; (3) if the program fails any test, the error message and the faulty program are given to a feedback generation model, which outputs a short explanation of why the code failed; (4) the feedback is passed to a repair model, which generates a fixed version of the program. Models studied: Code Llama, GPT-3.5, GPT-4; benchmarks: HumanEval and APPS.",
+    "sources": ["DBLP_conf_iclr_OlaussonIW0S24.pdf"]
+  },
+  {
+    "question": "What is the EC2 algorithm in 'Library Learning for Neurally-Guided Bayesian Program Induction', and what does it learn?",
+    "grading_notes": "Ellis, Morales, Sablé-Meyer, Solar-Lezama, Tenenbaum (NeurIPS 2018). Successful program induction usually requires a hand-engineered domain-specific language (DSL). EC2 is a program induction algorithm that learns a DSL while jointly training a neural network to efficiently search for programs in the learned DSL. In other words, it learns a domain-specific library of reusable program components at the same time as it learns to search. It was used to synthesize functions on lists, edit text, and solve symbolic regression problems.",
+    "sources": ["DBLP_conf_nips_EllisMSST18.pdf"]
+  },
+  {
+    "question": "On which domains do the authors of 'Library Learning for Neurally-Guided Bayesian Program Induction' demonstrate EC2?",
+    "grading_notes": "Three domains: synthesizing functions on lists (list functions), editing text (text editing), and solving symbolic regression problems. In each domain the model learns a domain-specific library of program components for expressing solutions. The paper connects to practical program-induction systems such as FlashFill (embedded in Excel).",
+    "sources": ["DBLP_conf_nips_EllisMSST18.pdf"]
+  },
+  {
+    "question": "What does 'Program Synthesis from Polymorphic Refinement Types' (Polikarpova, Kuraj, Solar-Lezama; PLDI 2016) synthesize, and from what kind of specification?",
+    "grading_notes": "It presents a method for synthesizing recursive functions that provably satisfy a given specification expressed as a polymorphic refinement type. At the core is a new algorithm for refinement type checking that supports specification decomposition. (This system is known as Synquid.) The programmer provides a refinement-type signature, and the synthesizer produces a program guaranteed to meet it.",
+    "sources": ["DBLP_conf_pldi_PolikarpovaKS16.pdf"]
+  },
+  {
+    "question": "Why do the authors of 'Program Synthesis from Polymorphic Refinement Types' argue refinement types are especially well suited to program synthesis?",
+    "grading_notes": "Two reasons: (1) polymorphic refinement types offer a unique combination of expressive power and decidability, which enables automatic verification—and hence synthesis—of nontrivial programs; (2) a type-based specification can often be effectively decomposed into independent specifications for its components, so the synthesizer considers fewer component combinations, giving a combinatorial reduction in the size of the search space. The key to scalable synthesis is modular verification.",
+    "sources": ["DBLP_conf_pldi_PolikarpovaKS16.pdf"]
+  },
+  {
+    "question": "What did the evaluation in 'Program Synthesis from Polymorphic Refinement Types' show, and what kinds of programs could the tool synthesize?",
+    "grading_notes": "Evaluated on a large set of synthesis problems, the prototype exceeded the state of the art in both scalability and usability. It synthesized more complex programs than prior work—e.g., several sorting algorithms and operations on balanced search trees—as well as most benchmarks tackled by existing synthesizers, often starting from more concise and intuitive user input.",
+    "sources": ["DBLP_conf_pldi_PolikarpovaKS16.pdf"]
+  },
+  {
+    "question": "What is JoinABLe (Willis et al., CVPR 2022), and what accuracy does it report relative to human performance?",
+    "grading_notes": "JoinABLe is a learning-based method that assembles individual CAD parts together to form joints. It uses the weak supervision available in standard parametric CAD files, without object class labels or human guidance, making network predictions over a graph representation of solid models. It reports an accuracy of 79.53%, which approaches human performance (80%), outperforming multiple baseline methods.",
+    "sources": ["DBLP_conf_cvpr_WillisJCT0GSTLS22.pdf"]
+  },
+  {
+    "question": "What dataset does 'JoinABLe: Learning Bottom-up Assembly of Parametric CAD Joints' release, and what does it contain?",
+    "grading_notes": "The paper releases the Fusion 360 Gallery assembly dataset, containing assemblies with rich information on joints, contact surfaces, holes, and the underlying assembly graph structure. In CAD, joints are constraints that align pairs of parts and determine their relative pose and allowed degrees of freedom.",
+    "sources": ["DBLP_conf_cvpr_WillisJCT0GSTLS22.pdf"]
+  },
+  {
+    "question": "What is the key idea of 'Learning to Infer Program Sketches' (Nye, Hewitt, Tenenbaum, Solar-Lezama; ICML 2019)?",
+    "grading_notes": "The goal is to build systems that write code automatically from specifications humans can easily provide, such as examples and natural language. The key idea is that a flexible combination of pattern recognition and explicit reasoning can solve complex programming problems. The novel intermediate representation (program sketches—schematic outlines of full programs with holes) and training algorithm let a synthesis system learn, without direct supervision, when to rely on pattern recognition (neural) and when to perform symbolic search.",
+    "sources": ["DBLP_conf_icml_NyeHTS19.pdf"]
+  },
+  {
+    "question": "What performance does 'Learning to Infer Program Sketches' claim relative to pure neural synthesis and pure symbolic search?",
+    "grading_notes": "The model matches the memorization performance of neural synthesis and the generalization performance of symbolic search, respectively, and achieves state-of-the-art performance on a dataset of simple English description-to-code programming problems. The intermediate program-sketch representation is what allows it to dynamically integrate the two types of information.",
+    "sources": ["DBLP_conf_icml_NyeHTS19.pdf"]
+  },
+  {
+    "question": "What is LiveCodeBench (Jain et al., ICLR 2025) and which platforms does it draw problems from?",
+    "grading_notes": "LiveCodeBench is a comprehensive, contamination-free evaluation of LLMs for code. It continuously collects new problems over time from contests across three competition platforms: LeetCode, AtCoder, and Codeforces. It was motivated by the observation that existing benchmarks (e.g., HumanEval, MBPP) suffer from data contamination, overfitting, saturation, and a narrow focus on code generation.",
+    "sources": ["DBLP_conf_iclr_JainHGLYZWSSS25.pdf"]
+  },
+  {
+    "question": "Beyond code generation, what capabilities does LiveCodeBench evaluate, and how large is it?",
+    "grading_notes": "LiveCodeBench evaluates a broader range of code-related capabilities such as self-repair, code execution, and test output prediction, beyond just code generation. It hosts over six hundred coding problems published between May 2023 and August 2024, and the authors evaluate over 50 LLMs—the largest evaluation study of code LLMs on competition problems.",
+    "sources": ["DBLP_conf_iclr_JainHGLYZWSSS25.pdf"]
+  },
+  {
+    "question": "How does LiveCodeBench detect and avoid data contamination?",
+    "grading_notes": "By using time-segmented evaluations: because each problem is tagged with a release date, models can be evaluated only on problems published after their training cutoff date. The authors show a stark performance drop for models (e.g., DeepSeek, GPT-4-O, Claude) on problems released after their cutoff, revealing contamination; evaluating only on post-cutoff time windows is a robust way to evade it.",
+    "sources": ["DBLP_conf_iclr_JainHGLYZWSSS25.pdf"]
+  },
+  {
+    "question": "What does 'Unsupervised Learning by Program Synthesis' (Ellis, Solar-Lezama, Tenenbaum; NeurIPS 2015) propose, and on what domains is it evaluated?",
+    "grading_notes": "It introduces an unsupervised learning algorithm that combines probabilistic modeling with solver-based techniques for program synthesis, learning programs from noisy observations without explicit input/output examples. Domains: a visual learning domain (learning many visual concepts from only a few examples) and a language learning problem (recovering some English inflectional morphology). It gives a new approach to unsupervised learning of symbolic compositional structures and a technique for applying program synthesis tools to noisy data.",
+    "sources": ["DBLP_conf_nips_EllisST15.pdf"]
+  },
+  {
+    "question": "What problem does 'Synthesizing Programmatic Policies that Inductively Generalize' (Inala et al., ICLR 2020) address, and what representation does it use?",
+    "grading_notes": "Deep RL policies typically struggle to generalize to novel environments. The paper proposes learning programmatic state machine policies that capture repeating behaviors, giving them the ability to generalize to instances requiring an arbitrary number of repetitions—a property the authors call inductive generalization. State machine policies mix continuous and discrete structure, making them hard to learn. Traditional neural network policies fail to inductively generalize on these tasks.",
+    "sources": ["DBLP_conf_iclr_InalaBTS20.pdf"]
+  },
+  {
+    "question": "What is 'adaptive teaching' in 'Synthesizing Programmatic Policies that Inductively Generalize'?",
+    "grading_notes": "Adaptive teaching is the learning framework the paper proposes for learning a state machine policy by imitating a teacher. Unlike traditional imitation learning, the teacher adaptively updates itself based on the structure of the student (the programmatic state machine being learned). This lets the algorithm learn policies that inductively generalize to novel environments where traditional neural network policies do not.",
+    "sources": ["DBLP_conf_iclr_InalaBTS20.pdf"]
+  },
+  {
+    "question": "What is probabilistic angelic nondeterminism (PAN) in the ENCOMPASS paper (Li et al.), and what does it disentangle?",
+    "grading_notes": "ENCOMPASS: Enhancing Agent Programming with Search Over Program Execution Paths (Li, Solar-Lezama, Yue, Zheng). Current approaches to agent programming often entangle two aspects of agent design: the core workflow logic and the inference-time strategy (e.g., tree search). PAN is a programming model that disentangles these two concerns, letting the programmer describe the agent workflow and independently experiment with different inference-time strategies by simply changing a few inputs.",
+    "sources": ["conf_nips_li2025encompass.pdf"]
+  },
+  {
+    "question": "How is PAN implemented in the ENCOMPASS framework, and what did the authors demonstrate?",
+    "grading_notes": "ENCOMPASS provides an implementation of PAN in Python: it uses a Python decorator to compile agent workflow programs into a search space. The authors present three case studies showing how the framework lets a programmer quickly improve the reliability of an agent and easily switch between different inference-time strategies (such as best-of-N sampling, refinement, and tree search) with little additional coding. It is meant to be used alongside (not replace) prompting/tool-use frameworks like LangChain or DSPy.",
+    "sources": ["conf_nips_li2025encompass.pdf"]
+  },
+  {
+    "question": "What problem does 'Sampling for Bayesian Program Learning' (Ellis, Solar-Lezama, Tenenbaum; NeurIPS 2016) introduce, and how does its algorithm work?",
+    "grading_notes": "It introduces the problem of sampling programs from posterior distributions conditioned on data. The proposed algorithm uses a symbolic solver to efficiently sample programs, combining constraint-based program synthesis with sampling via random parity constraints (random projections). This yields samples from a distribution provably arbitrarily close to the true posterior. The system is called PROGRAM SAMPLE.",
+    "sources": ["DBLP_conf_nips_EllisST16.pdf"]
+  },
+  {
+    "question": "What guarantees and evaluation does 'Sampling for Bayesian Program Learning' report?",
+    "grading_notes": "The paper gives theoretical guarantees on how well the samples approximate the true posterior (samples come from a distribution provably arbitrarily close to the true posterior), and reports empirical results showing the algorithm is efficient in practice. It is evaluated on 22 program learning problems in the domains of text editing and computer-aided programming (e.g., string manipulation and list routines such as counting and recursively sorting/reversing lists).",
+    "sources": ["DBLP_conf_nips_EllisST16.pdf"]
+  },
+  {
+    "question": "Quote, word for word, the first sentence of the abstract of 'Is Self-Repair a Silver Bullet for Code Generation?'.",
+    "grading_notes": "Verbatim first sentence: 'Large language models have shown remarkable aptitude in code generation, but still struggle to perform complex tasks.' The abstract then defines self-repair as the setting in which the model debugs and repairs its own code. Authors: Olausson, Inala, Wang, Gao, Solar-Lezama (ICLR 2024).",
+    "sources": ["DBLP_conf_iclr_OlaussonIW0S24.pdf"]
+  },
+  {
+    "question": "Quote the opening sentence of the abstract of the LiveCodeBench paper and name the three competition platforms it uses.",
+    "grading_notes": "Verbatim opening sentence: 'Large Language Models (LLMs) applied to code-related applications have emerged as a prominent field, attracting significant interest from academia and industry.' The three competition platforms are LeetCode, AtCoder, and Codeforces. Answer must not fabricate a different first sentence or additional platforms.",
+    "sources": ["DBLP_conf_iclr_JainHGLYZWSSS25.pdf"]
+  },
+  {
+    "question": "Which papers in the corpus study the limitations of code language models, and what does each conclude? Cite them.",
+    "grading_notes": "Three related papers, all involving Solar-Lezama and overlapping authors (e.g., Gu, Olausson, Jain): (1) The Counterfeit Conundrum (ACL 2024)—code models have a shallow understanding of their own incorrect ('counterfeit') generations, misclassifying, mis-executing, and poorly repairing them; (2) Is Self-Repair a Silver Bullet for Code Generation? (ICLR 2024)—self-repair gives only modest, inconsistent gains once cost is accounted for, bottlenecked by the model's feedback quality; (3) LiveCodeBench (ICLR 2025)—standard benchmarks are contaminated/saturated, so a contamination-free, time-segmented, holistic benchmark is needed. A good answer attributes each conclusion to the correct paper.",
+    "sources": ["DBLP_conf_acl_GuLJOLSS24.pdf", "DBLP_conf_iclr_OlaussonIW0S24.pdf", "DBLP_conf_iclr_JainHGLYZWSSS25.pdf"]
+  },
+  {
+    "question": "Trace how Kevin Ellis and collaborators' Bayesian/solver-based program-learning line of work evolves across the collection, citing the papers.",
+    "grading_notes": "Three papers form a progression: (1) Unsupervised Learning by Program Synthesis (NeurIPS 2015)—combine probabilistic modeling with solver-based synthesis to learn programs from noisy data without explicit I/O examples (vision + morphology); (2) Sampling for Bayesian Program Learning (NeurIPS 2016, PROGRAM SAMPLE)—sample programs from posteriors using a symbolic solver plus random parity constraints, with guarantees, on text-editing/CAP problems; (3) Library Learning for Neurally-Guided Bayesian Program Induction (NeurIPS 2018, EC2)—jointly learn a DSL/library and a neural network to guide search, over lists/text-editing/symbolic-regression. A good answer shows the trend from solver-based Bayesian synthesis toward jointly learning a library and neural search guidance.",
+    "sources": ["DBLP_conf_nips_EllisST15.pdf", "DBLP_conf_nips_EllisST16.pdf", "DBLP_conf_nips_EllisMSST18.pdf"]
+  },
+  {
+    "question": "Two papers in the collection learn structured, verifiable, or generalizable policies for reinforcement learning instead of plain neural networks. Compare their approaches and cite each.",
+    "grading_notes": "(1) Verifiable Reinforcement Learning via Policy Extraction (Bastani, Pu, Solar-Lezama; NeurIPS 2018)—VIPER distills a DNN oracle and its Q-function into a decision tree policy via model compression + imitation learning, so the policy is highly structured and efficiently verifiable (robust Pong, never-losing toy Pong, stable cart-pole). (2) Synthesizing Programmatic Policies that Inductively Generalize (Inala et al.; ICLR 2020)—learns programmatic state machine policies via 'adaptive teaching' to achieve inductive generalization (arbitrary repetitions) where neural policies fail. Both replace opaque neural policies with structured programmatic representations, but for different ends: VIPER for verifiability, Inala et al. for inductive generalization.",
+    "sources": ["DBLP_conf_nips_BastaniPS18.pdf", "DBLP_conf_iclr_InalaBTS20.pdf"]
+  },
+  {
+    "question": "Several papers use the notion of a 'sketch' or partial program with holes. Compare how sketching appears across the collection and cite each paper.",
+    "grading_notes": "(1) The Sketching Approach to Program Synthesis (Solar-Lezama, APLAS 2009)—the programmer writes a sketch, a partial program with holes encoding solution structure, and a synthesizer fills the holes to satisfy a reference implementation or tests. (2) Learning to Infer Program Sketches (Nye et al., ICML 2019)—a neural network learns to output program sketches from a spec, deciding when to use pattern recognition vs. symbolic search, and candidate sketches are completed by symbolic synthesis. (3) Representing Partial Programs with Blended Abstract Semantics (Nye et al., ICLR 2021)—represents the behavior of partial programs (with unfinished holes) using learned approximate ('blended') semantics to guide search. A good answer connects all three to the shared idea of holes/partial programs while noting the shift from purely symbolic hole-filling to learned inference and representation of partial programs.",
+    "sources": ["DBLP_conf_aplas_Solar-Lezama09.pdf", "DBLP_conf_icml_NyeHTS19.pdf", "DBLP_conf_iclr_NyePBATS21.pdf"]
+  },
+  {
+    "question": "(Conversational follow-up after a turn about JoinABLe) What dataset did that paper release, and what structural information does it record?",
+    "grading_notes": "Tests conversation memory: the system must resolve 'that paper' to JoinABLe (Willis et al., CVPR 2022). It released the Fusion 360 Gallery assembly dataset, which records assemblies with rich information on joints, contact surfaces, holes, and the underlying assembly graph structure. A failing system loses the referent or invents a different dataset.",
+    "sources": ["DBLP_conf_cvpr_WillisJCT0GSTLS22.pdf"]
+  },
+  {
+    "question": "Summarize the key results of 'RefineFill: Retrieval-Augmented Refinement Types for Neural Program Repair' (Polikarpova & Gu, POPL 2022), including its reported repair accuracy.",
+    "grading_notes": "Out-of-corpus / hallucination guard: no such paper exists in the indexed collection (the title, author pairing, venue, and 'repair accuracy' are fabricated). A correctly grounded system should state that it cannot find any paper by that title in the corpus and must NOT invent authors, a venue, methods, or an accuracy number. Producing any specific result is a failure.",
+    "sources": []
+  }
+]
