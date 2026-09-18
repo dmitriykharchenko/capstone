@@ -1,3 +1,25 @@
+//! Exact native squared-L2 retrieval with app-owned, versioned SQLite storage.
+//!
+//! Prepare operations without publication, then apply a whole batch once. `apply`
+//! seals its token at its ONE final COMMIT. Never reuse that token for another
+//! paper/store, or replace it with an unlinked token to evade cancellation.
+//! Cross-store publication/reconciliation belongs to the indexing coordinator.
+//! Synchronous store methods must run on a joined blocking worker; `NativeRetriever`
+//! provides that boundary for the async trait and service operations.
+mod ranking;
+mod service;
+mod store;
+mod types;
+
+pub use ranking::{bm25_scores, hybrid_scores, similarity, squared_l2, tokenize};
+pub use service::{HistorySearchRequest, NativeRetriever};
+pub use store::VectorStore;
+pub use types::{
+    EmbeddedChunk, EmbeddingIdentity, IndexSnapshot, IndexStatus, LexicalStatus, PaperMatch,
+    PreparedExchange, PreparedOperation, PreparedPaper, PreparedReset, RetrievalError,
+    RetrievalResult, SearchRequest,
+};
+
 use crate::{
     domain::{Chunk, RetrievalScope, RetrievalStrategy},
     registry::BackendFuture,
