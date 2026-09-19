@@ -5,13 +5,17 @@ use serde_json::{Value, json};
 
 use crate::{
     protocol::{ErrorCode, MAX_ACTIVE_REQUESTS, MAX_FRAME_BYTES, MAX_SESSION_REQUESTS, VERSION},
-    runtime::RequestContext,
+    runtime::{CancellationMode, RequestContext},
 };
 
 pub type BackendResult<T> = Result<T, ErrorCode>;
 pub type BackendFuture<T> = Pin<Box<dyn Future<Output = BackendResult<T>> + Send + 'static>>;
 
 pub trait CommandHandler: Send + Sync {
+    fn cancellation_mode(&self) -> CancellationMode {
+        CancellationMode::Immediate
+    }
+
     fn call(&self, params: Value, context: RequestContext) -> BackendFuture<Value>;
 }
 

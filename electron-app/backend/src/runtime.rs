@@ -26,12 +26,28 @@ use crate::{
     registry::{BackendResult, Registry},
 };
 
+mod operation_group;
+use operation_group::CancellationLink;
+pub use operation_group::{CompletionPermit, Finalization, OperationGroup, ResetStep};
+
+/// Immediate is the unchanged abort-and-drain contract. Cooperative handlers must
+/// supervise their work with an operation group and explicitly resolve cleanup.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CancellationMode {
+    #[default]
+    Immediate,
+    Cooperative,
+}
+
 const CANCELLABLE: u8 = 0;
 const CANCELLED: u8 = 1;
 const COMMITTING: u8 = 2;
 
 #[derive(Clone, Default)]
-pub struct Cancellation(Arc<AtomicU8>);
+pub struct Cancellation {
+    state: Arc<AtomicU8>,
+    link: Option<CancellationLink>,
+}
 
 /// Proof that this request won its one-way final-commit boundary.
 ///
@@ -46,7 +62,7 @@ pub struct CommitPermit {
 
 impl Cancellation {
     pub fn check(&self) -> BackendResult<()> {
-        if self.0.load(Ordering::Acquire) == CANCELLED {
+        if self.state.load(Ordering::Acquire) == CANCELLED {
             Err(ErrorCode::Cancelled)
         } else {
             Ok(())
@@ -55,10 +71,23 @@ impl Cancellation {
 
     /// Signal cancellation, returning whether cancellation has won. Idempotent;
     /// returns false once final commit is sealed. Also usable by native tests.
+    /// Linked preparation signals stop the whole cooperative group. Its tracked
+    /// compensation/reset children refuse cancellation even before their seal.
     pub fn cancel(&self) -> bool {
+        if let Some(link) = &self.link {
+            return link.cancel(&self.state);
+        }
+        self.cancel_unlinked()
+    }
+
+    fn cancel_unlinked(&self) -> bool {
         matches!(
-            self.0
-                .compare_exchange(CANCELLABLE, CANCELLED, Ordering::AcqRel, Ordering::Acquire),
+            self.state.compare_exchange(
+                CANCELLABLE,
+                CANCELLED,
+                Ordering::AcqRel,
+                Ordering::Acquire
+            ),
             Ok(_) | Err(CANCELLED)
         )
     }
@@ -71,8 +100,17 @@ impl Cancellation {
     /// Join offloaded native work and return the real result/error. Do not detach
     /// it, retry a mutation on transport loss, or use this seal for intermediate
     /// indexing transactions: partial-progress cancellation is a domain contract.
+    /// Cooperative preparation signals cannot seal; use a group's linked child
+    /// for each intermediate store transaction and seal_completion for the job.
     pub fn begin_commit(&self) -> BackendResult<CommitPermit> {
-        self.0
+        if let Some(link) = &self.link {
+            return link.begin_commit(&self.state);
+        }
+        self.begin_commit_unlinked()
+    }
+
+    fn begin_commit_unlinked(&self) -> BackendResult<CommitPermit> {
+        self.state
             .compare_exchange(CANCELLABLE, COMMITTING, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| CommitPermit { _private: () })
             .map_err(|state| {
@@ -85,7 +123,7 @@ impl Cancellation {
     }
 
     fn is_committing(&self) -> bool {
-        self.0.load(Ordering::Acquire) == COMMITTING
+        self.state.load(Ordering::Acquire) == COMMITTING
     }
 }
 
@@ -97,12 +135,20 @@ pub struct RequestContext {
     id: String,
     streaming: bool,
     cancellation: Cancellation,
+    group: Option<OperationGroup>,
     messages: mpsc::Sender<WorkerMessage>,
 }
 
 impl RequestContext {
     pub fn cancellation(&self) -> Cancellation {
         self.cancellation.clone()
+    }
+
+    /// The same request-owned group on each call; unavailable to Immediate handlers.
+    /// In Cooperative mode cancellation() is a preparation stop signal, not a
+    /// final-commit capability. All offloaded work must use the group's run_* APIs.
+    pub fn operation_group(&self) -> BackendResult<OperationGroup> {
+        self.group.clone().ok_or(ErrorCode::Internal)
     }
 
     pub async fn emit(&self, event: &'static str, data: Value) -> BackendResult<()> {
@@ -141,12 +187,15 @@ struct Active {
     seq: u64,
     cancellation: Cancellation,
     abort: AbortHandle,
+    group: Option<OperationGroup>,
 }
 
 impl Active {
     fn cancel(&self) -> bool {
         if self.cancellation.cancel() {
-            self.abort.abort();
+            if self.group.is_none() {
+                self.abort.abort();
+            }
             true
         } else {
             false
@@ -188,8 +237,11 @@ fn error_body(code: ErrorCode) -> OutputBody {
     OutputBody::Error { error: code.into() }
 }
 
-fn terminal_body(result: BackendResult<Value>, cancellation: &Cancellation) -> OutputBody {
-    if cancellation.check().is_err() {
+fn terminal_body(result: BackendResult<Value>, job: &Active) -> OutputBody {
+    let cancellation = &job.cancellation;
+    // Cooperative finish() already checked worker ownership and cleanup outcome.
+    // In particular, a stop signal must never erase a cleanup/storage/panic error.
+    if job.group.is_none() && cancellation.check().is_err() {
         return OutputBody::Cancelled;
     }
     match result {
@@ -299,8 +351,9 @@ where
                                 continue;
                             }
                         };
-                        let cancellation = Cancellation::default();
-                        let context = RequestContext { id: id.clone(), streaming: registry.is_streaming(&command), cancellation: cancellation.clone(), messages: messages.clone() };
+                        let group = (handler.cancellation_mode() == CancellationMode::Cooperative).then(OperationGroup::new);
+                        let cancellation = group.as_ref().map_or_else(Cancellation::default, OperationGroup::preparation_stop);
+                        let context = RequestContext { id: id.clone(), streaming: registry.is_streaming(&command), cancellation: cancellation.clone(), group: group.clone(), messages: messages.clone() };
                         let sender = messages.clone();
                         let request_id = id.clone();
                         let (abort, registration) = AbortHandle::new_pair();
@@ -311,6 +364,7 @@ where
                         // Abortable drops immediately without weakening arbitrary
                         // injected handlers' cancellation. The blocking JoinHandle
                         // itself is NEVER aborted or detached on graceful shutdown.
+                        let supervisor = group.clone();
                         let task = tokio::task::spawn_blocking(move || {
                             let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
                                 runtime.block_on(Abortable::new(async {
@@ -318,6 +372,10 @@ where
                                 }, registration))
                             })).unwrap_or(Ok(Err(ErrorCode::Internal)))
                                 .unwrap_or(Err(ErrorCode::Cancelled));
+                            let outcome = match supervisor {
+                                Some(group) => group.finish(outcome),
+                                None => outcome,
+                            };
                             // Bound retained worker results before queueing them, not
                             // merely when stdout eventually becomes writable.
                             outcome.and_then(|data| {
@@ -332,7 +390,7 @@ where
                             // is consumed before this sole, post-teardown terminal.
                             let _ = sender.send(WorkerMessage::Finished(request_id, outcome)).await;
                         });
-                        active.insert(id, Active { seq: 0, cancellation, abort });
+                        active.insert(id, Active { seq: 0, cancellation, abort, group });
                     }
                 }
             }
@@ -346,7 +404,7 @@ where
                     }
                     WorkerMessage::Finished(id, result) => {
                         if let Some(job) = active.remove(&id) {
-                            let body = terminal_body(result, &job.cancellation);
+                            let body = terminal_body(result, &job);
                             write_output(&mut writer, Output::request(&id, job.seq, body)).await?;
                         }
                     }
@@ -382,7 +440,7 @@ where
             }
             WorkerMessage::Finished(id, result) => {
                 if let Some(job) = active.remove(&id) {
-                    let body = terminal_body(result, &job.cancellation);
+                    let body = terminal_body(result, &job);
                     publish_if_connected(
                         &mut writer,
                         Output::request(&id, job.seq, body),
