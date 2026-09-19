@@ -7,6 +7,7 @@
 mod identity;
 mod metadata;
 mod publication;
+mod recovery;
 mod store;
 mod transaction;
 mod types;
@@ -16,6 +17,7 @@ pub use metadata::{
     MAX_METADATA_TEXT_CHARS, METADATA_SYSTEM_PROMPT, MetadataError, PaperMetadata,
     PaperMetadataExtractor, parse_metadata_output,
 };
+pub use recovery::{MAX_GRAPH_ARTIFACT_BYTES, MAX_RECOVERY_NODES, PaperRecoveryArtifact};
 pub use store::CozoGraphStore;
 pub use types::*;
 

@@ -2,11 +2,13 @@ pub mod chunking;
 mod extraction;
 mod repository;
 mod safe_root;
+mod snapshot;
 
 pub use extraction::{ExtractedPage, MAX_EXTRACTED_BYTES, MAX_PDF_PAGES, extract_pdf_pages};
 pub use repository::{
     NativePaperRepository, PaperCommand, PaperCommandHandler, PaperRequest, PdfChunk,
 };
+pub use snapshot::{PaperSourceSnapshot, SourceIdentity};
 
 use crate::{
     domain::{Chunk, PaperInfo, PdfInfo},

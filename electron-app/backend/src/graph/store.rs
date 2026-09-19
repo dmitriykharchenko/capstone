@@ -69,11 +69,19 @@ struct OpenGraph {
     db: DbInstance,
     _lock: File,
 }
+#[cfg(test)]
+type SnapshotHook = Arc<dyn Fn(&Cancellation) + Send + Sync>;
+#[cfg(test)]
+type RestoreHook = Arc<dyn Fn(bool, &Cancellation) + Send + Sync>;
 /// One SQLite-backed Cozo handle, serialized within this process and exclusively
 /// locked across processes. Clones share lifecycle; close closes all clones.
 #[derive(Clone)]
 pub struct CozoGraphStore {
     inner: Arc<Mutex<Option<OpenGraph>>>,
+    #[cfg(test)]
+    snapshot_hook: Option<SnapshotHook>,
+    #[cfg(test)]
+    restore_hook: Option<RestoreHook>,
 }
 
 impl CozoGraphStore {
@@ -108,6 +116,10 @@ impl CozoGraphStore {
             check(&c)?;
             Ok(Self {
                 inner: Arc::new(Mutex::new(Some(OpenGraph { db, _lock: lock }))),
+                #[cfg(test)]
+                snapshot_hook: None,
+                #[cfg(test)]
+                restore_hook: None,
             })
         })
         .await
@@ -170,6 +182,59 @@ impl CozoGraphStore {
         self.apply(vec![GraphOperation::Reset], cancellation).await
     }
 
+    /// Conditional exact single-paper restoration, not arbitrary compensation.
+    /// Shared-label conflicts and malformed affected state fail before staging.
+    /// Check, stage and final seal share one joined transaction/store lock; there
+    /// is deliberately no recovery-to-batch conversion that bypasses this guard.
+    /// Existing apply/Replace behavior is unchanged. A later ordinary writer may
+    /// change shared labels again; cross-paper recovery authority remains external.
+    pub async fn restore_paper(
+        &self,
+        artifact: PaperRecoveryArtifact,
+        cancellation: Cancellation,
+    ) -> GraphResult<()> {
+        let operation = artifact.restore_operation()?;
+        let this = self.clone();
+        joined(cancellation, move |c| {
+            let guard = this.inner.lock().map_err(|_| GraphError::Storage)?;
+            let graph = guard.as_ref().ok_or(GraphError::Closed)?;
+            check(&c)?;
+            let tx = Transaction::new(&graph.db, true);
+            let current = read_recovery(&tx, artifact.paper_id(), &c, || {})?;
+            let mut affected = BTreeMap::new();
+            for paper in [current.paper(), artifact.paper()].into_iter().flatten() {
+                for a in &paper.authors {
+                    affected.insert((true, a.author_id.clone()), a.name.clone());
+                }
+                for t in &paper.topics {
+                    affected.insert((false, t.topic_id.clone()), t.name.clone());
+                }
+            }
+            for ((author, id), name) in &affected {
+                guard_recovery_node(&tx, artifact.paper_id(), *author, id, name, &c)?;
+            }
+            #[cfg(test)]
+            if let Some(hook) = &this.restore_hook {
+                hook(false, &c);
+            }
+            stage(&tx, operation, &c)?;
+            // Unlike ordinary apply, do not clean unrelated global orphan nodes.
+            for (author, id) in affected.keys() {
+                let script = if *author {
+                    "?[author_id] := *author{author_id}, author_id = $id, not *authored_by{author_id} :rm author {author_id}"
+                } else {
+                    "?[topic_id] := *topic{topic_id}, topic_id = $id, not *has_topic{topic_id} :rm topic {topic_id}"
+                };
+                tx.run(script, params(json!({"id": id})), &c)?;
+            }
+            #[cfg(test)]
+            if let Some(hook) = &this.restore_hook {
+                hook(true, &c);
+            }
+            tx.commit(&c)
+        }).await
+    }
+
     pub async fn query_typed(
         &self,
         query: GraphQuery,
@@ -190,6 +255,33 @@ impl CozoGraphStore {
                 available: true,
                 data,
             })
+        })
+        .await
+    }
+    /// Read raw paper/edge/node relations in ONE joined transaction. Missing
+    /// joins, wrong normalized names or invalid canonical identities are errors,
+    /// never silently omitted or repaired. No display DTO/count is recovery truth.
+    pub async fn observe_paper(
+        &self,
+        paper_id: String,
+        cancellation: Cancellation,
+    ) -> GraphResult<PaperRecoveryArtifact> {
+        super::recovery::canonical_id(&paper_id)?;
+        let this = self.clone();
+        joined(cancellation, move |c| {
+            let guard = this.inner.lock().map_err(|_| GraphError::Storage)?;
+            let graph = guard.as_ref().ok_or(GraphError::Closed)?;
+            check(&c)?;
+            let tx = Transaction::new(&graph.db, false);
+            let artifact = read_recovery(&tx, &paper_id, &c, || {
+                #[cfg(test)]
+                if let Some(hook) = &this.snapshot_hook {
+                    hook(&c);
+                }
+            })?;
+            tx.abort()?;
+            check(&c)?;
+            Ok(artifact)
         })
         .await
     }
@@ -432,6 +524,165 @@ fn strings(rows: NamedRows) -> GraphResult<Vec<Vec<String>>> {
         })
         .collect()
 }
+fn read_recovery(
+    tx: &Transaction,
+    id: &str,
+    c: &Cancellation,
+    after_title: impl FnOnce(),
+) -> GraphResult<PaperRecoveryArtifact> {
+    let rows = strings(tx.run(
+        "?[title] := *paper{paper_id: $id, title}",
+        params(json!({"id": id})),
+        c,
+    )?)?;
+    after_title();
+    let a = recovery_nodes(tx, id, true, c)?;
+    let t = recovery_nodes(tx, id, false, c)?;
+    let paper = match rows.as_slice() {
+        [] if a.is_empty() && t.is_empty() => None,
+        [row] if row.len() == 1 => Some(PaperGraph {
+            paper_id: id.into(),
+            title: row[0].clone(),
+            authors: authors(a),
+            topics: topics(t),
+        }),
+        _ => return Err(GraphError::InvalidSchema),
+    };
+    PaperRecoveryArtifact::from_observed(id.into(), paper).map_err(|e| {
+        if e == GraphError::ArtifactTooLarge {
+            e
+        } else {
+            GraphError::InvalidSchema
+        }
+    })
+}
+
+fn guard_recovery_node(
+    tx: &Transaction,
+    paper: &str,
+    author: bool,
+    id: &str,
+    desired_name: &str,
+    c: &Cancellation,
+) -> GraphResult<()> {
+    let (node, edges, papers, kind) = if author {
+        (
+            "?[name, normalized_name] := *author{author_id: $id, name, normalized_name}",
+            "?[paper_id] := *authored_by{author_id: $id, paper_id} :limit 4097",
+            "?[paper_id, title] := *authored_by{author_id: $id, paper_id}, *paper{paper_id, title} :limit 4097",
+            NodeKind::Author,
+        )
+    } else {
+        (
+            "?[name, normalized_name] := *topic{topic_id: $id, name, normalized_name}",
+            "?[paper_id] := *has_topic{topic_id: $id, paper_id} :limit 4097",
+            "?[paper_id, title] := *has_topic{topic_id: $id, paper_id}, *paper{paper_id, title} :limit 4097",
+            NodeKind::Topic,
+        )
+    };
+    let nodes = strings(tx.run(node, params(json!({"id":id})), c)?)?;
+    let edges = strings(tx.run(edges, params(json!({"id":id})), c)?)?;
+    let papers = strings(tx.run(papers, params(json!({"id":id})), c)?)?;
+    if edges.len() > MAX_RECOVERY_NODES || papers.len() > MAX_RECOVERY_NODES {
+        return Err(GraphError::ArtifactTooLarge);
+    }
+    let mut incident = BTreeSet::new();
+    let mut shared = false;
+    for row in edges {
+        match row.as_slice() {
+            [id] if super::recovery::canonical_id(id).is_ok() && incident.insert(id.clone()) => {
+                shared |= id != paper;
+            }
+            _ => return Err(GraphError::InvalidSchema),
+        }
+    }
+    let has_edges = !incident.is_empty();
+    for row in papers {
+        match row.as_slice() {
+            [id, title]
+                if incident.remove(id)
+                    && title.len() <= 4096
+                    && super::identity::compact(title).is_ok_and(|s| s == *title) => {}
+            _ => return Err(GraphError::InvalidSchema),
+        }
+    }
+    if !incident.is_empty() {
+        return Err(GraphError::InvalidSchema);
+    }
+    match nodes.as_slice() {
+        [] if !has_edges => Ok(()),
+        [row] => match row.as_slice() {
+            [name, normalized]
+                if name.len() <= 4096
+                    && super::identity::compact(name).is_ok_and(|s| s == *name)
+                    && normalize_node_name(name).is_ok_and(|s| s == *normalized)
+                    && stable_node_id(kind, name).is_ok_and(|s| s == id) =>
+            {
+                if shared && name != desired_name {
+                    Err(GraphError::SharedNodeConflict)
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Err(GraphError::InvalidSchema),
+        },
+        _ => Err(GraphError::InvalidSchema),
+    }
+}
+
+fn recovery_nodes(
+    tx: &Transaction,
+    id: &str,
+    author: bool,
+    c: &Cancellation,
+) -> GraphResult<Vec<(String, String)>> {
+    let (edges, nodes) = if author {
+        (
+            "?[node] := *authored_by{paper_id: $id, author_id: node} :limit 4097",
+            "?[node, name, normalized_name] := *authored_by{paper_id: $id, author_id: node}, *author{author_id: node, name, normalized_name} :limit 4097",
+        )
+    } else {
+        (
+            "?[node] := *has_topic{paper_id: $id, topic_id: node} :limit 4097",
+            "?[node, name, normalized_name] := *has_topic{paper_id: $id, topic_id: node}, *topic{topic_id: node, name, normalized_name} :limit 4097",
+        )
+    };
+    let edges = strings(tx.run(edges, params(json!({"id": id})), c)?)?;
+    let nodes = strings(tx.run(nodes, params(json!({"id": id})), c)?)?;
+    if edges.len() > MAX_RECOVERY_NODES || nodes.len() > MAX_RECOVERY_NODES {
+        return Err(GraphError::ArtifactTooLarge);
+    }
+    let mut edge_ids = BTreeSet::new();
+    for row in edges {
+        match row.as_slice() {
+            [id] if edge_ids.insert(id.clone()) => {}
+            _ => return Err(GraphError::InvalidSchema),
+        }
+    }
+    let mut result = Vec::new();
+    for row in nodes {
+        match row.as_slice() {
+            [id, name, normalized]
+                if edge_ids.remove(id)
+                    && normalize_node_name(name).is_ok_and(|n| n == *normalized) =>
+            {
+                result.push((id.clone(), name.clone()));
+            }
+            _ => return Err(GraphError::InvalidSchema),
+        }
+    }
+    if !edge_ids.is_empty() {
+        return Err(GraphError::InvalidSchema);
+    }
+    // Validation above makes this fallible normalization safe, without a default
+    // fallback that might hide corruption as the display query helpers can.
+    let mut keyed = result
+        .into_iter()
+        .map(|(id, name)| Ok((normalize_node_name(&name)?, id, name)))
+        .collect::<GraphResult<Vec<_>>>()?;
+    keyed.sort();
+    Ok(keyed.into_iter().map(|(_, id, name)| (id, name)).collect())
+}
 fn pairs(
     tx: &Transaction,
     script: &str,
@@ -648,6 +899,10 @@ fn neighborhood(
         edges,
     })
 }
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {

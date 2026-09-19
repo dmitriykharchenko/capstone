@@ -70,6 +70,15 @@ impl NativeRetriever {
     pub async fn status(&self, c: Cancellation) -> RetrievalResult<IndexStatus> {
         Ok(self.snapshot(c).await?.status)
     }
+    /// Coherent recovery observation using the same cancellation/drop-join owner.
+    pub async fn observe_paper(
+        &self,
+        paper_id: String,
+        c: Cancellation,
+    ) -> RetrievalResult<super::PaperObservation> {
+        let store = self.store.clone();
+        blocking(c, move |c| store.observe_paper(&paper_id, &c)).await
+    }
     pub async fn apply(
         &self,
         operations: Vec<PreparedOperation>,

@@ -17,6 +17,10 @@ pub enum RetrievalError {
     History,
     Provider,
     Conflict,
+    UnsupportedArtifact,
+    InvalidArtifact,
+    ArtifactTooLarge,
+    DigestMismatch,
 }
 pub type RetrievalResult<T> = Result<T, RetrievalError>;
 impl std::fmt::Display for RetrievalError {

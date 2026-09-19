@@ -2,6 +2,7 @@ use std::{io::Read, path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use super::{
     chunking::{DEFAULT_MAX_CHUNK_BYTES, split_into_paragraphs, split_oversized_chunk},
@@ -56,6 +57,15 @@ impl NativePaperRepository {
         paper_id: &str,
         cancellation: &Cancellation,
     ) -> PaperResult<Vec<u8>> {
+        Ok(self.capture(paper_id, cancellation, || {})?.0)
+    }
+
+    fn capture(
+        &self,
+        paper_id: &str,
+        cancellation: &Cancellation,
+        after_read: impl FnOnce(),
+    ) -> PaperResult<(Vec<u8>, SourceIdentity)> {
         check(cancellation)?;
         let mut file = self.root.open(paper_id)?;
         let before = file.metadata().map_err(|_| PaperError::Io)?;
@@ -78,12 +88,65 @@ impl NativePaperRepository {
             }
             bytes.extend_from_slice(&buffer[..count]);
         }
+        after_read();
         let after = file.metadata().map_err(|_| PaperError::Io)?;
         if bytes.len() as u64 != before.len() || !self.root.unchanged(&before, &after) {
             return Err(PaperError::ChangedDuringRead);
         }
         check(cancellation)?;
-        Ok(bytes)
+        Ok((bytes, SourceIdentity::from_metadata(&before)?))
+    }
+
+    /// Hash and extract the same bounded capture; never reopen between those
+    /// steps. Metadata also comes from that descriptor, not get_paper().
+    pub fn prepare_for_index(
+        &self,
+        paper_id: &str,
+        cancellation: &Cancellation,
+    ) -> PaperResult<PaperSourceSnapshot> {
+        self.prepare_inner(paper_id, cancellation, || {})
+    }
+
+    fn prepare_inner(
+        &self,
+        paper_id: &str,
+        cancellation: &Cancellation,
+        after_capture: impl FnOnce(),
+    ) -> PaperResult<PaperSourceSnapshot> {
+        let (bytes, identity) = self.capture(paper_id, cancellation, || {})?;
+        after_capture();
+        check(cancellation)?;
+        let source_sha256 = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let pages = extract_pdf_pages(&bytes, cancellation)?;
+        let chunks = chunks_from_pages(paper_id, pages, cancellation)?;
+        check(cancellation)?;
+        Ok(PaperSourceSnapshot {
+            info: info(paper_id, identity.size_bytes),
+            identity,
+            source_sha256,
+            chunks,
+        })
+    }
+
+    /// Cheap later revalidation against this pinned root. A match is only an
+    /// observation NOW, not a lock: for content proof capture/hash again. Even a
+    /// new hash cannot prevent another writer changing the source afterwards.
+    pub fn source_identity(
+        &self,
+        paper_id: &str,
+        cancellation: &Cancellation,
+    ) -> PaperResult<SourceIdentity> {
+        check(cancellation)?;
+        let meta = self
+            .root
+            .open(paper_id)?
+            .metadata()
+            .map_err(|_| PaperError::Io)?;
+        check(cancellation)?;
+        SourceIdentity::from_metadata(&meta)
     }
 
     pub fn extract_pages(
@@ -96,35 +159,43 @@ impl NativePaperRepository {
 
     pub fn chunks(&self, paper_id: &str, cancellation: &Cancellation) -> PaperResult<Vec<Chunk>> {
         let pages = self.extract_pages(paper_id, cancellation)?;
-        let mut chunks = Vec::new();
-        for page in pages {
-            check(cancellation)?;
-            for paragraph in split_into_paragraphs(&page.text) {
-                for text in split_oversized_chunk(&paragraph, DEFAULT_MAX_CHUNK_BYTES)
-                    .map_err(|_| PaperError::ExtractionLimit)?
-                {
-                    check(cancellation)?;
-                    let chunk_index =
-                        u32::try_from(chunks.len()).map_err(|_| PaperError::ExtractionLimit)?;
-                    chunks.push(Chunk {
-                        source: SourceRecord {
-                            // Ranking/scoring belong to retrieval, not ingestion.
-                            rank: 0,
-                            score: 0.0,
-                            paper_id: paper_id.to_owned(),
-                            chunk_index,
-                            filename: format!("{paper_id}.pdf"),
-                            title: derive_title(paper_id),
-                            page: page.page_number,
-                            snippet: text.chars().take(240).collect(),
-                        },
-                        text,
-                    });
-                }
+        chunks_from_pages(paper_id, pages, cancellation)
+    }
+}
+
+fn chunks_from_pages(
+    paper_id: &str,
+    pages: Vec<ExtractedPage>,
+    cancellation: &Cancellation,
+) -> PaperResult<Vec<Chunk>> {
+    let mut chunks = Vec::new();
+    for page in pages {
+        check(cancellation)?;
+        for paragraph in split_into_paragraphs(&page.text) {
+            for text in split_oversized_chunk(&paragraph, DEFAULT_MAX_CHUNK_BYTES)
+                .map_err(|_| PaperError::ExtractionLimit)?
+            {
+                check(cancellation)?;
+                let chunk_index =
+                    u32::try_from(chunks.len()).map_err(|_| PaperError::ExtractionLimit)?;
+                chunks.push(Chunk {
+                    source: SourceRecord {
+                        // Ranking/scoring belong to retrieval, not ingestion.
+                        rank: 0,
+                        score: 0.0,
+                        paper_id: paper_id.to_owned(),
+                        chunk_index,
+                        filename: format!("{paper_id}.pdf"),
+                        title: derive_title(paper_id),
+                        page: page.page_number,
+                        snippet: text.chars().take(240).collect(),
+                    },
+                    text,
+                });
             }
         }
-        Ok(chunks)
     }
+    Ok(chunks)
 }
 
 fn info(id: &str, size_bytes: u64) -> PaperInfo {
@@ -135,6 +206,10 @@ fn info(id: &str, size_bytes: u64) -> PaperInfo {
         size_bytes,
     }
 }
+
+#[cfg(test)]
+#[path = "snapshot_tests.rs"]
+mod snapshot_tests;
 
 fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> PaperResult<T> + Send + 'static,

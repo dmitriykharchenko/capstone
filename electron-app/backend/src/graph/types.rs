@@ -16,6 +16,11 @@ pub enum GraphError {
     Storage,
     Cancelled,
     AlreadySealed,
+    UnsupportedArtifact,
+    InvalidArtifact,
+    ArtifactTooLarge,
+    DigestMismatch,
+    SharedNodeConflict,
 }
 impl std::fmt::Display for GraphError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -8,11 +8,16 @@
 //! provides that boundary for the async trait and service operations.
 mod publication;
 mod ranking;
+mod recovery;
 mod service;
 mod store;
 mod types;
 
 pub use ranking::{bm25_scores, hybrid_scores, similarity, squared_l2, tokenize};
+pub use recovery::{
+    MAX_PAPER_ARTIFACT_BYTES, MAX_RECOVERY_CHUNKS, MAX_RECOVERY_VECTOR_VALUES, PaperObservation,
+    PaperRecoveryArtifact,
+};
 pub use service::{HistorySearchRequest, NativeRetriever};
 pub use store::VectorStore;
 pub use types::{
@@ -20,6 +25,13 @@ pub use types::{
     PreparedExchange, PreparedOperation, PreparedPaper, PreparedReset, RetrievalError,
     RetrievalResult, SearchRequest,
 };
+
+#[cfg(test)]
+mod recovery_tests;
+
+#[cfg(test)]
+#[path = "../../tests/recovery_fixtures/mod.rs"]
+pub(crate) mod recovery_fixtures;
 
 use crate::{
     domain::{Chunk, RetrievalScope, RetrievalStrategy},
