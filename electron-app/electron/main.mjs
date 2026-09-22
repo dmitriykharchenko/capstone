@@ -17,10 +17,25 @@ let quitting = false;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window && !window.isDestroyed()) { window.restore(); window.focus(); } });
-  await app.whenReady();
+  // Electron waits for ESM entry evaluation before ready; never await readiness here.
+  void app.whenReady().then(initialize).catch(startupFailed);
+}
+
+function startupFailed() {
+  console.error('Application startup failed.');
+  app.quit();
+}
+
+function initialize() {
   // Native settings/providers own credential resolution. Nothing is read into renderer DTOs.
   backend = new Backend({ executable: app.isPackaged ? join(process.resourcesPath, 'backend', 'research-backend') :
     join(root, 'backend', 'target', 'debug', 'research-backend'), cwd: app.getPath('userData'), env: process.env });
+  app.on('before-quit', (event) => {
+    if (quitting) return;
+    event.preventDefault();
+    quitting = true;
+    void backend.stop().finally(() => app.quit());
+  });
   const broker = new Broker(backend);
   let generation = 0;
   protocol.handle('app', (request) => appResponse(request, join(root, 'dist')));
@@ -53,15 +68,9 @@ else {
     });
     contents.on('render-process-gone', () => broker.cancelOwner(contents.id));
     contents.on('destroyed', () => broker.cancelOwner(contents.id));
-    void window.loadURL(dev ? DEV_ORIGIN : `${APP_ORIGIN}/chat`);
+    void window.loadURL(dev ? DEV_ORIGIN : `${APP_ORIGIN}/chat`).catch(startupFailed);
   }
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    quitting = true;
-    void backend.stop().finally(() => app.quit());
-  });
 }

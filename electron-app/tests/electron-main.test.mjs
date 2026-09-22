@@ -9,30 +9,46 @@ import { Broker } from '../electron/broker.mjs';
 import * as security from '../electron/security.mjs';
 
 // Execute the actual main module against a deterministic Electron host, not a browser.
-async function host({ locked = true } = {}) {
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+async function host({ locked = true, ready = true, failure, stopped = Promise.resolve() } = {}) {
   const app = new EventEmitter();
   let quits = 0;
   let sandbox = false;
   let backend;
   let window;
+  let evaluated = false;
+  let resolveReady;
+  let rejectReady;
+  const readiness = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const counts = { backend: 0, window: 0, ready: 0, protocol: 0, handlers: 0 };
   const jobs = [];
-  Object.assign(app, { isPackaged: false, requestSingleInstanceLock: () => locked, quit: () => quits++,
-    whenReady: async () => {}, enableSandbox: () => { sandbox = true; }, getPath: () => '/tmp/fake-user-data' });
+  const diagnostics = [];
+  const fail = (stage) => { if (failure === stage) throw new Error('PRIVATE startup details'); };
+  Object.assign(app, { isPackaged: false, requestSingleInstanceLock: () => locked,
+    quit: () => {
+      let prevented = false;
+      app.emit('before-quit', { preventDefault() { prevented = true; } });
+      if (!prevented) quits++;
+    },
+    whenReady: () => { counts.ready++; return readiness; },
+    enableSandbox: () => { sandbox = true; }, getPath: () => '/tmp/fake-user-data' });
   const handlers = new Map();
   const protocol = { registerSchemesAsPrivileged: (schemes) => { protocol.schemes = schemes; },
-    handle: (name, fn) => { protocol.name = name; protocol.handler = fn; } };
+    handle: (name, fn) => { fail('protocol'); counts.protocol++; protocol.name = name; protocol.handler = fn; } };
   class FakeBackend {
-    constructor(options) { backend = this; this.options = options; this.stopped = false; }
+    constructor(options) { fail('backend'); counts.backend++; backend = this; this.options = options; this.stopped = false; }
     request(command, params, options) {
       const job = { command, params, options, cancelled: false };
       job.done = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
       job.cancel = () => { job.cancelled = true; };
       jobs.push(job); return job;
     }
-    async stop() { this.stopped = true; }
+    stop() { this.stopped = true; return stopped; }
   }
   class FakeWindow {
     constructor(options) {
+      fail('window');
+      counts.window++;
       window = this; this.options = options;
       const contents = this.webContents = new EventEmitter();
       contents.id = 10;
@@ -45,7 +61,7 @@ async function host({ locked = true } = {}) {
     }
     static getAllWindows() { return window ? [window] : []; }
     isDestroyed() { return false; }
-    async loadURL(url) { this.url = url; this.webContents.mainFrame.url = url; }
+    async loadURL(url) { fail('load'); this.url = url; this.webContents.mainFrame.url = url; }
     isMaximized() { return !!this.maximized; }
     maximize() { this.maximized = true; }
     unmaximize() { this.maximized = false; }
@@ -54,12 +70,42 @@ async function host({ locked = true } = {}) {
   }
   const url = new URL('../electron/main.mjs', import.meta.url);
   const source = (await readFile(url, 'utf8')).replace(/^import .*;$/gm, '').replaceAll('import.meta.url', JSON.stringify(url.href));
-  await vm.runInNewContext(`(async () => {${source}\n})()`, { app, BrowserWindow: FakeWindow,
-    ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, protocol, Backend: FakeBackend, Broker,
+  const evaluation = vm.runInNewContext(`(async () => {${source}\n})()`, { app, BrowserWindow: FakeWindow,
+    ipcMain: { handle: (name, fn) => { counts.handlers++; handlers.set(name, fn); } }, protocol, Backend: FakeBackend, Broker,
+    console: { error: (...args) => diagnostics.push(args) },
     ...security, dirname, join, fileURLToPath, process: { argv: [], env: {}, resourcesPath: '/tmp/fake-resources' } });
+  void evaluation.then(() => { evaluated = true; });
+  if (ready) { resolveReady(); await evaluation; await settle(); }
   const event = () => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
-  return { app, window, backend, jobs, handlers, protocol, event, quits: () => quits, sandbox: () => sandbox };
+  return { app, get window() { return window; }, get backend() { return backend; }, jobs, handlers, protocol, event,
+    counts, resolveReady, rejectReady, diagnostics, evaluated: () => evaluated, quits: () => quits, sandbox: () => sandbox };
 }
+
+test('entry evaluation finishes before readiness, then initializes exactly once', async () => {
+  const h = await host({ ready: false });
+  await settle();
+  assert.equal(h.evaluated(), true, 'Electron cannot become ready until entry evaluation finishes');
+  assert.equal(h.sandbox(), true);
+  assert.equal(h.protocol.schemes[0].scheme, 'app');
+  assert.equal(h.protocol.schemes[0].privileges.secure, true);
+  assert.deepEqual(h.counts, { backend: 0, window: 0, ready: 1, protocol: 0, handlers: 0 });
+  assert.equal(h.backend, undefined);
+  assert.equal(h.window, undefined);
+  assert.equal(h.handlers.size, 0);
+  h.app.emit('activate');
+  h.app.emit('second-instance');
+  assert.equal(h.window, undefined);
+  h.resolveReady();
+  await settle();
+  assert.deepEqual(h.counts, { backend: 1, window: 1, ready: 1, protocol: 1, handlers: 5 });
+  h.resolveReady();
+  h.app.emit('ready');
+  h.app.emit('activate');
+  h.app.emit('second-instance');
+  await settle();
+  assert.deepEqual(h.counts, { backend: 1, window: 1, ready: 1, protocol: 1, handlers: 5 });
+  assert.equal(h.quits(), 0);
+});
 
 test('main creates one isolated window/backend and validates every privileged handler', async () => {
   const h = await host();
@@ -104,8 +150,48 @@ test('reload, renderer crash and destruction detach streams but retain authorita
 });
 
 test('second app instance exits without constructing a backend/window', async () => {
-  const h = await host({ locked: false });
+  const h = await host({ locked: false, ready: false });
+  await settle();
+  assert.equal(h.evaluated(), true);
   assert.equal(h.quits(), 1);
   assert.equal(h.backend, undefined);
   assert.equal(h.window, undefined);
+  h.resolveReady();
+  h.app.emit('ready');
+  h.app.emit('activate');
+  await settle();
+  assert.deepEqual(h.counts, { backend: 0, window: 0, ready: 0, protocol: 0, handlers: 0 });
+  assert.equal(h.handlers.size, 0);
 });
+
+test('readiness failure quits with only a fixed startup diagnostic', async () => {
+  const h = await host({ ready: false });
+  h.rejectReady(new Error('PRIVATE readiness details'));
+  await settle();
+  assert.equal(h.evaluated(), true);
+  assert.equal(h.quits(), 1);
+  assert.deepEqual(h.counts, { backend: 0, window: 0, ready: 1, protocol: 0, handlers: 0 });
+  assert.deepEqual(h.diagnostics, [['Application startup failed.']]);
+});
+
+for (const failure of ['backend', 'protocol', 'window', 'load']) {
+  test(`${failure} startup failure is sanitized and drains any owned backend before exit`, async () => {
+    let finishStop;
+    const stopped = new Promise((resolve) => { finishStop = resolve; });
+    const h = await host({ failure, stopped });
+    assert.deepEqual(h.diagnostics, [['Application startup failed.']]);
+    assert.equal(h.jobs.length, 0);
+    if (failure === 'backend') {
+      assert.equal(h.backend, undefined);
+      assert.equal(h.window, undefined);
+      assert.equal(h.handlers.size, 0);
+      assert.equal(h.quits(), 1);
+    } else {
+      assert.equal(h.backend.stopped, true);
+      assert.equal(h.quits(), 0, 'exit must wait for backend shutdown');
+      finishStop();
+      await settle();
+      assert.equal(h.quits(), 1);
+    }
+  });
+}
