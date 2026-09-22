@@ -6,9 +6,13 @@ use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc,
+    sync::{Mutex, mpsc},
     time::{Duration, Instant},
 };
+
+// Fresh executable copies compete for startup resources. Serialize only their
+// copy/spawn/health handshake; each test's later protocol work remains parallel.
+static STARTUP_LOCK: Mutex<()> = Mutex::new(());
 
 struct Process {
     child: Child,
@@ -21,6 +25,7 @@ impl Process {
         Self::configured(true)
     }
     fn configured(configured: bool) -> Self {
+        let startup = STARTUP_LOCK.lock().unwrap();
         let root = tempfile::tempdir().unwrap();
         let binary = root.path().join("research-backend");
         std::fs::copy(env!("CARGO_BIN_EXE_research-backend"), &binary).unwrap();
@@ -62,12 +67,23 @@ impl Process {
                 }
             }
         });
-        Self {
+        let mut process = Self {
             child,
             stdin,
             output,
             _root: root,
-        }
+        };
+        process.send(json!({"v":1,"type":"request","id":"startup","command":"health","params":{}}));
+        let health = process.next();
+        assert_eq!(health["v"], 1);
+        assert_eq!(health["type"], "result");
+        assert_eq!(health["id"], "startup");
+        assert_eq!(health["seq"], 0);
+        assert_eq!(health["data"]["backend"], "rust");
+        assert_eq!(health["data"]["ok"], true);
+        assert!(process.child.try_wait().unwrap().is_none());
+        drop(startup);
+        process
     }
     fn send(&mut self, value: Value) {
         let input = self.stdin.as_mut().unwrap();
