@@ -19,6 +19,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[path = "coordinated.rs"]
+pub(crate) mod coordinated;
+
 type Schema = (
     &'static str,
     &'static str,

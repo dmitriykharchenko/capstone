@@ -27,6 +27,7 @@ pub use metadata::{
 };
 pub use recovery::{MAX_GRAPH_ARTIFACT_BYTES, MAX_RECOVERY_NODES, PaperRecoveryArtifact};
 pub use store::CozoGraphStore;
+pub(crate) use store::coordinated::{Fence, Scope, Transition};
 pub use tracking::{
     GraphJournalAuthority, GraphPaperObservation, GraphPublication, GraphWriteKind,
 };

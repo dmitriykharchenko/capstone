@@ -15,6 +15,7 @@ pub struct StoragePaths {
     pub history_database: PathBuf,
     pub vector_database: PathBuf,
     pub graph_database: PathBuf,
+    pub index_state_database: PathBuf,
     pub bm25_index: PathBuf,
     pub evaluation_results: PathBuf,
     pub resources: PathBuf,
@@ -256,6 +257,7 @@ impl AppConfig {
             history_database: history,
             vector_database: root.join("vectors.sqlite3"),
             graph_database: root.join("graph.sqlite3"),
+            index_state_database: root.join("index-state.sqlite3"),
             bm25_index: root.join("bm25.json"),
             evaluation_results: root.join("evaluations"),
             resources,
@@ -265,6 +267,7 @@ impl AppConfig {
         for path in [
             &paths.vector_database,
             &paths.graph_database,
+            &paths.index_state_database,
             &paths.bm25_index,
         ] {
             validate_database_path(&root, path)?;
@@ -274,6 +277,12 @@ impl AppConfig {
         validate_root(&paths.evaluation_results)?;
         if paths.history_database == paths.vector_database
             || paths.history_database == paths.graph_database
+            || paths.history_database == paths.index_state_database
+            || paths.history_database == paths.index_state_database.with_extension("sqlite3.lock")
+            || ["-journal", "-wal", "-shm"].iter().any(|suffix| {
+                paths.history_database
+                    == Path::new(&format!("{}{suffix}", paths.index_state_database.display()))
+            })
             || paths.history_database == paths.bm25_index
             || paths.history_database == paths.evaluation_results
             || paths.history_database == log_path

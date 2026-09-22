@@ -22,6 +22,7 @@ fn setup() -> (tempfile::TempDir, StoragePaths, ArtifactStore) {
         history_database: root.join("data/history.sqlite"),
         vector_database: root.join("data/vector.sqlite"),
         graph_database: root.join("data/graph.sqlite"),
+        index_state_database: root.join("data/index-state.sqlite"),
         bm25_index: root.join("data/bm25.json"),
         resources: root.join("resources"),
         papers: root.join("papers"),

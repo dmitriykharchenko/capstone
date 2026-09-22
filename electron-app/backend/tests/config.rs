@@ -29,6 +29,10 @@ fn missing_credentials_have_safe_defaults_without_any_writes() {
     assert_eq!(c.providers.embedding_model, "text-embedding-3-small");
     assert_eq!(c.providers.index_max_workers, 4);
     assert_eq!(c.providers.request_timeout.as_secs(), 30);
+    assert_eq!(
+        c.paths().index_state_database,
+        c.paths().data_root.join("index-state.sqlite3")
+    );
     assert!(
         c.paths()
             .history_database
@@ -229,6 +233,11 @@ fn reserved_outputs_and_nonexistent_legacy_aliases_are_rejected() {
         "evaluations",
         "vectors.sqlite3",
         "graph.sqlite3",
+        "index-state.sqlite3",
+        "index-state.sqlite3.lock",
+        "index-state.sqlite3-journal",
+        "index-state.sqlite3-wal",
+        "index-state.sqlite3-shm",
         "bm25.json",
     ] {
         assert!(

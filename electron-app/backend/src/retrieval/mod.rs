@@ -7,6 +7,7 @@
 //! Synchronous store methods must run on a joined blocking worker; `NativeRetriever`
 //! provides that boundary for the async trait and service operations.
 mod publication;
+pub(crate) use publication::publish_no_replace as publish_index_journal;
 mod ranking;
 mod recovery;
 mod service;

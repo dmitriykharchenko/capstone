@@ -10,12 +10,17 @@ pub enum GraphWriteKind {
     Apply,
     Restore,
     Reset,
+    Forward,
+    Compensate,
+    CoordinatedReset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphJournalAuthority {
     Absent,
     ExternalUntrusted,
+    /// Physical claim only: callers must still validate the durable journal.
+    JournalTracked,
 }
 
 /// An immutable observation, not an authorization capability or a replay receipt.
@@ -27,6 +32,7 @@ pub struct GraphPublication {
     write_id: String,
     kind: GraphWriteKind,
     authority: GraphJournalAuthority,
+    digest: Option<String>,
 }
 
 impl GraphPublication {
@@ -41,6 +47,9 @@ impl GraphPublication {
     }
     pub fn journal_authority(&self) -> GraphJournalAuthority {
         self.authority
+    }
+    pub fn authority_digest(&self) -> Option<&str> {
+        self.digest.as_deref()
     }
 }
 
@@ -85,6 +94,12 @@ pub(super) fn read(tx: &Transaction, c: &Cancellation) -> GraphResult<GraphPubli
     {
         return Err(invalid);
     }
+    let digest = authority.get_str().and_then(|s| s.strip_prefix("journal:"));
+    let coordinated = digest.is_some_and(|s| {
+        s.len() == 64
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    });
     let (kind, authority) = match (generation, transition.get_str(), authority.get_str()) {
         (0, Some("initialize"), Some("absent")) => {
             (GraphWriteKind::Initialize, GraphJournalAuthority::Absent)
@@ -101,6 +116,18 @@ pub(super) fn read(tx: &Transaction, c: &Cancellation) -> GraphResult<GraphPubli
             GraphWriteKind::Reset,
             GraphJournalAuthority::ExternalUntrusted,
         ),
+        (1.., Some("forward"), _) if coordinated => (
+            GraphWriteKind::Forward,
+            GraphJournalAuthority::JournalTracked,
+        ),
+        (1.., Some("compensate"), _) if coordinated => (
+            GraphWriteKind::Compensate,
+            GraphJournalAuthority::JournalTracked,
+        ),
+        (1.., Some("coordinated_reset"), _) if coordinated => (
+            GraphWriteKind::CoordinatedReset,
+            GraphJournalAuthority::JournalTracked,
+        ),
         _ => return Err(invalid),
     };
     Ok(GraphPublication {
@@ -108,6 +135,7 @@ pub(super) fn read(tx: &Transaction, c: &Cancellation) -> GraphResult<GraphPubli
         write_id: write_id.into(),
         kind,
         authority,
+        digest: digest.map(str::to_owned),
     })
 }
 
@@ -126,7 +154,7 @@ pub(super) fn advance(tx: &Transaction, kind: GraphWriteKind, c: &Cancellation) 
         GraphWriteKind::Apply => "apply",
         GraphWriteKind::Restore => "restore",
         GraphWriteKind::Reset => "reset",
-        GraphWriteKind::Initialize => return Err(GraphError::InvalidInput),
+        _ => return Err(GraphError::InvalidInput),
     };
     write(tx, next, transition, "external", c)
 }
@@ -145,6 +173,34 @@ fn write(
             ("write_id".into(), DataValue::from(uuid::Uuid::new_v4().to_string())),
             ("transition".into(), DataValue::from(transition)),
             ("authority".into(), DataValue::from(authority)),
+        ]), c,
+    )?;
+    Ok(())
+}
+
+pub(super) fn coordinated(
+    tx: &Transaction,
+    expected: &super::Fence,
+    desired: &super::Fence,
+    c: &Cancellation,
+) -> GraphResult<()> {
+    if &super::Fence::from_publication(&read(tx, c)?) != expected
+        || desired.generation
+            != expected
+                .generation
+                .checked_add(1)
+                .ok_or(GraphError::GenerationOverflow)?
+    {
+        return Err(GraphError::InvalidArtifact);
+    }
+    desired.validate()?;
+    tx.run(
+        "?[key, version, generation, write_id, transition, authority] <- [['store', 1, $generation, $write_id, $transition, $authority]] :put graph_publication {key => version, generation, write_id, transition, authority}",
+        BTreeMap::from([
+            ("generation".into(), DataValue::from(desired.generation)),
+            ("write_id".into(), DataValue::from(desired.id.clone())),
+            ("transition".into(), DataValue::from(desired.direction.clone())),
+            ("authority".into(), DataValue::from(format!("journal:{}", desired.digest))),
         ]), c,
     )?;
     Ok(())

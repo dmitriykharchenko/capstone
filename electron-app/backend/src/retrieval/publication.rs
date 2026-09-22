@@ -6,7 +6,7 @@ use std::path::Path;
 // both directories, then perform one no-clobber rename after the final seal.
 // Unlike link/unlink, this never publishes a two-link file rejected on reopen.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(super) fn publish_no_replace(
+pub(crate) fn publish_no_replace(
     source: &Path,
     target: &Path,
     cancellation: &Cancellation,
@@ -78,7 +78,7 @@ pub(super) fn publish_no_replace(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub(super) fn publish_no_replace(_: &Path, _: &Path, _: &Cancellation) -> RetrievalResult<()> {
+pub(crate) fn publish_no_replace(_: &Path, _: &Path, _: &Cancellation) -> RetrievalResult<()> {
     // Fail closed rather than silently falling back to a crash-unsafe operation.
     Err(RetrievalError::Storage)
 }
