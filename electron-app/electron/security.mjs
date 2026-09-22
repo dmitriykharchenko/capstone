@@ -21,7 +21,7 @@ export function assertSender(event, window, dev = false) {
 export function csp(dev = false) {
   return `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; ` +
     `font-src 'self' data:; connect-src 'self'${dev ? ' ws://127.0.0.1:5173' : ''}; ` +
-    `frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+    `worker-src 'self'; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
 }
 export function secureContents(contents, dev = false) {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -38,7 +38,7 @@ export function secureContents(contents, dev = false) {
   contents.session.on('will-download', (event) => event.preventDefault());
 }
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.ttf': 'font/ttf', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon' };
 export async function appResponse(request, dist) {
   if (request.method !== 'GET' || !trustedURL(request.url)) return new Response(null, { status: 403 });

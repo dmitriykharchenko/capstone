@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@augmentcode/themis": "^0.2.5",
-    "@xyflow/svelte": "^1.6.6"
+    "@xyflow/svelte": "^1.6.6",
+    "pdfjs-dist": "6.3.289"
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.4",

@@ -1,11 +1,12 @@
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import { pdfjsAssetsPlugin } from "./scripts/pdfjs-assets.mjs";
 
 export default defineConfig({
   envDir: false,
   envPrefix: [],
-  plugins: [tailwindcss(), svelte()],
+  plugins: [tailwindcss(), svelte(), pdfjsAssetsPlugin()],
   resolve: {
     alias: {
       $lib: decodeURIComponent(new URL("./src/lib", import.meta.url).pathname),
