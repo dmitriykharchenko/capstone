@@ -9,15 +9,12 @@ import {
 import { eventChannel, END, type EventChannel } from "redux-saga";
 import {
   api,
-  pdfBytesToObjectUrl,
   type IndexStreamEvent,
 } from "../../../lib/api";
 import {
-  closePaper,
   bm25Unavailable,
   setPaperCapabilities,
   loadPapers,
-  openPaper,
   paperIndexFailed,
   paperIndexPaperStarted,
   paperIndexProgress,
@@ -25,8 +22,6 @@ import {
   paperIndexSucceeded,
   papersFailed,
   papersLoading,
-  pdfFailed,
-  pdfLoading,
   resetIndices,
   resetIndicesFailed,
   resetIndicesSucceeded,
@@ -34,7 +29,6 @@ import {
   setBm25Statuses,
   setPaperStatuses,
   setPapers,
-  setPdfUrl,
 } from "../papers-slice";
 
 function createIndexStreamChannel(): EventChannel<IndexStreamEvent> {
@@ -49,9 +43,7 @@ function createIndexStreamChannel(): EventChannel<IndexStreamEvent> {
   });
 }
 
-// List the PDFs on disk (native Rust command) and, on open, fetch the bytes and
-// build an object URL for inline rendering. The previous URL is revoked first so
-// switching papers does not leak blob URLs.
+// Library/index data only. PDF read and render work belongs to the mounted reader.
 export function* papersSaga() {
   yield* takeLatest(loadPapers, function* () {
     yield* put(papersLoading());
@@ -84,24 +76,6 @@ export function* papersSaga() {
       }
     } catch (error) {
       yield* put(papersFailed(String(error)));
-    }
-  });
-
-  yield* takeLatest([openPaper, closePaper], function* (action) {
-    if (action.type === closePaper.type || !action.payload) return;
-    const paperId = action.payload[0];
-    let url: string | undefined;
-    yield* put(pdfLoading(paperId));
-    try {
-      const pdf = yield* call(api.readPdf, paperId);
-      url = yield* call(pdfBytesToObjectUrl, pdf);
-      yield* put(setPdfUrl(paperId, url));
-      // Retain ownership until switch, close, unmount or saga shutdown.
-      yield* take(closePaper);
-    } catch {
-      yield* put(pdfFailed("Cannot open this PDF. It may be missing, empty, corrupt, unsafe, unsupported, or larger than 64 MiB. Check that the file is readable and the native backend is available, then retry."));
-    } finally {
-      if (url) URL.revokeObjectURL(url);
     }
   });
 

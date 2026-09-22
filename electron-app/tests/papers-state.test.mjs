@@ -15,7 +15,6 @@ test("paper indexing advances without disturbing paper browsing", () => {
   const browsing = {
     ...initialPapersState,
     selectedId: "paper-1",
-    pdfUrl: "blob:paper-1",
   };
   const started = beginPaperIndex(browsing, 3);
   const progressed = recordPaperIndexProgress(
@@ -32,7 +31,7 @@ test("paper indexing advances without disturbing paper browsing", () => {
   assert.equal(progressed.indexCurrentFile, "paper.pdf");
   assert.equal(progressed.indexCurrentStatus, "indexed");
   assert.equal(progressed.selectedId, "paper-1");
-  assert.equal(progressed.pdfUrl, "blob:paper-1");
+  assert.equal('pdfUrl' in progressed, false);
 });
 
 test("per-paper indicators move from indexing to a terminal outcome", () => {

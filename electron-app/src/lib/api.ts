@@ -267,11 +267,3 @@ export const api: RendererApi = {
   indexPapersStream: (onEvent) => request("indexPapersStream", onEvent),
   runEvaluation: (testCases, onEvent) => request("runEvaluation", testCases, onEvent),
 };
-
-// Turn raw PDF bytes returned by the backend into an object URL a webview can
-// render inline (revoke it when the viewer unmounts to avoid leaks).
-export function pdfBytesToObjectUrl(pdf: PdfData): string {
-  const bytes = new Uint8Array(pdf.bytes);
-  const blob = new Blob([bytes], { type: pdf.mime_type });
-  return URL.createObjectURL(blob);
-}

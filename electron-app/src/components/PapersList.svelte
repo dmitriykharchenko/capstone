@@ -144,6 +144,7 @@
 
   function open(id: string) {
     store.dispatch(openPaper(id));
+    sidebarOpen = false;
   }
 
   function submitSearch(event: Event) {
@@ -176,23 +177,10 @@
     sidebarOpen = !sidebarOpen;
   }
 
-  $effect(() => {
-    // The PDF renders inside an <iframe>, so clicks on its content never bubble
-    // to this document. When focus moves into that iframe the window blurs and
-    // the iframe becomes the active element, letting us collapse the sidebar as
-    // soon as the user clicks the PDF content.
-    function handleWindowBlur() {
-      if (document.activeElement instanceof HTMLIFrameElement) {
-        sidebarOpen = false;
-      }
-    }
-    window.addEventListener("blur", handleWindowBlur);
-    return () => window.removeEventListener("blur", handleWindowBlur);
-  });
 </script>
 
 <div class="relative flex h-full min-h-0 flex-col gap-3">
-  <div class="absolute inset-x-0 top-0 z-30 flex items-center gap-3 bg-transparent px-4 py-3 backdrop-blur-md">
+  <div class="relative z-30 flex shrink-0 flex-wrap items-center gap-3 bg-transparent px-4 py-3 backdrop-blur-md">
     <Button
       type="button"
       variant="ghost"
@@ -252,11 +240,11 @@
     </Button>
   </div>
 
-  <div class="absolute inset-0 min-h-0">
+  <div class="relative min-h-0 flex-1">
   {#if sidebarOpen}
   <aside
     id="papers-sidebar"
-    class="absolute top-16 bottom-4 left-4 z-20 flex w-[320px] min-h-0 flex-col overflow-hidden rounded-xl bg-transparent shadow-lg shadow-black/5 backdrop-blur-md"
+    class="absolute top-0 bottom-4 left-4 z-20 flex w-[320px] min-h-0 flex-col overflow-hidden rounded-xl bg-transparent shadow-lg shadow-black/5 backdrop-blur-md"
   >
     <div
       class="flex flex-col gap-1 bg-transparent px-4 py-1.5 text-xs backdrop-blur-md"

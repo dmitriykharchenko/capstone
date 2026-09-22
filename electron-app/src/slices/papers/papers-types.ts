@@ -18,9 +18,6 @@ export interface PapersState {
   loading: boolean;
   error: string | null;
   selectedId: string | null;
-  pdfUrl: string | null;
-  pdfLoading: boolean;
-  pdfError: string | null;
   availableCommands: string[];
   statusesKnown: boolean;
   bm25Known: boolean;
@@ -47,9 +44,6 @@ export const initialPapersState: PapersState = {
   loading: false,
   error: null,
   selectedId: null,
-  pdfUrl: null,
-  pdfLoading: false,
-  pdfError: null,
   availableCommands: [],
   statusesKnown: false,
   bm25Known: false,

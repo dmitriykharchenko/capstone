@@ -10,14 +10,9 @@ export const selectPapersError = store.createSelector(
 export const selectSelectedPaperId = store.createSelector(
   (state) => state.papers.selectedId,
 );
-export const selectPdfUrl = store.createSelector((state) => state.papers.pdfUrl);
-export const selectPdfError = store.createSelector((state) => state.papers.pdfError);
 export const selectPaperCapabilities = store.createSelector((state) => state.papers.availableCommands);
 export const selectPaperStatusesKnown = store.createSelector((state) => state.papers.statusesKnown);
 export const selectBm25Known = store.createSelector((state) => state.papers.bm25Known);
-export const selectPdfLoading = store.createSelector(
-  (state) => state.papers.pdfLoading,
-);
 export const selectPaperIndexing = store.createSelector(
   (state) => state.papers.indexing,
 );

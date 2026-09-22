@@ -27,13 +27,8 @@ export const papersFailed = createAction<[error: string]>("papers/failed");
 export const setPaperCapabilities = createAction<[commands: string[]]>("papers/capabilities");
 export const bm25Unavailable = createAction("papers/bm25Unavailable");
 
-// Open a paper: the saga fetches PDF bytes and turns them into an object URL.
+// Selection only. The mounted reader owns bytes, loading, rendering and passwords.
 export const openPaper = createAction<[paperId: string]>("papers/open");
-export const pdfLoading = createAction<[paperId: string]>("papers/pdfLoading");
-export const setPdfUrl = createAction<[paperId: string, url: string]>(
-  "papers/setPdfUrl",
-);
-export const pdfFailed = createAction<[error: string]>("papers/pdfFailed");
 export const closePaper = createAction("papers/close");
 
 export const runPaperIndex = createAction("papers/runIndex");
@@ -109,33 +104,13 @@ export const papersReducer: StoreReducerFunction<PapersState> =
       loading: false,
       error: action.payload[0],
     }))
-    .with(pdfLoading, (state: PapersState, action: StoreAction<[string]>) => ({
+    .with(openPaper, (state: PapersState, action: StoreAction<[string]>) => ({
       ...state,
       selectedId: action.payload[0],
-      pdfLoading: true,
-      pdfUrl: null,
-      pdfError: null,
-    }))
-    .with(
-      setPdfUrl,
-      (state: PapersState, action: StoreAction<[string, string]>) => ({
-        ...state,
-        selectedId: action.payload[0],
-        pdfUrl: action.payload[1],
-        pdfLoading: false,
-      }),
-    )
-    .with(pdfFailed, (state: PapersState, action: StoreAction<[string]>) => ({
-      ...state,
-      pdfLoading: false,
-      pdfError: action.payload[0],
     }))
     .with(closePaper, (state: PapersState) => ({
       ...state,
       selectedId: null,
-      pdfUrl: null,
-      pdfLoading: false,
-      pdfError: null,
     }))
     .with(
       paperIndexStarted,
