@@ -49,6 +49,15 @@ test('built PDF.js assets serve byte-exact with correct MIME and strict app cont
     `app://research${pdfjsAssetPrefix}../../%2e%2e%2foutside`]) {
     assert.notEqual((await appResponse({ url, method: 'GET' }, dist)).status, 200);
   }
+  // Dist containment alone must not let encoded segments escape /assets/ or
+  // create non-canonical aliases. Backslashes are separators on Windows too.
+  for (const path of ['/assets/%2e%2e%2findex.html', '/assets/%2E.%2Findex.html',
+    `${pdfjsAssetPrefix}%2e%2e%2f%2e%2e%2findex.html`,
+    `${pdfjsAssetPrefix}build/%2e%2fpdf.worker.mjs`,
+    '/assets/%2e%2e%5cindex.html', `${pdfjsAssetPrefix}%2e%2e%5c%2e%2e%5cindex.html`]) {
+    const response = await appResponse({ url: `app://research${path}`, method: 'GET' }, dist);
+    assert.equal(response.status, 403, path);
+  }
   assert.equal((await appResponse(new Request(`app://research${pdfjsAssetPrefix}build/pdf.worker.mjs`,
     { method: 'POST' }), dist)).status, 403);
 });

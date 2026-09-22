@@ -46,6 +46,11 @@ export async function appResponse(request, dist) {
     const path = decodeURIComponent(new URL(request.url).pathname);
     const spa = /^\/(?:chat(?:\/[^/]+)?|history|papers(?:\/[^/]+)?|graph|evals)?\/?$/.test(path);
     if (!spa && !path.startsWith('/assets/')) return new Response(null, { status: 404 });
+    // Encoded separators can hide traversal from URL normalization; dist-only
+    // containment must not allow an asset request to reach another namespace.
+    if (!spa && path.split(/[/\\]/).some((part) => part === '.' || part === '..')) {
+      return new Response(null, { status: 403 });
+    }
     const root = await realpath(dist);
     const target = await realpath(resolve(root, spa ? 'index.html' : `.${path}`));
     const rel = relative(root, target);
