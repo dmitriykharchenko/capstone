@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, cp, rm } from 'node:fs/promises';
+import { mkdtemp, cp, rm, mkdir, writeFile, open, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Backend, MAX_FRAME_BYTES } from '../electron/backend.mjs';
 import { Broker } from '../electron/broker.mjs';
+import { pdf } from './fixtures/pdf.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/backend-fixture.mjs', import.meta.url));
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -129,7 +130,7 @@ test('broker discards partial PDFs and bounds an unacknowledged renderer stream'
   }
 });
 
-test('actual Rust health-only binary runs outside repository with no Python and reports unavailable honestly', async (t) => {
+test('unconfigured actual Rust binary stays health-only outside repository without cwd discovery', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'research-shell-health-'));
   const executable = join(dir, 'research-backend');
   await cp(fileURLToPath(new URL('../backend/target/debug/research-backend', import.meta.url)), executable);
@@ -146,4 +147,49 @@ test('actual Rust health-only binary runs outside repository with no Python and 
   assert.equal(papers.ok, false);
   assert.match(papers.error, /not integrated/);
   assert.equal(value.child.pid, pid);
+});
+
+test('configured actual binary and broker list/get/assemble generated PDFs with only browsing capabilities', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'research-shell-papers-'));
+  const executable = join(dir, 'research-backend');
+  const resources = join(dir, 'resources'), papers = join(resources, 'ResearchPapers');
+  const data = join(dir, 'data');
+  await mkdir(papers, { recursive: true }); await mkdir(data);
+  const bytes = pdf();
+  await writeFile(join(papers, 'Preview.pdf'), bytes);
+  await writeFile(join(papers, 'Corrupt.pdf'), 'not a PDF');
+  const large = await open(join(papers, 'Oversized.pdf'), 'w');
+  await large.truncate(64 * 1024 * 1024 + 1); await large.close();
+  await cp(fileURLToPath(new URL('../backend/target/debug/research-backend', import.meta.url)), executable);
+  const value = new Backend({ executable, cwd: data, env: { PATH: dir,
+    CAPSTONE_APP_DATA_ROOT: data, CAPSTONE_RESOURCES_DIR: resources, CAPSTONE_PAPERS_DIR: papers } });
+  t.after(async () => { await value.stop(); await rm(dir, { recursive: true, force: true }); });
+  const broker = new Broker(value);
+  let sequence = 0;
+  const run = (method, args = {}) => broker.run(1, { token: `p${++sequence}`, method, args }, () => {});
+  const health = await run('health');
+  assert.deepEqual(health.data.commands.filter((c) => c.available).map((c) => c.command),
+    ['get_paper', 'health', 'list_papers', 'read_pdf']);
+  assert.equal(health.data.search_enabled, false);
+  const listed = await run('listPapers');
+  assert.deepEqual(listed.data.map((p) => p.id), ['Corrupt', 'Oversized', 'Preview']);
+  const info = await run('getPaper', { paper_id: 'Preview' });
+  assert.deepEqual(info.data, { id: 'Preview', filename: 'Preview.pdf', title: 'Preview', size_bytes: bytes.length });
+  const read = await run('readPdf', { paper_id: 'Preview' });
+  assert.equal(read.ok, true);
+  assert.equal(read.data.mime_type, 'application/pdf');
+  assert.deepEqual(Buffer.from(read.data.bytes), bytes);
+  for (const id of ['missing', 'Corrupt', 'Oversized', '../Preview', '/Preview']) {
+    const result = await run('readPdf', { paper_id: id });
+    assert.equal(result.ok, false);
+    assert.equal(result.data, undefined);
+    assert.doesNotMatch(result.error, /resources|ResearchPapers|research-shell/);
+  }
+  for (const method of ['paperStatuses', 'bm25Status', 'indexPapers', 'resetAllIndices']) {
+    const result = await run(method);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /not integrated/);
+  }
+  assert.deepEqual(await readdir(data), []);
+  assert.equal(broker.requests.size, 0);
 });

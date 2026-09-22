@@ -25,6 +25,9 @@ test('only exact app/dev origins and the owning top-level frame can invoke', () 
   assert.equal(trustedURL('http://127.0.0.1:5173/chat', true), true);
   assert.throws(() => assertSender({ sender: {}, senderFrame: frame }, window));
   assert.throws(() => assertSender({ sender: contents, senderFrame: { ...frame } }, window));
+  for (const url of ['blob:app://research/preview', 'chrome-extension://pdf-viewer/index.html']) {
+    assert.throws(() => assertSender({ sender: contents, senderFrame: { url } }, window));
+  }
   assert.throws(() => assertSender({ sender: contents }, window));
   assert.equal(webPreferences.sandbox, true);
   assert.equal(webPreferences.contextIsolation, true);

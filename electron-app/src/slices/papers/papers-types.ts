@@ -20,6 +20,10 @@ export interface PapersState {
   selectedId: string | null;
   pdfUrl: string | null;
   pdfLoading: boolean;
+  pdfError: string | null;
+  availableCommands: string[];
+  statusesKnown: boolean;
+  bm25Known: boolean;
   indexing: boolean;
   indexCompleted: number;
   indexTotal: number;
@@ -45,6 +49,10 @@ export const initialPapersState: PapersState = {
   selectedId: null,
   pdfUrl: null,
   pdfLoading: false,
+  pdfError: null,
+  availableCommands: [],
+  statusesKnown: false,
+  bm25Known: false,
   indexing: false,
   indexCompleted: 0,
   indexTotal: 0,
@@ -82,7 +90,7 @@ export function hydratePaperStatuses(
       indexStatuses[entry.paper_id] = entry.status as PaperIndexStatus;
     }
   }
-  return { ...state, indexStatuses };
+  return { ...state, indexStatuses, statusesKnown: true };
 }
 
 export function beginPaperIndex(state: PapersState, total: number): PapersState {
@@ -178,7 +186,7 @@ export function setBm25PaperIds(
   state: PapersState,
   paperIds: string[],
 ): PapersState {
-  return { ...state, bm25PaperIds: paperIds };
+  return { ...state, bm25PaperIds: paperIds, bm25Known: true };
 }
 
 export function beginReset(state: PapersState): PapersState {

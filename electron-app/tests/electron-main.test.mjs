@@ -10,7 +10,7 @@ import * as security from '../electron/security.mjs';
 
 // Execute the actual main module against a deterministic Electron host, not a browser.
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-async function host({ locked = true, ready = true, failure, stopped = Promise.resolve() } = {}) {
+async function host({ locked = true, ready = true, failure, stopped = Promise.resolve(), packaged = false, env = {} } = {}) {
   const app = new EventEmitter();
   let quits = 0;
   let sandbox = false;
@@ -24,7 +24,7 @@ async function host({ locked = true, ready = true, failure, stopped = Promise.re
   const jobs = [];
   const diagnostics = [];
   const fail = (stage) => { if (failure === stage) throw new Error('PRIVATE startup details'); };
-  Object.assign(app, { isPackaged: false, requestSingleInstanceLock: () => locked,
+  Object.assign(app, { isPackaged: packaged, requestSingleInstanceLock: () => locked,
     quit: () => {
       let prevented = false;
       app.emit('before-quit', { preventDefault() { prevented = true; } });
@@ -73,13 +73,33 @@ async function host({ locked = true, ready = true, failure, stopped = Promise.re
   const evaluation = vm.runInNewContext(`(async () => {${source}\n})()`, { app, BrowserWindow: FakeWindow,
     ipcMain: { handle: (name, fn) => { counts.handlers++; handlers.set(name, fn); } }, protocol, Backend: FakeBackend, Broker,
     console: { error: (...args) => diagnostics.push(args) },
-    ...security, dirname, join, fileURLToPath, process: { argv: [], env: {}, resourcesPath: '/tmp/fake-resources' } });
+    ...security, dirname, join, fileURLToPath, process: { argv: [], env, resourcesPath: '/tmp/fake-resources' } });
   void evaluation.then(() => { evaluated = true; });
   if (ready) { resolveReady(); await evaluation; await settle(); }
   const event = () => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
   return { app, get window() { return window; }, get backend() { return backend; }, jobs, handlers, protocol, event,
     counts, resolveReady, rejectReady, diagnostics, evaluated: () => evaluated, quits: () => quits, sandbox: () => sandbox };
 }
+
+test('trusted startup supplies deterministic browsing roots, never backend cwd or renderer paths', async () => {
+  const repository = dirname(dirname(fileURLToPath(new URL('../electron/main.mjs', import.meta.url))));
+  const dev = await host();
+  assert.equal(dev.backend.options.cwd, '/tmp/fake-user-data');
+  assert.equal(dev.backend.options.env.CAPSTONE_APP_DATA_ROOT, '/tmp/fake-user-data');
+  assert.equal(dev.backend.options.env.CAPSTONE_RESOURCES_DIR, dirname(repository));
+  assert.equal(dev.backend.options.env.CAPSTONE_PAPERS_DIR, join(dirname(repository), 'ResearchPapers'));
+  const packaged = await host({ packaged: true });
+  assert.equal(packaged.backend.options.env.CAPSTONE_RESOURCES_DIR, '/tmp/fake-resources');
+  assert.equal(packaged.backend.options.env.CAPSTONE_PAPERS_DIR, '/tmp/fake-resources/ResearchPapers');
+  assert.equal(packaged.backend.options.executable, '/tmp/fake-resources/backend/research-backend');
+  for (const override of ['/tmp/approved-pdfs', '', 'relative-invalid']) {
+    const custom = await host({ env: { CAPSTONE_PAPERS_DIR: override,
+      CAPSTONE_APP_DATA_ROOT: '/wrong', CAPSTONE_RESOURCES_DIR: '/wrong' } });
+    assert.equal(custom.backend.options.env.CAPSTONE_PAPERS_DIR, override, 'do not silently fallback');
+    assert.equal(custom.backend.options.env.CAPSTONE_APP_DATA_ROOT, '/tmp/fake-user-data');
+    assert.equal(custom.backend.options.env.CAPSTONE_RESOURCES_DIR, dirname(repository));
+  }
+});
 
 test('entry evaluation finishes before readiness, then initializes exactly once', async () => {
   const h = await host({ ready: false });

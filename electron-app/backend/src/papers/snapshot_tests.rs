@@ -1,7 +1,7 @@
 use super::*;
 use std::fs;
 #[path = "../../tests/papers_fixtures/mod.rs"]
-mod fixtures;
+pub(super) mod fixtures;
 use fixtures::{Page, pdf};
 
 fn hash(bytes: &[u8]) -> String {

@@ -27,9 +27,15 @@ function startupFailed() {
 }
 
 function initialize() {
-  // Native settings/providers own credential resolution. Nothing is read into renderer DTOs.
+  // Trusted main, not backend cwd (userData) or renderer input, supplies roots.
+  // Packaged PDFs must be bundled under resources/ResearchPapers or explicitly
+  // configured. Missing/invalid roots leave browsing unavailable; never fallback.
+  const resources = app.isPackaged ? process.resourcesPath : dirname(root);
+  const data = app.getPath('userData');
+  const env = { ...process.env, CAPSTONE_APP_DATA_ROOT: data, CAPSTONE_RESOURCES_DIR: resources,
+    CAPSTONE_PAPERS_DIR: process.env.CAPSTONE_PAPERS_DIR ?? join(resources, 'ResearchPapers') };
   backend = new Backend({ executable: app.isPackaged ? join(process.resourcesPath, 'backend', 'research-backend') :
-    join(root, 'backend', 'target', 'debug', 'research-backend'), cwd: app.getPath('userData'), env: process.env });
+    join(root, 'backend', 'target', 'debug', 'research-backend'), cwd: data, env });
   app.on('before-quit', (event) => {
     if (quitting) return;
     event.preventDefault();

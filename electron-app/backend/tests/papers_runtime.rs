@@ -13,6 +13,8 @@ use std::{
 use tokio::io::{
     AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf,
 };
+mod papers_fixtures;
+use papers_fixtures::{Page, encrypted_pdf, pdf};
 
 struct Client {
     writer: WriteHalf<DuplexStream>,
@@ -88,9 +90,7 @@ impl Client {
 #[tokio::test]
 async fn runtime_streams_exact_offsets_bytes_and_one_terminal_with_typed_metadata() {
     let root = tempfile::tempdir().unwrap();
-    let bytes: Vec<u8> = (0..PDF_CHUNK_BYTES * 3 + 7)
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let bytes = pdf(vec![Page::Text(vec![vec![b'x'; PDF_CHUNK_BYTES * 3 + 7]])]);
     fs::write(root.path().join("DBLP_conf_Test.pdf"), &bytes).unwrap();
     let mut client = Client::new(NativePaperRepository::new(root.path()).unwrap());
     client.request("list", "list_papers", json!({})).await;
@@ -135,6 +135,15 @@ async fn runtime_streams_exact_offsets_bytes_and_one_terminal_with_typed_metadat
 async fn invalid_typed_requests_and_preflight_failures_emit_no_partial_data() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("empty.pdf"), []).unwrap();
+    fs::write(root.path().join("corrupt.pdf"), b"not a PDF").unwrap();
+    let valid = pdf(vec![Page::Blank]);
+    fs::write(root.path().join("truncated.pdf"), &valid[..valid.len() / 2]).unwrap();
+    let mut forged = pdf_extract::Document::load_mem(&valid).unwrap();
+    let invalid_encryption = forged.add_object(pdf_extract::dictionary! {});
+    forged.trailer.set("Encrypt", invalid_encryption);
+    let mut forged_bytes = Vec::new();
+    forged.save_to(&mut forged_bytes).unwrap();
+    fs::write(root.path().join("forged.pdf"), forged_bytes).unwrap();
     fs::File::create(root.path().join("large.pdf"))
         .unwrap()
         .set_len(MAX_PDF_BYTES + 1)
@@ -147,6 +156,9 @@ async fn invalid_typed_requests_and_preflight_failures_emit_no_partial_data() {
         json!({"paper_id":"missing"}),
         json!({"paper_id":"empty"}),
         json!({"paper_id":"large"}),
+        json!({"paper_id":"corrupt"}),
+        json!({"paper_id":"truncated"}),
+        json!({"paper_id":"forged"}),
         json!({"paper_id":"empty","path":"/private"}),
     ]
     .into_iter()
@@ -171,10 +183,11 @@ async fn invalid_typed_requests_and_preflight_failures_emit_no_partial_data() {
 #[tokio::test]
 async fn cancelling_real_transfer_discards_late_chunks_and_remains_responsive() {
     let root = tempfile::tempdir().unwrap();
-    fs::File::create(root.path().join("large.pdf"))
-        .unwrap()
-        .set_len(8 * 1024 * 1024)
-        .unwrap();
+    fs::write(
+        root.path().join("large.pdf"),
+        pdf(vec![Page::Text(vec![vec![b'x'; 8 * 1024 * 1024]])]),
+    )
+    .unwrap();
     let mut client = Client::new(NativePaperRepository::new(root.path()).unwrap());
     client
         .request("pdf", "read_pdf", json!({"paper_id":"large"}))
@@ -202,6 +215,42 @@ async fn cancelling_real_transfer_discards_late_chunks_and_remains_responsive() 
     let health = client.next().await;
     assert_eq!(health["id"], "health");
     assert_eq!(health["type"], "result");
+    client.close().await;
+}
+
+#[tokio::test]
+async fn preview_transfers_blank_image_nonextractable_and_password_protected_bytes_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let mut client = Client::new(NativePaperRepository::new(root.path()).unwrap());
+    for (index, bytes) in [
+        pdf(vec![Page::Blank]),
+        pdf(vec![Page::Image]),
+        pdf(vec![Page::Corrupt]),
+        encrypted_pdf(false),
+        encrypted_pdf(true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fs::write(root.path().join("preview.pdf"), &bytes).unwrap();
+        let id = format!("preview-{index}");
+        client
+            .request(&id, "read_pdf", json!({"paper_id":"preview"}))
+            .await;
+        let mut assembled = Vec::new();
+        loop {
+            let message = client.next().await;
+            if message["type"] == "result" {
+                assert_eq!(message["data"]["total_bytes"], bytes.len());
+                break;
+            }
+            assert_eq!(message["type"], "event");
+            let chunk: PdfChunk = serde_json::from_value(message["data"].clone()).unwrap();
+            assert_eq!(chunk.offset as usize, assembled.len());
+            assembled.extend(chunk.bytes);
+        }
+        assert!(assembled == bytes, "preview must transfer identical bytes");
+    }
     client.close().await;
 }
 

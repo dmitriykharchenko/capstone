@@ -82,3 +82,56 @@ pub fn pdf(pages: Vec<Page>) -> Vec<u8> {
     doc.save_to(&mut bytes).unwrap();
     bytes
 }
+
+// Passwords are generated in memory, never returned, printed or stored. These
+// fixtures prove encrypted transfer without making a user's password available.
+#[allow(dead_code)]
+pub fn encrypted_pdf(aes: bool) -> Vec<u8> {
+    use pdf_extract::{EncryptionState, EncryptionVersion, Permissions};
+    use std::{
+        collections::{BTreeMap, hash_map::RandomState},
+        hash::{BuildHasher, Hasher},
+        sync::Arc,
+    };
+    let password = format!("{:x}", RandomState::new().build_hasher().finish());
+    let owner = format!("{:x}", RandomState::new().build_hasher().finish());
+    let mut doc =
+        Document::load_mem(&pdf(vec![Page::Text(vec![b"Encrypted preview".to_vec()])])).unwrap();
+    doc.trailer.set(
+        "ID",
+        vec![Object::string_literal(b"fixture identifier".to_vec()); 2],
+    );
+    let version = if aes {
+        EncryptionVersion::V4 {
+            document: &doc,
+            encrypt_metadata: true,
+            crypt_filters: BTreeMap::from([(
+                b"StdCF".to_vec(),
+                Arc::new(pdf_extract::encryption::crypt_filters::Aes128CryptFilter)
+                    as Arc<dyn pdf_extract::encryption::crypt_filters::CryptFilter>,
+            )]),
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+            owner_password: &owner,
+            user_password: &password,
+            permissions: Permissions::all(),
+        }
+    } else {
+        EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: &owner,
+            user_password: &password,
+            key_length: 128,
+            permissions: Permissions::all(),
+        }
+    };
+    let state = EncryptionState::try_from(version).unwrap();
+    doc.encrypt(&state).unwrap();
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    let locked = Document::load_mem(&bytes).unwrap();
+    assert!(locked.is_encrypted());
+    assert!(locked.authenticate_password("").is_err());
+    assert!(locked.authenticate_password(&password).is_ok());
+    bytes
+}

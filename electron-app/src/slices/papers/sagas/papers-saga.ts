@@ -13,6 +13,9 @@ import {
   type IndexStreamEvent,
 } from "../../../lib/api";
 import {
+  closePaper,
+  bm25Unavailable,
+  setPaperCapabilities,
   loadPapers,
   openPaper,
   paperIndexFailed,
@@ -53,45 +56,52 @@ export function* papersSaga() {
   yield* takeLatest(loadPapers, function* () {
     yield* put(papersLoading());
     try {
+      const health = yield* call(api.health);
+      const commands = health.commands.filter((command) => command.available).map((command) => command.command);
+      yield* put(setPaperCapabilities(commands));
+      if (!commands.includes("list_papers")) {
+        yield* put(papersFailed("PDF browsing is unavailable. Check the trusted CAPSTONE_PAPERS_DIR and application resource/data roots, then restart the app."));
+        return;
+      }
       const papers = yield* call(api.listPapers);
       yield* put(setPapers(papers));
-      // Hydrate per-paper indicators from persisted outcomes so an already
-      // indexed paper stays marked after a restart. Best-effort: a failure
-      // here must not surface as a papers-load error.
+      // Absent or failed status reads mean UNKNOWN, never "not indexed".
       try {
-        const { statuses } = yield* call(api.paperStatuses);
-        yield* put(setPaperStatuses(statuses));
+        if (commands.includes("paper_statuses")) {
+          const { statuses } = yield* call(api.paperStatuses);
+          yield* put(setPaperStatuses(statuses));
+        }
       } catch {
-        // Ignore; indicators simply fall back to "not indexed".
+        // Keep statusesKnown false without preventing PDF browsing.
       }
-      // Hydrate the per-paper BM25 dot from the persisted lexical index.
-      // Best-effort: a failure leaves every BM25 dot as "not indexed".
       try {
-        const bm25 = yield* call(api.bm25Status);
-        yield* put(setBm25Statuses(bm25.paper_ids));
+        if (commands.includes("bm25_status")) {
+          const bm25 = yield* call(api.bm25Status);
+          yield* put(setBm25Statuses(bm25.paper_ids));
+        }
       } catch {
-        // Ignore; BM25 dots simply fall back to "not indexed".
+        // Keep bm25Known false.
       }
     } catch (error) {
       yield* put(papersFailed(String(error)));
     }
   });
 
-  yield* takeLatest(openPaper, function* (action) {
+  yield* takeLatest([openPaper, closePaper], function* (action) {
+    if (action.type === closePaper.type || !action.payload) return;
     const paperId = action.payload[0];
-    const previous = (yield* select((state) => state.papers.pdfUrl)) as
-      | string
-      | null;
-    if (previous) {
-      URL.revokeObjectURL(previous);
-    }
+    let url: string | undefined;
     yield* put(pdfLoading(paperId));
     try {
       const pdf = yield* call(api.readPdf, paperId);
-      const url = yield* call(pdfBytesToObjectUrl, pdf);
+      url = yield* call(pdfBytesToObjectUrl, pdf);
       yield* put(setPdfUrl(paperId, url));
-    } catch (error) {
-      yield* put(pdfFailed(String(error)));
+      // Retain ownership until switch, close, unmount or saga shutdown.
+      yield* take(closePaper);
+    } catch {
+      yield* put(pdfFailed("Cannot open this PDF. It may be missing, empty, corrupt, unsafe, unsupported, or larger than 64 MiB. Check that the file is readable and the native backend is available, then retry."));
+    } finally {
+      if (url) URL.revokeObjectURL(url);
     }
   });
 
@@ -99,6 +109,11 @@ export function* papersSaga() {
   // `takeLatest`, this never leaves a cancelled worker's native command running
   // concurrently with a replacement run.
   yield* takeLeading(runPaperIndex, function* () {
+    const commands = yield* select((state) => state.papers.availableCommands);
+    if (!commands.includes("index_papers_stream")) {
+      yield* put(paperIndexFailed("Paper indexing is unavailable in this build."));
+      return;
+    }
     yield* put(paperIndexStarted(0));
     const channel = createIndexStreamChannel();
     try {
@@ -135,7 +150,7 @@ export function* papersSaga() {
             const bm25 = yield* call(api.bm25Status);
             yield* put(setBm25Statuses(bm25.paper_ids));
           } catch {
-            // Ignore; the dots keep their previous coverage.
+            yield* put(bm25Unavailable());
           }
         } else if (event.event === "error") {
           yield* put(paperIndexFailed(event.message));
@@ -152,6 +167,11 @@ export function* papersSaga() {
   // from the now-empty persisted state. `takeLeading` ignores duplicate clicks
   // while a reset is in flight.
   yield* takeLeading(resetIndices, function* () {
+    const commands = yield* select((state) => state.papers.availableCommands);
+    if (!commands.includes("reset_all_indices")) {
+      yield* put(resetIndicesFailed("Reset indices is unavailable in this build."));
+      return;
+    }
     try {
       yield* call(api.resetAllIndices);
       yield* put(resetIndicesSucceeded());

@@ -1,5 +1,6 @@
 pub mod chunking;
 mod extraction;
+mod preview;
 mod repository;
 mod safe_root;
 mod snapshot;

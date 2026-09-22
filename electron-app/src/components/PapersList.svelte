@@ -18,6 +18,9 @@
     selectPaperIndexStatuses,
     selectBm25PaperIds,
     selectPapersResetting,
+    selectPaperCapabilities,
+    selectPaperStatusesKnown,
+    selectBm25Known,
   } from "../slices/papers/papers-selectors";
   import type { PaperIndexStatus } from "../slices/papers/papers-types";
   import {
@@ -69,6 +72,12 @@
   const bm25PaperIds = selectBm25PaperIds();
   const resetting = selectPapersResetting();
   const activeRoute = selectActiveRoute();
+  const capabilities = selectPaperCapabilities();
+  const statusesKnown = selectPaperStatusesKnown();
+  const bm25Known = selectBm25Known();
+  const canIndex = $derived($capabilities.includes("index_papers_stream"));
+  const canReset = $derived($capabilities.includes("reset_all_indices"));
+  const canSearch = $derived($capabilities.includes("search_papers"));
 
   // A membership set for O(1) per-paper BM25 lookups while rendering the list.
   const bm25Set = $derived(new Set($bm25PaperIds));
@@ -99,8 +108,9 @@
   // Resolve the indicator to show for one paper. Papers without a per-paper
   // entry read as "queued" while a run is active and "not-indexed" otherwise,
   // so an in-flight run visibly forms a queue that drains one paper at a time.
-  type PaperIndicator = PaperIndexStatus | "not-indexed";
+  type PaperIndicator = PaperIndexStatus | "not-indexed" | "unavailable";
   function paperStatus(id: string): PaperIndicator {
+    if (!$statusesKnown && !$indexing) return "unavailable";
     const status = $indexStatuses[id];
     if (status) {
       return status;
@@ -109,6 +119,7 @@
   }
 
   const INDICATOR_LABELS: Record<PaperIndicator, string> = {
+    unavailable: "Status unavailable",
     "not-indexed": "Not indexed",
     queued: "Queued",
     indexing: "Indexing…",
@@ -121,6 +132,7 @@
   // A single colored dot conveys the status; the label is exposed only as a
   // tooltip (native title) and accessible aria-label, never inline text.
   const INDICATOR_DOT_CLASSES: Record<PaperIndicator, string> = {
+    unavailable: "bg-muted-foreground/40",
     "not-indexed": "bg-muted-foreground/40",
     queued: "bg-yellow-500",
     indexing: "bg-blue-500",
@@ -136,7 +148,7 @@
 
   function submitSearch(event: Event) {
     event.preventDefault();
-    if (!query.trim() || $searching) {
+    if (!canSearch || !query.trim() || $searching) {
       return;
     }
     store.dispatch(runPaperSearch(query));
@@ -147,14 +159,14 @@
   }
 
   function indexPapers() {
-    if ($indexing) {
+    if (!canIndex || $indexing) {
       return;
     }
     store.dispatch(runPaperIndex());
   }
 
   function startReset() {
-    if ($indexing || $resetting) {
+    if (!canReset || $indexing || $resetting) {
       return;
     }
     store.dispatch(resetIndices());
@@ -202,9 +214,9 @@
         class="flex-1"
         placeholder="Search papers…"
         bind:value={query}
-        disabled={$searching}
+        disabled={!canSearch || $searching}
       />
-      <Button type="submit" size="lg" disabled={$searching || !query.trim()}>
+      <Button type="submit" size="lg" disabled={!canSearch || $searching || !query.trim()}>
         {#if $searching}
           <LoaderCircle class="size-4 animate-spin" />
           Searching…
@@ -223,7 +235,8 @@
       variant="outline"
       size="lg"
       onclick={indexPapers}
-      disabled={$indexing || $resetting}
+      disabled={!canIndex || $indexing || $resetting}
+      title={canIndex ? "Index papers" : "Paper indexing is unavailable in this build"}
     >
       {$indexing ? "Indexing…" : "Index papers"}
     </Button>
@@ -232,8 +245,8 @@
       variant="outline"
       size="lg"
       onclick={startReset}
-      disabled={$indexing || $resetting}
-      title="Delete the vector, BM25, and per-paper status indexes"
+      disabled={!canReset || $indexing || $resetting}
+      title={canReset ? "Delete the vector, BM25, and per-paper status indexes" : "Reset indices is unavailable in this build"}
     >
       {$resetting ? "Resetting…" : "Reset indices"}
     </Button>
@@ -250,6 +263,12 @@
       aria-live="polite"
       aria-atomic="true"
     >
+      {#if !canIndex || !canSearch || !canReset}
+        <p class="text-muted-foreground">PDF browsing only. Indexing, search, and reset are not yet available in this build.</p>
+      {/if}
+      {#if !$statusesKnown || !$bm25Known}
+        <p class="text-muted-foreground">Index status unavailable; existing index contents have not been checked.</p>
+      {/if}
       <div
         class="flex items-center justify-between gap-2 text-muted-foreground"
       >
@@ -365,10 +384,10 @@
                   aria-label={`Vector index status: ${INDICATOR_LABELS[status]}`}
                 ></span>
                 <span
-                  class={`size-1.5 shrink-0 rounded-full ${inBm25 ? "bg-violet-500" : "bg-muted-foreground/40"}`}
+                  class={`size-1.5 shrink-0 rounded-full ${$bm25Known && inBm25 ? "bg-violet-500" : "bg-muted-foreground/40"}`}
                   role="img"
-                  title={inBm25 ? "In BM25 index" : "Not in BM25 index"}
-                  aria-label={`BM25 index: ${inBm25 ? "indexed" : "not indexed"}`}
+                  title={!$bm25Known ? "BM25 status unavailable" : inBm25 ? "In BM25 index" : "Not in BM25 index"}
+                  aria-label={`BM25 index: ${!$bm25Known ? "status unavailable" : inBm25 ? "indexed" : "not indexed"}`}
                 ></span>
               </span>
               <span class="text-xs text-muted-foreground">
@@ -376,7 +395,7 @@
               </span>
             </Button>
           {/each}
-          {#if !$loading && $papers.length === 0}
+          {#if !$loading && !$error && $papers.length === 0}
             <p class="p-2 text-sm text-muted-foreground">No papers found.</p>
           {/if}
         {/if}

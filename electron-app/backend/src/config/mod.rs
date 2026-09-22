@@ -95,6 +95,52 @@ impl Configuration for AppConfig {
     }
 }
 
+/// The read-only subset of configuration: no provider, dotenv, history or index
+/// settings are consulted just to browse. The same root separation applies.
+pub struct PaperBrowsingConfig {
+    pub data_root: PathBuf,
+    pub resources: PathBuf,
+    pub papers: PathBuf,
+}
+
+impl PaperBrowsingConfig {
+    pub fn new(data: &Path, resources: &Path, papers: &Path) -> Result<Self, ConfigError> {
+        let data_root = validate_root(data)?;
+        let resources = read_only_root(resources)?;
+        let papers = read_only_root(papers)?;
+        if data_root.starts_with(&resources)
+            || resources.starts_with(&data_root)
+            || papers.starts_with(&data_root)
+            || data_root.starts_with(&papers)
+        {
+            return Err(ConfigError::InvalidPath);
+        }
+        Ok(Self {
+            data_root,
+            resources,
+            papers,
+        })
+    }
+}
+
+fn read_only_root(path: &Path) -> Result<PathBuf, ConfigError> {
+    if !path.is_absolute()
+        || path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(ConfigError::InvalidPath);
+    }
+    let path = path.canonicalize().map_err(|_| ConfigError::InvalidPath)?;
+    if !path.is_dir() {
+        return Err(ConfigError::InvalidPath);
+    }
+    Ok(path)
+}
+
 impl AppConfig {
     pub fn from_env(app_data_root: &Path, resources: &Path) -> Result<Self, ConfigError> {
         Self::from_lookup(app_data_root, resources, |key| std::env::var(key).ok())
@@ -121,22 +167,14 @@ impl AppConfig {
         resources: &Path,
         env: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ConfigError> {
-        let root = validate_root(app_data_root)?;
-        let resources = resources
-            .canonicalize()
-            .map_err(|_| ConfigError::InvalidPath)?;
-        if !resources.is_dir() || root.starts_with(&resources) || resources.starts_with(&root) {
-            return Err(ConfigError::InvalidPath);
-        }
         let papers = env("CAPSTONE_PAPERS_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| resources.join("ResearchPapers"));
-        let papers = papers
-            .canonicalize()
-            .map_err(|_| ConfigError::InvalidPath)?;
-        if !papers.is_dir() || papers.starts_with(&root) || root.starts_with(&papers) {
-            return Err(ConfigError::InvalidPath);
-        }
+        let PaperBrowsingConfig {
+            data_root: root,
+            resources,
+            papers,
+        } = PaperBrowsingConfig::new(app_data_root, resources, &papers)?;
         let history = env("CAPSTONE_APP_DB_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| root.join("chat_history.sqlite3"));

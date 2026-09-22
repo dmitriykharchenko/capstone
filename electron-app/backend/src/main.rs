@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use research_backend::{registry::Registry, runtime::serve};
+use research_backend::{composition::browsing_registry, runtime::serve};
 
 fn main() {
     std::panic::set_hook(Box::new(|_| eprintln!("backend: internal failure")));
@@ -18,7 +18,7 @@ fn main() {
     let result = runtime.block_on(serve(
         tokio::io::stdin(),
         tokio::io::stdout(),
-        Registry::foundation(),
+        browsing_registry(|key| std::env::var(key).ok()),
     ));
     // Tokio stdin uses a blocking read. A closed stdout must not keep the child
     // alive forever waiting for an owner that no longer reads protocol output.

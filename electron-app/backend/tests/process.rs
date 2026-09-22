@@ -1,4 +1,7 @@
 use research_backend::protocol::MAX_FRAME_BYTES;
+#[allow(dead_code)]
+mod papers_fixtures;
+use papers_fixtures::{Page, pdf};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -15,19 +18,36 @@ struct Process {
 }
 impl Process {
     fn start() -> Self {
+        Self::configured(true)
+    }
+    fn configured(configured: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let binary = root.path().join("research-backend");
         std::fs::copy(env!("CARGO_BIN_EXE_research-backend"), &binary).unwrap();
         // No Python executable, credentials, repository cwd or legacy resources.
-        let mut child = Command::new(binary)
+        let resources = root.path().join("resources");
+        let papers = resources.join("ResearchPapers");
+        std::fs::create_dir_all(&papers).unwrap();
+        std::fs::write(
+            papers.join("Test.pdf"),
+            pdf(vec![Page::Text(vec![b"Native preview".to_vec()])]),
+        )
+        .unwrap();
+        let mut command = Command::new(binary);
+        command
             .current_dir(root.path())
             .env_clear()
             .env("PATH", root.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::piped());
+        if configured {
+            command
+                .env("CAPSTONE_APP_DATA_ROOT", root.path().join("data"))
+                .env("CAPSTONE_RESOURCES_DIR", &resources)
+                .env("CAPSTONE_PAPERS_DIR", &papers);
+        }
+        let mut child = command.spawn().unwrap();
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().unwrap();
         let (sender, output) = mpsc::channel();
@@ -108,12 +128,14 @@ fn copied_executable_is_long_lived_without_python_or_repository_resources() {
 }
 
 #[test]
-fn every_domain_command_explicitly_reports_unavailable_in_the_real_binary() {
+fn unfinished_domain_commands_report_unavailable_in_the_configured_binary() {
     let mut process = Process::start();
     let requests: Value =
         serde_json::from_str(include_str!("../../contracts/command-requests.json")).unwrap();
     for request in requests.as_array().unwrap() {
-        if request["command"] == "health" {
+        if ["health", "list_papers", "get_paper", "read_pdf"]
+            .contains(&request["command"].as_str().unwrap())
+        {
             continue;
         }
         let command = request["command"].as_str().unwrap();
@@ -123,6 +145,113 @@ fn every_domain_command_explicitly_reports_unavailable_in_the_real_binary() {
         assert_eq!(output["type"], "error");
         assert_eq!(output["error"]["code"], "unavailable");
     }
+    process.finish();
+}
+
+#[test]
+fn unconfigured_binary_is_health_only_without_cwd_discovery() {
+    let mut process = Process::configured(false);
+    process.send(json!({"v":1,"type":"request","id":"health","command":"health","params":{}}));
+    let health = process.next();
+    let commands = health["data"]["commands"].as_array().unwrap();
+    assert_eq!(
+        commands.iter().filter(|c| c["available"] == true).count(),
+        1
+    );
+    process.send(json!({"v":1,"type":"request","id":"list","command":"list_papers","params":{}}));
+    assert_eq!(process.next()["error"]["code"], "unavailable");
+    process.finish();
+}
+
+#[test]
+fn real_binary_lists_gets_and_streams_only_configured_pdf_bytes() {
+    let mut process = Process::start();
+    process.send(json!({"v":1,"type":"request","id":"health","command":"health","params":{}}));
+    let health = process.next();
+    assert_eq!(health["data"]["stage"], "paper_browsing");
+    assert_eq!(
+        health["data"]["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["available"] == true)
+            .count(),
+        4
+    );
+    for (id, command, params) in [
+        ("list", "list_papers", json!({})),
+        ("get", "get_paper", json!({"paper_id":"Test"})),
+    ] {
+        process.send(json!({"v":1,"type":"request","id":id,"command":command,"params":params}));
+        let result = process.next();
+        assert_eq!(result["type"], "result");
+        let paper = if command == "list_papers" {
+            &result["data"][0]
+        } else {
+            &result["data"]
+        };
+        assert_eq!(paper["id"], "Test");
+        assert!(!paper.to_string().contains("resources"));
+    }
+    process.send(json!({"v":1,"type":"request","id":"read","command":"read_pdf","params":{"paper_id":"Test"}}));
+    let mut bytes = Vec::new();
+    loop {
+        let result = process.next();
+        if result["type"] == "result" {
+            assert_eq!(result["data"]["total_bytes"], bytes.len());
+            break;
+        }
+        assert_eq!(result["event"], "pdf_chunk");
+        assert_eq!(result["data"]["offset"], bytes.len());
+        let chunk: Vec<u8> = serde_json::from_value(result["data"]["bytes"].clone()).unwrap();
+        assert!(chunk.len() <= 64 * 1024);
+        bytes.extend(chunk);
+    }
+    assert_eq!(
+        bytes,
+        std::fs::read(
+            process
+                ._root
+                .path()
+                .join("resources/ResearchPapers/Test.pdf")
+        )
+        .unwrap()
+    );
+    let encrypted = papers_fixtures::encrypted_pdf(true);
+    std::fs::write(
+        process
+            ._root
+            .path()
+            .join("resources/ResearchPapers/Locked.pdf"),
+        &encrypted,
+    )
+    .unwrap();
+    process.send(json!({"v":1,"type":"request","id":"locked","command":"read_pdf","params":{"paper_id":"Locked"}}));
+    let mut transferred = Vec::new();
+    loop {
+        let output = process.next();
+        if output["type"] == "result" {
+            assert_eq!(output["data"]["total_bytes"], encrypted.len());
+            break;
+        }
+        assert_eq!(output["type"], "event");
+        assert_eq!(output["data"]["offset"], transferred.len());
+        let chunk: Vec<u8> = serde_json::from_value(output["data"]["bytes"].clone()).unwrap();
+        transferred.extend(chunk);
+    }
+    assert!(
+        transferred == encrypted,
+        "encrypted preview bytes must remain unchanged"
+    );
+    for (id, paper) in [
+        ("missing", "missing"),
+        ("traversal", "../Test"),
+        ("absolute", "/Test"),
+    ] {
+        process.send(json!({"v":1,"type":"request","id":id,"command":"read_pdf","params":{"paper_id":paper}}));
+        assert_eq!(process.next()["error"]["code"], "invalid_params");
+    }
+    assert!(!process._root.path().join("data").exists());
     process.finish();
 }
 

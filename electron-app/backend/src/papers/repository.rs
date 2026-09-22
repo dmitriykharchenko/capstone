@@ -20,6 +20,8 @@ use crate::{
 #[derive(Clone)]
 pub struct NativePaperRepository {
     root: Arc<SafeRoot>,
+    #[cfg(test)]
+    before_preview: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl NativePaperRepository {
@@ -28,6 +30,8 @@ impl NativePaperRepository {
     pub fn new(directory: impl AsRef<Path>) -> PaperResult<Self> {
         Ok(Self {
             root: Arc::new(SafeRoot::new(directory.as_ref())?),
+            #[cfg(test)]
+            before_preview: None,
         })
     }
 
@@ -238,7 +242,17 @@ impl PaperRepository for NativePaperRepository {
         Box::pin(async move {
             let cancellation = context.cancellation();
             let id = paper_id.clone();
-            let bytes = blocking(move || repository.read_pdf_bytes(&id, &cancellation)).await?;
+            let bytes = super::preview::owned(cancellation, move |cancellation| {
+                let bytes = repository.read_pdf_bytes(&id, &cancellation)?;
+                #[cfg(test)]
+                if let Some(hook) = &repository.before_preview {
+                    hook();
+                }
+                super::preview::validate(&bytes, &cancellation)?;
+                Ok(bytes)
+            })
+            .await
+            .map_err(ErrorCode::from)?;
             for (index, chunk) in bytes.chunks(PDF_CHUNK_BYTES).enumerate() {
                 let event = PdfChunk {
                     offset: (index * PDF_CHUNK_BYTES) as u64,
@@ -295,7 +309,7 @@ pub enum PaperCommand {
     ReadPdf,
 }
 
-/// Validated adapters, intentionally not installed in the production registry.
+/// Validated adapters installed only by trusted browsing composition.
 pub struct PaperCommandHandler {
     repository: NativePaperRepository,
     command: PaperCommand,
@@ -337,3 +351,7 @@ impl CommandHandler for PaperCommandHandler {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "preview_tests.rs"]
+mod preview_tests;
