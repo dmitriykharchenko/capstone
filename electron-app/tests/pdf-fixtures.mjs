@@ -38,6 +38,19 @@ function pdf(objects, trailer = '') {
 }
 
 export function syntheticPdf(kind = 'text') {
+  if (kind === 'multipage') {
+    const objects = ['<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+    for (let page = 1; page <= 3; page++) {
+      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ` +
+        `/Resources << /Font << /F1 3 0 R >> >> /Contents ${page * 2 + 3} 0 R >>`,
+      stream(Buffer.from(`BT /F1 24 Tf 48 720 Td (Synthetic PDF page ${page} of 3) Tj ` +
+        '0 -48 Td /F1 16 Tf (Select this generated text to check alignment.) Tj ' +
+        '0 -560 Td (End of generated page.) Tj ET')));
+    }
+    return { bytes: pdf(objects), password: undefined };
+  }
   let content = Buffer.from(kind === 'blank' ? '' : 'BT /F1 16 Tf 20 100 Td (Synthetic PDF sample) Tj ET');
   let resources = '/Font << /F1 5 0 R >>';
   let resource = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
