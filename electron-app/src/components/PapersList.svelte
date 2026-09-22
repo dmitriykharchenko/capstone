@@ -21,6 +21,8 @@
     selectPaperCapabilities,
     selectPaperStatusesKnown,
     selectBm25Known,
+    selectIndexReadiness,
+    selectIndexAttempts,
   } from "../slices/papers/papers-selectors";
   import type { PaperIndexStatus } from "../slices/papers/papers-types";
   import {
@@ -75,8 +77,10 @@
   const capabilities = selectPaperCapabilities();
   const statusesKnown = selectPaperStatusesKnown();
   const bm25Known = selectBm25Known();
-  const canIndex = $derived($capabilities.includes("index_papers_stream"));
-  const canReset = $derived($capabilities.includes("reset_all_indices"));
+  const indexReadiness = selectIndexReadiness();
+  const indexAttempts = selectIndexAttempts();
+  const canIndex = $derived($indexReadiness === "ready" && $capabilities.includes("index_papers_stream"));
+  const canReset = $derived($indexReadiness === "ready" && $capabilities.includes("reset_all_indices"));
   const canSearch = $derived($capabilities.includes("search_papers"));
 
   // A membership set for O(1) per-paper BM25 lookups while rendering the list.
@@ -126,6 +130,8 @@
     indexed: "Indexed",
     empty: "No text",
     failed: "Failed",
+    stale: "Source changed; reindex required",
+    not_indexed: "Not indexed",
     skipped: "Already indexed",
   };
 
@@ -139,6 +145,8 @@
     indexed: "bg-green-500",
     empty: "bg-muted-foreground/40",
     failed: "bg-red-500",
+    stale: "bg-yellow-500",
+    not_indexed: "bg-muted-foreground/40",
     skipped: "bg-green-500",
   };
 
@@ -234,7 +242,7 @@
       size="lg"
       onclick={startReset}
       disabled={!canReset || $indexing || $resetting}
-      title={canReset ? "Delete the vector, BM25, and per-paper status indexes" : "Reset indices is unavailable in this build"}
+      title={canReset ? "Clear native vectors, BM25, graph, and publication state; preserve PDFs and history" : "Reset indices is unavailable"}
     >
       {$resetting ? "Resetting…" : "Reset indices"}
     </Button>
@@ -251,9 +259,14 @@
       aria-live="polite"
       aria-atomic="true"
     >
-      {#if !canIndex || !canSearch || !canReset}
-        <p class="text-muted-foreground">PDF browsing only. Indexing, search, and reset are not yet available in this build.</p>
+      {#if $indexReadiness === "rebuild_required"}
+        <p class="text-muted-foreground">Native indexes require an explicit reviewed rebuild. Existing data has not been adopted or reset.</p>
+      {:else if $indexReadiness === "recovery_required" || $indexReadiness === "recovering"}
+        <p class="text-muted-foreground">Native index recovery is required. Indexing and reset are blocked; PDFs and history are preserved.</p>
+      {:else if !canIndex || !canReset}
+        <p class="text-muted-foreground">Native indexing is unavailable. Check the explicit indexing opt-in and provider configuration.</p>
       {/if}
+      {#if !canSearch}<p class="text-muted-foreground">Paper search is not integrated. Browsing never starts paid indexing automatically.</p>{/if}
       {#if !$statusesKnown || !$bm25Known}
         <p class="text-muted-foreground">Index status unavailable; existing index contents have not been checked.</p>
       {/if}
@@ -368,8 +381,8 @@
                   class={`size-1.5 shrink-0 rounded-full ${INDICATOR_DOT_CLASSES[status]}`}
                   class:animate-pulse={status === "indexing"}
                   role="img"
-                  title={`Vector index: ${INDICATOR_LABELS[status]}`}
-                  aria-label={`Vector index status: ${INDICATOR_LABELS[status]}`}
+                  title={$indexing ? `Session indexing attempt: ${INDICATOR_LABELS[status]}. Durable publication will be refreshed after this run.` : `Native publication: ${INDICATOR_LABELS[status]}. Session attempt: ${$indexAttempts[paper.id]?.status ?? "unknown"}${$indexAttempts[paper.id]?.error ? ` — ${$indexAttempts[paper.id]?.error}` : ""}`}
+                  aria-label={`${$indexing ? "Session indexing attempt" : "Native publication status"}: ${INDICATOR_LABELS[status]}`}
                 ></span>
                 <span
                   class={`size-1.5 shrink-0 rounded-full ${$bm25Known && inBm25 ? "bg-violet-500" : "bg-muted-foreground/40"}`}

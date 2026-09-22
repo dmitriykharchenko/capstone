@@ -99,34 +99,40 @@ test("an already-indexed paper reports a skipped indicator this run", () => {
   assert.equal(skipped.indexStatuses["paper-a"], "skipped");
 });
 
-test("hydration restores persisted terminal indicators and ignores others", () => {
+test("hydration restores durable publication indicators, not failed attempts", () => {
   const hydrated = hydratePaperStatuses(initialPapersState, [
     { paper_id: "paper-a", status: "indexed" },
     { paper_id: "paper-b", status: "empty" },
     { paper_id: "paper-c", status: "failed" },
     { paper_id: "paper-d", status: "indexing" },
     { paper_id: "paper-e", status: "bogus" },
+    { paper_id: "paper-f", status: "stale" },
+    { paper_id: "paper-g", status: "not_indexed" },
   ]);
 
   assert.deepEqual(hydrated.indexStatuses, {
     "paper-a": "indexed",
     "paper-b": "empty",
-    "paper-c": "failed",
+    "paper-f": "stale",
+    "paper-g": "not_indexed",
   });
 });
 
-test("hydration merges over existing indicators without dropping them", () => {
+test("hydration replaces transient indicators and keeps failed attempts separate", () => {
   const withExisting = markPaperIndexing(
     beginPaperIndex(initialPapersState, 1),
     "paper-live",
     "paper-live.pdf",
   );
   const hydrated = hydratePaperStatuses(withExisting, [
-    { paper_id: "paper-persisted", status: "indexed" },
+    { paper_id: "paper-persisted", status: "indexed", attempt: { status: "failed", error: "Embedding or metadata preparation failed." } },
   ]);
 
-  assert.equal(hydrated.indexStatuses["paper-live"], "indexing");
+  assert.equal(hydrated.indexStatuses["paper-live"], undefined);
   assert.equal(hydrated.indexStatuses["paper-persisted"], "indexed");
+  assert.equal(hydrated.indexAttempts["paper-persisted"].status, "failed");
+  const reopened = hydratePaperStatuses(hydrated, [{ paper_id: "paper-persisted", status: "indexed", attempt: null }]);
+  assert.equal(reopened.indexAttempts["paper-persisted"], null);
 });
 
 test("transport failures leave paper indexing retryable", () => {

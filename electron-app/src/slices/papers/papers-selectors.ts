@@ -13,6 +13,8 @@ export const selectSelectedPaperId = store.createSelector(
 export const selectPaperCapabilities = store.createSelector((state) => state.papers.availableCommands);
 export const selectPaperStatusesKnown = store.createSelector((state) => state.papers.statusesKnown);
 export const selectBm25Known = store.createSelector((state) => state.papers.bm25Known);
+export const selectIndexReadiness = store.createSelector((state) => state.papers.indexReadiness);
+export const selectIndexAttempts = store.createSelector((state) => state.papers.indexAttempts);
 export const selectPaperIndexing = store.createSelector(
   (state) => state.papers.indexing,
 );

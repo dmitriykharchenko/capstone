@@ -1,4 +1,4 @@
-import type { PaperInfo, PaperStatusInfo } from "../../lib/api";
+import type { IndexReadiness, PaperInfo, PaperStatusInfo } from "../../lib/api";
 
 // Per-paper indexing state tracked while a run streams. A paper with no entry
 // is "not indexed"; the component treats a missing entry as "queued" while a
@@ -11,6 +11,8 @@ export type PaperIndexStatus =
   | "indexed"
   | "empty"
   | "failed"
+  | "stale"
+  | "not_indexed"
   | "skipped";
 
 export interface PapersState {
@@ -21,6 +23,8 @@ export interface PapersState {
   availableCommands: string[];
   statusesKnown: boolean;
   bm25Known: boolean;
+  indexReadiness: IndexReadiness;
+  indexAttempts: Record<string, PaperStatusInfo["attempt"]>;
   indexing: boolean;
   indexCompleted: number;
   indexTotal: number;
@@ -47,6 +51,8 @@ export const initialPapersState: PapersState = {
   availableCommands: [],
   statusesKnown: false,
   bm25Known: false,
+  indexReadiness: "unavailable",
+  indexAttempts: {},
   indexing: false,
   indexCompleted: 0,
   indexTotal: 0,
@@ -62,29 +68,29 @@ export const initialPapersState: PapersState = {
   resetting: false,
 };
 
-// Terminal outcomes worth restoring on startup. A run only persists these, but
-// hydration guards against unexpected values so the map stays well-typed.
+// Publication observations accepted from the backend, separate from attempts.
 const HYDRATABLE_STATUSES: readonly PaperIndexStatus[] = [
   "indexed",
   "empty",
-  "failed",
+  "stale",
+  "not_indexed",
 ];
 
-// Merge persisted per-paper outcomes into the indicator map so a restart shows
-// the last known result instead of resetting every paper to "not indexed".
+// Replace attempt indicators with authoritative publication observations. A
+// failed session-only attempt must never overwrite a prior ready publication.
 export function hydratePaperStatuses(
   state: PapersState,
   statuses: PaperStatusInfo[],
 ): PapersState {
-  const indexStatuses: Record<string, PaperIndexStatus> = {
-    ...state.indexStatuses,
-  };
+  const indexStatuses: Record<string, PaperIndexStatus> = {};
+  const indexAttempts: PapersState["indexAttempts"] = {};
   for (const entry of statuses) {
     if ((HYDRATABLE_STATUSES as string[]).includes(entry.status)) {
       indexStatuses[entry.paper_id] = entry.status as PaperIndexStatus;
+      indexAttempts[entry.paper_id] = entry.attempt ?? null;
     }
   }
-  return { ...state, indexStatuses, statusesKnown: true };
+  return { ...state, indexStatuses, indexAttempts, statusesKnown: true, indexReadiness: "ready" };
 }
 
 export function beginPaperIndex(state: PapersState, total: number): PapersState {
@@ -101,6 +107,9 @@ export function beginPaperIndex(state: PapersState, total: number): PapersState 
     indexSkippedCount: 0,
     indexError: null,
     indexStatuses: {},
+    indexAttempts: {},
+    statusesKnown: false,
+    bm25Known: false,
   };
 }
 
@@ -171,6 +180,8 @@ export function rejectPaperIndex(
     ...state,
     indexing: false,
     indexError: error,
+    statusesKnown: false,
+    bm25Known: false,
   };
 }
 
@@ -184,7 +195,7 @@ export function setBm25PaperIds(
 }
 
 export function beginReset(state: PapersState): PapersState {
-  return { ...state, resetting: true, indexError: null };
+  return { ...state, resetting: true, indexError: null, statusesKnown: false, bm25Known: false };
 }
 
 // Clear every derived indexing indicator once the backend has wiped all
@@ -195,6 +206,7 @@ export function completeReset(state: PapersState): PapersState {
     ...state,
     resetting: false,
     indexStatuses: {},
+    indexAttempts: {},
     bm25PaperIds: [],
     indexedCount: null,
     indexEmptyCount: 0,
@@ -204,5 +216,5 @@ export function completeReset(state: PapersState): PapersState {
 }
 
 export function rejectReset(state: PapersState, error: string): PapersState {
-  return { ...state, resetting: false, indexError: error };
+  return { ...state, resetting: false, indexError: error, statusesKnown: false, bm25Known: false };
 }

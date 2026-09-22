@@ -8,7 +8,8 @@ import { Backend } from '../electron/backend.mjs';
 import { Broker } from '../electron/broker.mjs';
 
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-const reset = { ok: true, reset: { vector: true, bm25: true, statuses: true } };
+const reset = { ok: true, reset: { vector: true, bm25: true, statuses: true, graph: true },
+  preserved: { pdfs: true, history: true } };
 const chat = { session_id: 's', reply: 'committed', chat_mode: 'rag', indexed: true, sources: [] };
 const preload = await readFile(new URL('../electron/preload.cjs', import.meta.url), 'utf8');
 

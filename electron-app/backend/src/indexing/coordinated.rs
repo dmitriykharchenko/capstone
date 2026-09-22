@@ -55,13 +55,20 @@ pub struct PublishedPaper {
     pub version_id: String,
     pub source_sha256: String,
     pub empty: bool,
+    pub chunk_count: usize,
 }
 impl PublishedPaper {
     fn from_version(v: &Version) -> IndexResult<Self> {
+        let r = v.validate()?.0;
+        let chunk_count = match r.restore_operation(r.identity())? {
+            PreparedOperation::ReplacePaper(p) => p.chunks().len(),
+            _ => 0,
+        };
         Ok(Self {
             version_id: v.id.clone(),
             source_sha256: v.source.clone(),
-            empty: !v.validate()?.0.has_rows(),
+            empty: !r.has_rows(),
+            chunk_count,
         })
     }
 }
@@ -69,6 +76,7 @@ impl PublishedPaper {
 #[derive(Clone)]
 pub struct CoordinatedIndex {
     gate: DerivedStoreGate,
+    request_job: std::sync::Arc<tokio::sync::Mutex<()>>,
     journal: Journal,
     retrieval: VectorStore,
     graph: CozoGraphStore,
@@ -157,6 +165,7 @@ impl CoordinatedIndex {
         .await?;
         Ok(Self {
             gate: DerivedStoreGate::new(),
+            request_job: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             journal,
             retrieval,
             graph,
@@ -165,6 +174,65 @@ impl CoordinatedIndex {
     }
     pub fn gate(&self) -> &DerivedStoreGate {
         &self.gate
+    }
+    pub(super) fn papers(&self) -> NativePaperRepository {
+        self.papers.clone()
+    }
+    pub(super) fn request_job(&self) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        self.request_job.clone()
+    }
+    pub(super) fn identity(&self) -> EmbeddingIdentity {
+        self.retrieval.identity().clone()
+    }
+    /// One verified authority/store observation. Source freshness is a read-only
+    /// observation, not a lease against external editors. No providers or repair.
+    pub async fn inspect(
+        &self,
+        ids: Vec<String>,
+        cancellation: Cancellation,
+    ) -> IndexResult<Vec<(String, Option<PublishedPaper>, bool)>> {
+        cancellation.check()?;
+        let _guard = self.gate.read().await?;
+        if let Err(error) = self.verify_ready().await {
+            self.gate.poison();
+            return Err(error);
+        }
+        let mut result = Vec::new();
+        for id in ids {
+            cancellation.check()?;
+            let lookup = id.clone();
+            let version = self
+                .journal(Lane::Startup, move |j, _| j.active(&lookup))
+                .await;
+            let version = match version {
+                Ok(v) => v,
+                Err(e) => {
+                    self.gate.poison();
+                    return Err(e);
+                }
+            };
+            let published = version
+                .as_ref()
+                .map(PublishedPaper::from_version)
+                .transpose()?;
+            let current = if let Some(v) = &published {
+                let repo = self.papers.clone();
+                let paper = id.clone();
+                let expected = v.source_sha256.clone();
+                joined(cancellation.clone(), move |c| {
+                    match repo.read_pdf_bytes(&paper, &c) {
+                        Ok(bytes) => Ok(journal::digest(&bytes) == expected),
+                        Err(crate::papers::PaperError::Cancelled) => Err(IndexError::Cancelled),
+                        Err(_) => Ok(false),
+                    }
+                })
+                .await?
+            } else {
+                false
+            };
+            result.push((id, published, current));
+        }
+        Ok(result)
     }
     async fn journal<T, F>(&self, lane: Lane<'_>, f: F) -> IndexResult<T>
     where

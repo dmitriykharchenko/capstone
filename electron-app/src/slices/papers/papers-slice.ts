@@ -1,7 +1,7 @@
 import { createAction } from "@augmentcode/themis/utils/store/create-action";
 import { createReducer } from "@augmentcode/themis/utils/store/create-reducer";
 import type { StoreAction, StoreReducerFunction } from "@augmentcode/themis/types";
-import type { PaperInfo, PaperStatusInfo } from "../../lib/api";
+import type { IndexReadiness, PaperInfo, PaperStatusInfo } from "../../lib/api";
 import {
   beginPaperIndex,
   beginReset,
@@ -26,6 +26,7 @@ export const setPaperStatuses = createAction<[statuses: PaperStatusInfo[]]>(
 export const papersFailed = createAction<[error: string]>("papers/failed");
 export const setPaperCapabilities = createAction<[commands: string[]]>("papers/capabilities");
 export const bm25Unavailable = createAction("papers/bm25Unavailable");
+export const setIndexReadiness = createAction<[readiness: IndexReadiness]>("papers/indexReadiness");
 
 // Selection only. The mounted reader owns bytes, loading, rendering and passwords.
 export const openPaper = createAction<[paperId: string]>("papers/open");
@@ -66,7 +67,7 @@ export const setBm25Statuses = createAction<[paperIds: string[]]>(
   "papers/setBm25Statuses",
 );
 
-// Reset every derived paper index (embedded vectors, BM25, SQLite statuses).
+// Reset native derived state, including graph; preserve PDFs and history.
 export const resetIndices = createAction("papers/resetIndices");
 export const resetIndicesSucceeded = createAction(
   "papers/resetIndicesSucceeded",
@@ -84,11 +85,15 @@ export const papersReducer: StoreReducerFunction<PapersState> =
       availableCommands: [],
       statusesKnown: false,
       bm25Known: false,
+      indexReadiness: "unavailable",
     }))
     .with(setPaperCapabilities, (state: PapersState, action: StoreAction<[string[]]>) => ({
       ...state, availableCommands: action.payload[0],
     }))
     .with(bm25Unavailable, (state: PapersState) => ({ ...state, bm25Known: false }))
+    .with(setIndexReadiness, (state: PapersState, action: StoreAction<[IndexReadiness]>) => ({
+      ...state, indexReadiness: action.payload[0], statusesKnown: false, bm25Known: false,
+    }))
     .with(setPapers, (state: PapersState, action: StoreAction<[PaperInfo[]]>) => ({
       ...state,
       loading: false,

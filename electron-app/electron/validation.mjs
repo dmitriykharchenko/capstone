@@ -42,7 +42,8 @@ export const methods = Object.freeze({
   search: ['search', object({ query: nonempty, limit: optional(limit), session_id: optional(identifier) })],
   searchPapers: ['search_papers', object({ query: nonempty, limit: optional(limit) })],
   graphNeighborhood: ['graph_neighborhood', object({ node_id: identifier, max_depth: oneOf(1, 2) })],
-  indexPapers: ['index_papers', empty], indexPapersStream: ['index_papers_stream', empty],
+  indexPapers: ['index_papers', object({ reindex: optional(bool) })],
+  indexPapersStream: ['index_papers_stream', object({ reindex: optional(bool) })],
   paperStatuses: ['paper_statuses', empty], bm25Status: ['bm25_status', empty],
   resetAllIndices: ['reset_all_indices', empty],
   runEvaluation: ['evaluate_stream', object({ retrieval_type: oneOf('hybrid'), test_cases: cases })],
@@ -95,8 +96,16 @@ export const caseResult = object({ case_index: positive, input: testCase, retrie
 export const evaluationResult = object({ retrieval_type: oneOf('hybrid'), ...progress,
   succeeded: uint, failed: uint, aggregate_scores: aggregateScores });
 
-const status = object({ paper_id: paperId, filename: nonempty, status: nonempty,
-  chunk_count: uint, error: nullable(text), updated_at: text });
+export const indexReadiness = oneOf('ready', 'recovering', 'recovery_required', 'rebuild_required', 'unavailable');
+export const indexFailure = oneOf('PDF text could not be extracted.',
+  'PDF changed during indexing. Run indexing again.', 'Embedding or metadata preparation failed.',
+  'Paper exceeds the indexing safety limits. Prior publication was preserved.');
+export const indexOutcome = oneOf('indexed', 'empty', 'skipped', 'failed');
+const status = object({ paper_id: paperId, filename: nonempty,
+  status: oneOf('indexed', 'empty', 'stale', 'not_indexed'), chunk_count: uint,
+  version_id: nullable(nonempty), attempt_scope: oneOf('session'),
+  attempt: nullable(object({ status: oneOf('preparing', 'interrupted', 'indexed', 'empty', 'skipped', 'failed'),
+    error: nullable(indexFailure), observed_at: nonempty })) });
 const graph = object({ enabled: bool, available: bool, query: oneOf('neighborhood'), reason: optional(nonempty),
   neighborhood: object({ nodes: array(object({ node_id: nonempty, kind: oneOf('paper', 'author', 'topic'), label: nonempty })),
     edges: array(object({ source_id: nonempty, target_id: nonempty, kind: oneOf('authored_by', 'has_topic') })) }) });
@@ -110,11 +119,11 @@ const responses = {
   search_papers: object({ enabled: bool, reason: optional(text), matches: array(object({ paper_id: paperId,
     title: text, filename: nonempty, page: nullable(uint), snippet: text, score: number })) }),
   graph_neighborhood: graph,
-  index_papers: object({ enabled: bool, indexed: uint, reason: optional(text),
-    papers: optional(array(object({ paper_id: paperId, filename: nonempty, status: nonempty, chunk_count: uint, error: nullable(text) }))) }),
-  paper_statuses: object({ statuses: array(status) }),
-  bm25_status: object({ built: bool, chunk_count: uint, paper_ids: array(paperId) }),
-  reset_all_indices: object({ ok: bool, reset: object({ vector: bool, bm25: bool, statuses: bool }) }),
+  index_papers: object({ enabled: oneOf(true), indexed: uint, summary: indexResult }),
+  paper_statuses: object({ readiness: indexReadiness, statuses: array(status) }),
+  bm25_status: object({ readiness: indexReadiness, built: bool, chunk_count: uint, paper_ids: array(paperId) }),
+  reset_all_indices: object({ ok: oneOf(true), reset: object({ vector: oneOf(true), bm25: oneOf(true), statuses: oneOf(true), graph: oneOf(true) }),
+    preserved: object({ pdfs: oneOf(true), history: oneOf(true) }) }),
   health: object({ ok: bool, protocol_version: oneOf(1), backend: oneOf('rust'), stage: nonempty,
     chat_mode: nonempty, search_enabled: bool, commands: array(object({ command: nonempty, owner: nonempty,
       streaming: bool, available: bool }), 64) }, false),
@@ -123,11 +132,25 @@ const responses = {
 export function parseResponse(command, value) {
   requireValid(Object.hasOwn(responses, command));
   const result = responses[command](value);
-  if (command === 'paper_statuses') result.statuses.forEach((item) => {
-    if (item.error !== null) item.error = 'Paper indexing failed.';
-  });
-  if (command === 'index_papers') result.papers?.forEach((item) => {
-    if (item.error !== null) item.error = 'Paper indexing failed.';
-  });
+  if (command === 'paper_statuses') {
+    requireValid(result.readiness === 'ready' || result.statuses.length === 0);
+    requireValid(new Set(result.statuses.map(p => p.paper_id)).size === result.statuses.length);
+    result.statuses.forEach((item) => {
+      requireValid((item.status === 'not_indexed') === (item.version_id === null));
+      if (['empty', 'not_indexed'].includes(item.status)) requireValid(item.chunk_count === 0);
+      if (item.status === 'indexed') requireValid(item.chunk_count > 0);
+      if (item.attempt) requireValid((item.attempt.status === 'failed') === (item.attempt.error !== null));
+    });
+  }
+  if (command === 'bm25_status') {
+    requireValid(result.built === (result.readiness === 'ready'));
+    requireValid(result.built || (result.chunk_count === 0 && result.paper_ids.length === 0));
+    requireValid(new Set(result.paper_ids).size === result.paper_ids.length);
+    requireValid(result.chunk_count >= result.paper_ids.length);
+  }
+  if (command === 'index_papers') {
+    const s = result.summary;
+    requireValid(s.completed === s.total && s.indexed + s.empty + s.failed + s.skipped === s.total && result.indexed === s.indexed);
+  }
   return result;
 }

@@ -62,6 +62,7 @@ test('failed status refresh stays unknown and does not prevent browsing', async 
   assert.equal(run.state().error, null);
   assert.equal(run.state().statusesKnown, false);
   assert.equal(run.state().bm25Known, false);
+  assert.equal(run.state().indexReadiness, 'unavailable');
 });
 
 test('open/close update selection only; the library saga never creates a second PDF read', async (t) => {
@@ -75,6 +76,43 @@ test('open/close update selection only; the library saga never creates a second 
   run.dispatch(actions.closePaper());
   assert.equal(run.state().selectedId, null);
   for (const key of ['bytes', 'pdfUrl', 'password', 'document']) assert.equal(key in run.state(), false);
+});
+
+test('index failure refreshes durable status without turning a failed reindex into lost publication', async (t) => {
+  let callback, reject;
+  const run = start(t, {
+    indexPapersStream(fn) { callback=fn; return { done:new Promise((_, fail) => { reject=fail; }), cancel() {} }; },
+    paperStatuses: () => handle({ readiness:'ready', statuses:[{ paper_id:'a',status:'indexed',attempt:{ status:'failed',error:'Embedding or metadata preparation failed.' } }] }),
+    bm25Status: () => handle({ readiness:'ready',built:true,paper_ids:['a'],chunk_count:1 }),
+  });
+  run.dispatch(actions.setPaperCapabilities(['index_papers_stream','paper_statuses','bm25_status']));
+  run.dispatch(actions.runPaperIndex()); await settle();
+  callback({ event:'started',paperId:'a',filename:'a.pdf',completed:0,total:1 });
+  reject(Error('outcome unknown')); await settle(); await settle();
+  assert.equal(run.state().indexing,false);
+  assert.equal(run.state().statusesKnown,true);
+  assert.equal(run.state().indexStatuses.a,'indexed');
+  assert.equal(run.state().indexAttempts.a.status,'failed');
+  assert.deepEqual(run.state().bm25PaperIds,['a']);
+  assert.match(run.state().indexError,/outcome unknown/);
+});
+
+test('blocked native status remains unknown rather than looking like an empty index', async (t) => {
+  const run=start(t, { health:() => health(['list_papers','paper_statuses','bm25_status']),
+    listPapers:() => handle([]),paperStatuses:() => handle({ readiness:'rebuild_required',statuses:[] }),
+    bm25Status:() => handle({ readiness:'rebuild_required',built:false,paper_ids:[],chunk_count:0 }) });
+  run.dispatch(actions.loadPapers()); await settle();
+  assert.equal(run.state().indexReadiness,'rebuild_required');
+  assert.equal(run.state().statusesKnown,false); assert.equal(run.state().bm25Known,false);
+});
+
+test('later blocked BM25 observation invalidates earlier ready publication indicators', async (t) => {
+  const run=start(t, { health:() => health(['list_papers','paper_statuses','bm25_status']),
+    listPapers:() => handle([]),paperStatuses:() => handle({ readiness:'ready',statuses:[] }),
+    bm25Status:() => handle({ readiness:'recovery_required',built:false,paper_ids:[],chunk_count:0 }) });
+  run.dispatch(actions.loadPapers()); await settle();
+  assert.equal(run.state().indexReadiness,'recovery_required');
+  assert.equal(run.state().statusesKnown,false); assert.equal(run.state().bm25Known,false);
 });
 
 test('Papers source contract disables unsupported controls and shows unknown status plus inline errors', async () => {

@@ -14,6 +14,7 @@ import {
 import {
   bm25Unavailable,
   setPaperCapabilities,
+  setIndexReadiness,
   loadPapers,
   paperIndexFailed,
   paperIndexPaperStarted,
@@ -60,8 +61,9 @@ export function* papersSaga() {
       // Absent or failed status reads mean UNKNOWN, never "not indexed".
       try {
         if (commands.includes("paper_statuses")) {
-          const { statuses } = yield* call(api.paperStatuses);
-          yield* put(setPaperStatuses(statuses));
+          const { statuses, readiness } = yield* call(api.paperStatuses);
+          yield* put(setIndexReadiness(readiness));
+          if (readiness === "ready") yield* put(setPaperStatuses(statuses));
         }
       } catch {
         // Keep statusesKnown false without preventing PDF browsing.
@@ -69,7 +71,8 @@ export function* papersSaga() {
       try {
         if (commands.includes("bm25_status")) {
           const bm25 = yield* call(api.bm25Status);
-          yield* put(setBm25Statuses(bm25.paper_ids));
+          if (bm25.readiness === "ready") yield* put(setBm25Statuses(bm25.paper_ids));
+          else yield* put(setIndexReadiness(bm25.readiness));
         }
       } catch {
         // Keep bm25Known false.
@@ -118,22 +121,29 @@ export function* papersSaga() {
               event.skipped,
             ),
           );
-          // The BM25 index is rebuilt at the end of the run; refresh the
-          // per-paper BM25 dots to reflect the new coverage. Best-effort.
-          try {
-            const bm25 = yield* call(api.bm25Status);
-            yield* put(setBm25Statuses(bm25.paper_ids));
-          } catch {
-            yield* put(bm25Unavailable());
-          }
+          break;
         } else if (event.event === "error") {
           yield* put(paperIndexFailed(event.message));
+          break;
         }
       }
     } catch (error) {
       yield* put(paperIndexFailed(String(error)));
     } finally {
       channel.close();
+      // A cancelled/lost terminal does not imply rollback. Refresh authoritative
+      // status after every outcome, never leave a failed run's green attempt dots.
+      try {
+        const { readiness, statuses } = yield* call(api.paperStatuses);
+        yield* put(setIndexReadiness(readiness));
+        if (readiness === "ready") yield* put(setPaperStatuses(statuses));
+        const bm25 = yield* call(api.bm25Status);
+        if (bm25.readiness === "ready") yield* put(setBm25Statuses(bm25.paper_ids));
+        else yield* put(setIndexReadiness(bm25.readiness));
+      } catch {
+        yield* put(setIndexReadiness("unavailable"));
+        yield* put(bm25Unavailable());
+      }
     }
   });
 
@@ -152,6 +162,7 @@ export function* papersSaga() {
       yield* put(loadPapers());
     } catch (error) {
       yield* put(resetIndicesFailed(String(error)));
+      yield* put(loadPapers());
     }
   });
 }

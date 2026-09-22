@@ -1,6 +1,6 @@
 import { publicError } from './backend.mjs';
 import { requireValid, object, array, nonempty, text, uint, positive, nullable, oneOf,
-  sources, chatResult, indexResult, evaluationResult, caseResult, testCase, progress } from './validation.mjs';
+  sources, chatResult, indexResult, indexFailure, indexOutcome, evaluationResult, caseResult, testCase, progress } from './validation.mjs';
 
 export const MAX_PDF_BYTES = 64 * 1024 * 1024;
 export const MAX_PDF_CHUNK = 64 * 1024;
@@ -37,7 +37,7 @@ const indexEvents = {
   start: object(progress),
   started: object({ ...progress, paper_id: nonempty, filename: nonempty }),
   progress: object({ ...progress, paper_id: nonempty, filename: nonempty,
-    status: nonempty, chunk_count: uint, error: nullable(text) }),
+    status: indexOutcome, chunk_count: uint, error: nullable(indexFailure) }),
 };
 const evalEvents = {
   run_start: object({ retrieval_type: oneOf('hybrid'), total: positive }),
@@ -63,7 +63,11 @@ export function parseEvent(command, name, value) {
   }
   if (result.completed !== undefined) requireValid(result.completed <= result.total);
   if (result.case_index !== undefined) requireValid(result.case_index <= result.total);
-  if (result.error !== undefined && result.error !== null) result.error = 'Paper indexing failed.';
+  if (command === 'index_papers_stream' && name === 'progress') {
+    requireValid((result.status === 'failed') === (result.error !== null));
+    if (result.status === 'empty' || result.status === 'failed') requireValid(result.chunk_count === 0);
+    if (result.status === 'indexed') requireValid(result.chunk_count > 0);
+  }
   if (name === 'case_success' || name === 'case_failure') {
     requireValid(result.result.case_index === result.completed);
     requireValid((result.result.error === null) === (name === 'case_success'));

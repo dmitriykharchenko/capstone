@@ -1,15 +1,13 @@
-use crate::{
-    registry::BackendFuture,
-    runtime::{Cancellation, RequestContext},
-};
-use serde_json::Value;
-
+mod commands;
 mod coordinated;
 mod gate;
 mod journal;
+mod service;
 mod worker;
+pub use commands::install_commands;
 pub use coordinated::{CoordinatedIndex, PreparedPublication, PublishedPaper};
 pub use gate::{DerivedStoreGate, Readiness};
+pub use service::NativeIndexer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexError {
@@ -74,12 +72,4 @@ impl From<IndexError> for crate::protocol::ErrorCode {
             Self::Internal
         }
     }
-}
-
-pub trait Indexer: Send + Sync {
-    fn index_papers(&self, context: RequestContext) -> BackendFuture<Value>;
-    fn statuses(&self) -> BackendFuture<Value>;
-    fn bm25_status(&self) -> BackendFuture<Value>;
-    // Only new-app derived indexes; retain PDFs and imported conversation history.
-    fn reset(&self, cancellation: Cancellation) -> BackendFuture<Value>;
 }

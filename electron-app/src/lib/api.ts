@@ -47,30 +47,33 @@ export interface PdfData {
   bytes: number[];
 }
 
-// One persisted per-paper indexing outcome, returned by `paper_statuses` so the
-// UI can restore indicators after a restart.
+export type IndexReadiness = "ready" | "recovering" | "recovery_required" | "rebuild_required" | "unavailable";
+// Durable active publication, revalidated against source/store truth. Attempt
+// detail is session-only: null after restart means unknown, not success.
 export interface PaperStatusInfo {
   paper_id: string;
   filename: string;
   status: string;
   chunk_count: number;
-  error: string | null;
-  updated_at: string;
+  version_id: string | null;
+  attempt_scope: "session";
+  attempt: { status: string; error: string | null; observed_at: string } | null;
 }
 
 // Coverage of the persisted BM25 lexical index, returned by `bm25_status`. The
 // UI marks a paper's BM25 dot as indexed when its id appears in `paper_ids`.
 export interface Bm25StatusInfo {
+  readiness: IndexReadiness;
   built: boolean;
   chunk_count: number;
   paper_ids: string[];
 }
 
-// Outcome of `reset_all_indices`: which of the three paper indexes were wiped
-// (embedded vectors, BM25, and the SQLite per-paper status table).
+// Only native derived state is cleared, including graph and exchange vectors.
 export interface ResetIndicesResult {
   ok: boolean;
-  reset: { vector: boolean; bm25: boolean; statuses: boolean };
+  reset: { vector: boolean; bm25: boolean; statuses: boolean; graph: boolean };
+  preserved: { pdfs: boolean; history: boolean };
 }
 
 export interface SessionInfo {
@@ -223,11 +226,11 @@ export interface RendererApi {
   search(query: string, limit?: number, sessionId?: string): CancellablePromise<{ enabled: boolean; matches: SearchMatch[]; reason?: string }>;
   searchPapers(query: string, limit?: number): CancellablePromise<{ enabled: boolean; matches: PaperMatch[]; reason?: string }>;
   graphNeighborhood(nodeId: string, maxDepth?: number): CancellablePromise<GraphNeighborhoodResponse>;
-  indexPapers(): CancellablePromise<{ enabled: boolean; indexed: number; reason?: string }>;
-  paperStatuses(): CancellablePromise<{ statuses: PaperStatusInfo[] }>;
+  indexPapers(reindex?: boolean): CancellablePromise<{ enabled: boolean; indexed: number; summary: { completed: number; total: number; indexed: number; empty: number; failed: number; skipped: number } }>;
+  paperStatuses(): CancellablePromise<{ readiness: IndexReadiness; statuses: PaperStatusInfo[] }>;
   bm25Status(): CancellablePromise<Bm25StatusInfo>;
   resetAllIndices(): CancellablePromise<ResetIndicesResult>;
-  indexPapersStream(onEvent: (event: IndexStreamEvent) => void): CancellablePromise<void>;
+  indexPapersStream(onEvent: (event: IndexStreamEvent) => void, reindex?: boolean): CancellablePromise<void>;
   runEvaluation(testCases: EvaluationTestCase[], onEvent: (event: EvaluationStreamEvent) => void): CancellablePromise<void>;
 }
 export type DesktopBridge = {
@@ -260,10 +263,10 @@ export const api: RendererApi = {
     const result = request<unknown>("graphNeighborhood", id, depth);
     return Object.assign(result.then(parseGraphNeighborhoodPayload), { cancel: result.cancel, [CANCEL]: result.cancel });
   },
-  indexPapers: () => request("indexPapers"),
+  indexPapers: (reindex) => request("indexPapers", reindex),
   paperStatuses: () => request("paperStatuses"),
   bm25Status: () => request("bm25Status"),
   resetAllIndices: () => request("resetAllIndices"),
-  indexPapersStream: (onEvent) => request("indexPapersStream", onEvent),
+  indexPapersStream: (onEvent, reindex) => request("indexPapersStream", onEvent, reindex),
   runEvaluation: (testCases, onEvent) => request("runEvaluation", testCases, onEvent),
 };
