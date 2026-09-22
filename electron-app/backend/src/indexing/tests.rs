@@ -957,3 +957,109 @@ async fn journal_corrupt_authority_and_unknown_retrieval_poison_without_writes()
         .await;
     }
 }
+
+#[tokio::test]
+async fn journal_physical_singletons_reject_corruption_live_and_after_reopen() {
+    for table in ["index_meta", "operations"] {
+        for corruption in ["wrong_key", "extra_row", "blob_payload"] {
+            for steps in [None, Some(0), Some(5)] {
+                if table == "operations" && steps.is_none() {
+                    continue;
+                }
+                for reopen_first in [false, true] {
+                    let root = tempfile::tempdir().unwrap();
+                    let paths = paths(root.path());
+                    let index = CoordinatedIndex::open(&paths, identity()).await.unwrap();
+                    assert!(index.journal.meta().unwrap().is_none());
+                    assert!(index.journal.operation().unwrap().is_none());
+                    index.recover().await.unwrap();
+                    if let Some(steps) = steps {
+                        let op = operation(&index, prepared("p", "Alice", "first", None)).await;
+                        stage(&index, &op, steps).await;
+                    }
+                    let sql = match corruption {
+                        "wrong_key" => format!("UPDATE {table} SET id=2"),
+                        "extra_row" => format!("INSERT INTO {table} SELECT 2,payload FROM {table}"),
+                        _ => format!("UPDATE {table} SET payload=CAST(payload AS BLOB)"),
+                    };
+                    let db = sqlite::open(&paths.index_state_database).unwrap();
+                    db.execute("PRAGMA ignore_check_constraints=ON").unwrap();
+                    db.execute(sql).unwrap();
+                    drop(db);
+                    let before = std::fs::read(&paths.index_state_database).unwrap();
+                    let fence = index.fence().await.unwrap();
+                    let status = index.status().await.unwrap();
+                    let index = if reopen_first {
+                        reopen(index, &paths).await
+                    } else {
+                        index
+                    };
+                    if !reopen_first && steps != Some(0) {
+                        assert_eq!(
+                            index.published_paper("p".into()).await,
+                            Err(IndexError::InvalidJournal)
+                        );
+                        assert_eq!(index.gate.readiness(), Readiness::Poisoned);
+                    }
+                    for _ in 0..2 {
+                        assert_eq!(
+                            index.recover().await,
+                            Err(IndexError::InvalidJournal),
+                            "{table}/{corruption}/{steps:?}/{reopen_first}"
+                        );
+                        assert_eq!(index.gate.readiness(), Readiness::Poisoned);
+                        assert_eq!(
+                            index.published_paper("p".into()).await,
+                            Err(IndexError::Poisoned)
+                        );
+                        assert_eq!(index.fence().await.unwrap(), fence);
+                        let observed = index.status().await.unwrap();
+                        assert_eq!(observed.revision, status.revision);
+                        assert_eq!(observed.lexical, status.lexical);
+                        assert_eq!(observed.chunk_count, status.chunk_count);
+                        assert_eq!(std::fs::read(&paths.index_state_database).unwrap(), before);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn journal_singleton_loaders_reject_sqlite_type_coercion() {
+    for table in ["index_meta", "operations"] {
+        for (key, payload) in [
+            ("'1'", "payload"),
+            ("1.0", "payload"),
+            ("X'31'", "payload"),
+            ("NULL", "payload"),
+            ("1", "NULL"),
+            ("1", "42"),
+            ("1", "1.5"),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = paths(root.path());
+            let index = CoordinatedIndex::open(&paths, identity()).await.unwrap();
+            index.recover().await.unwrap();
+            let op = operation(&index, prepared("p", "Alice", "first", None)).await;
+            stage(&index, &op, 0).await;
+            // INTEGER PRIMARY KEY itself forbids noninteger stored keys. An
+            // untyped live corruption fixture proves loaders do not coerce them.
+            let db = sqlite::open(&paths.index_state_database).unwrap();
+            db.execute(format!("BEGIN; ALTER TABLE {table} RENAME TO damaged; CREATE TABLE {table}(id,payload); INSERT INTO {table} SELECT {key},{payload} FROM damaged; DROP TABLE damaged; COMMIT")).unwrap();
+            drop(db);
+            let before = std::fs::read(&paths.index_state_database).unwrap();
+            assert_eq!(index.journal.meta(), Err(IndexError::InvalidJournal));
+            assert_eq!(index.journal.operation(), Err(IndexError::InvalidJournal));
+            assert_eq!(index.recover().await, Err(IndexError::InvalidJournal));
+            assert_eq!(index.gate.readiness(), Readiness::Poisoned);
+            index.graph.close().await.unwrap();
+            drop(index);
+            assert!(matches!(
+                CoordinatedIndex::open(&paths, identity()).await,
+                Err(IndexError::InvalidJournal)
+            ));
+            assert_eq!(std::fs::read(&paths.index_state_database).unwrap(), before);
+        }
+    }
+}

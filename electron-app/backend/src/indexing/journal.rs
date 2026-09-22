@@ -659,6 +659,7 @@ fn check_base(db: &Connection, op: &Operation) -> IndexResult<()> {
     Ok(())
 }
 fn load_meta(db: &Connection) -> IndexResult<Option<Meta>> {
+    validate_singletons(db)?;
     let meta: Option<Meta> = payload(db, "SELECT payload FROM index_meta", &[], 8192)?;
     if let Some(m) = &meta {
         m.fence.validate()?;
@@ -685,11 +686,34 @@ fn save_op(db: &Connection, op: &Operation) -> IndexResult<()> {
     )
 }
 fn load_op(db: &Connection) -> IndexResult<Option<Operation>> {
+    validate_singletons(db)?;
     let op: Option<Operation> = payload(db, "SELECT payload FROM operations", &[], MAX_RECORD)?;
     if let Some(o) = &op {
         o.validate()?;
     }
     Ok(op)
+}
+fn validate_singletons(db: &Connection) -> IndexResult<()> {
+    // CHECK constraints are not evidence about stored rows. Inspect both
+    // headers before either payload can authorize bootstrap or recovery writes.
+    // The same read transaction pins these headers and the later payload read.
+    for table in ["index_meta", "operations"] {
+        let headers = rows(
+            db,
+            &format!(
+                "SELECT typeof(id), CASE WHEN typeof(id)='integer' THEN id END, typeof(payload) FROM {table} LIMIT 2"
+            ),
+            &[],
+            2,
+        )?;
+        match headers.as_slice() {
+            [] => (), // Fresh metadata and an absent operation are legitimate.
+            [row] if matches!(row.as_slice(), [Value::String(key_type), Value::Integer(1), Value::String(payload_type)] if key_type == "integer" && payload_type == "text") =>
+                {}
+            _ => return Err(IndexError::InvalidJournal),
+        }
+    }
+    Ok(())
 }
 fn active(db: &Connection, paper: &str) -> IndexResult<Option<Version>> {
     let v: Option<Version> = payload(
