@@ -63,6 +63,28 @@ const SCHEMAS: &[Schema] = &[
         ":create graph_meta {key: String => version: Int}",
         &[("key", true, "String"), ("version", false, "Int")],
     ),
+    (
+        "author_paper",
+        ":create author_paper {author_id: String, paper_id: String}",
+        &[("author_id", true, "String"), ("paper_id", true, "String")],
+    ),
+    (
+        "topic_paper",
+        ":create topic_paper {topic_id: String, paper_id: String}",
+        &[("topic_id", true, "String"), ("paper_id", true, "String")],
+    ),
+    (
+        "graph_publication",
+        ":create graph_publication {key: String => version: Int, generation: Int, write_id: String, transition: String, authority: String}",
+        &[
+            ("key", true, "String"),
+            ("version", false, "Int"),
+            ("generation", false, "Int"),
+            ("write_id", false, "String"),
+            ("transition", false, "String"),
+            ("authority", false, "String"),
+        ],
+    ),
 ];
 
 struct OpenGraph {
@@ -82,6 +104,8 @@ pub struct CozoGraphStore {
     snapshot_hook: Option<SnapshotHook>,
     #[cfg(test)]
     restore_hook: Option<RestoreHook>,
+    #[cfg(test)]
+    write_hook: Option<RestoreHook>,
 }
 
 impl CozoGraphStore {
@@ -112,7 +136,7 @@ impl CozoGraphStore {
             }
             check(&c)?;
             let db = DbInstance::new("sqlite", &path, "").map_err(|_| GraphError::Storage)?;
-            validate_schema(&db)?;
+            validate_schema(&db, &c)?;
             check(&c)?;
             Ok(Self {
                 inner: Arc::new(Mutex::new(Some(OpenGraph { db, _lock: lock }))),
@@ -120,6 +144,8 @@ impl CozoGraphStore {
                 snapshot_hook: None,
                 #[cfg(test)]
                 restore_hook: None,
+                #[cfg(test)]
+                write_hook: None,
             })
         })
         .await
@@ -166,6 +192,12 @@ impl CozoGraphStore {
         let graph = guard.as_ref().ok_or(GraphError::Closed)?;
         check(c)?;
         let tx = Transaction::new(&graph.db, true);
+        let kind = if matches!(operations.as_slice(), [GraphOperation::Reset]) {
+            GraphWriteKind::Reset
+        } else {
+            GraphWriteKind::Apply
+        };
+        super::tracking::advance(&tx, kind, c)?;
         for operation in operations {
             stage(&tx, operation, c)?;
         }
@@ -176,6 +208,14 @@ impl CozoGraphStore {
             c,
         )?;
         before_commit()?;
+        self.commit_write(tx, c)
+    }
+    fn commit_write(&self, tx: Transaction, c: &Cancellation) -> GraphResult<()> {
+        #[cfg(test)]
+        if let Some(hook) = &self.write_hook {
+            hook(false, c);
+            return tx.commit_observed(c, || hook(true, c));
+        }
         tx.commit(c)
     }
     pub async fn reset(&self, cancellation: Cancellation) -> GraphResult<()> {
@@ -200,6 +240,7 @@ impl CozoGraphStore {
             let graph = guard.as_ref().ok_or(GraphError::Closed)?;
             check(&c)?;
             let tx = Transaction::new(&graph.db, true);
+            super::tracking::advance(&tx, GraphWriteKind::Restore, &c)?;
             let current = read_recovery(&tx, artifact.paper_id(), &c, || {})?;
             let mut affected = BTreeMap::new();
             for paper in [current.paper(), artifact.paper()].into_iter().flatten() {
@@ -231,7 +272,7 @@ impl CozoGraphStore {
             if let Some(hook) = &this.restore_hook {
                 hook(true, &c);
             }
-            tx.commit(&c)
+            this.commit_write(tx, &c)
         }).await
     }
 
@@ -266,6 +307,19 @@ impl CozoGraphStore {
         paper_id: String,
         cancellation: Cancellation,
     ) -> GraphResult<PaperRecoveryArtifact> {
+        Ok(self
+            .observe_paper_publication(paper_id, cancellation)
+            .await?
+            .artifact)
+    }
+
+    /// Coherent physical fence plus raw paper observation. This does not authorize
+    /// recovery or prove journal membership, even for an empty/reset graph.
+    pub async fn observe_paper_publication(
+        &self,
+        paper_id: String,
+        cancellation: Cancellation,
+    ) -> GraphResult<GraphPaperObservation> {
         super::recovery::canonical_id(&paper_id)?;
         let this = self.clone();
         joined(cancellation, move |c| {
@@ -273,6 +327,7 @@ impl CozoGraphStore {
             let graph = guard.as_ref().ok_or(GraphError::Closed)?;
             check(&c)?;
             let tx = Transaction::new(&graph.db, false);
+            let publication = super::tracking::read(&tx, &c)?;
             let artifact = read_recovery(&tx, &paper_id, &c, || {
                 #[cfg(test)]
                 if let Some(hook) = &this.snapshot_hook {
@@ -281,7 +336,29 @@ impl CozoGraphStore {
             })?;
             tx.abort()?;
             check(&c)?;
-            Ok(artifact)
+            Ok(GraphPaperObservation {
+                publication,
+                artifact,
+            })
+        })
+        .await
+    }
+
+    /// Read the single-row physical fence in a joined read transaction.
+    /// Standalone writes always report ExternalUntrusted, never journal authority.
+    pub async fn observe_publication(
+        &self,
+        cancellation: Cancellation,
+    ) -> GraphResult<GraphPublication> {
+        let this = self.clone();
+        joined(cancellation, move |c| {
+            let guard = this.inner.lock().map_err(|_| GraphError::Storage)?;
+            let graph = guard.as_ref().ok_or(GraphError::Closed)?;
+            let tx = Transaction::new(&graph.db, false);
+            let publication = super::tracking::read(&tx, &c)?;
+            tx.abort()?;
+            check(&c)?;
+            Ok(publication)
         })
         .await
     }
@@ -404,10 +481,11 @@ fn initialize(root: &Path, path: &Path, c: &Cancellation) -> GraphResult<()> {
         tx.run(script, BTreeMap::new(), c)?;
     }
     tx.run(
-        "?[key, version] <- [['electron-paper-graph', 1]] :put graph_meta {key => version}",
+        "?[key, version] <- [['electron-paper-graph', 2]] :put graph_meta {key => version}",
         BTreeMap::new(),
         c,
     )?;
+    super::tracking::initialize(&tx, c)?;
     tx.commit_staging()?;
     drop(db);
     File::open(&staging.0)
@@ -416,8 +494,8 @@ fn initialize(root: &Path, path: &Path, c: &Cancellation) -> GraphResult<()> {
     validate_database_path(root, path).map_err(|_| GraphError::InvalidPath)?;
     super::publication::publish_no_replace(&staging.0, path, c)
 }
-fn validate_schema(db: &DbInstance) -> GraphResult<()> {
-    for (name, _, expected) in SCHEMAS {
+fn validate_columns(db: &DbInstance, schemas: &[Schema]) -> GraphResult<()> {
+    for (name, _, expected) in schemas {
         let columns = db
             .run_script(
                 &format!("::columns {name}"),
@@ -437,6 +515,12 @@ fn validate_schema(db: &DbInstance) -> GraphResult<()> {
             return Err(GraphError::InvalidSchema);
         }
     }
+    Ok(())
+}
+fn validate_schema(db: &DbInstance, c: &Cancellation) -> GraphResult<()> {
+    // The first six relations are the previously supported marked v1 schema.
+    // Recognize it without backfill, adoption or mutation, even when empty.
+    validate_columns(db, &SCHEMAS[..6])?;
     let marker = db
         .run_script(
             "?[key, version] := *graph_meta{key, version}",
@@ -445,9 +529,35 @@ fn validate_schema(db: &DbInstance) -> GraphResult<()> {
         )
         .map_err(|_| GraphError::InvalidSchema)?
         .into_json();
-    if marker["rows"] != json!([["electron-paper-graph", 1]]) {
+    let version = match marker["rows"].as_array().map(Vec::as_slice) {
+        Some([row]) if *row == json!(["electron-paper-graph", 1]) => 1,
+        Some([row]) if *row == json!(["electron-paper-graph", 2]) => 2,
+        _ => return Err(GraphError::InvalidSchema),
+    };
+    let schemas = if version == 1 { &SCHEMAS[..6] } else { SCHEMAS };
+    let relations = db
+        .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
+        .map_err(|_| GraphError::InvalidSchema)?;
+    let names = relations
+        .rows
+        .iter()
+        .map(|row| {
+            row.first()
+                .and_then(DataValue::get_str)
+                .ok_or(GraphError::InvalidSchema)
+        })
+        .collect::<GraphResult<BTreeSet<_>>>()?;
+    if names != schemas.iter().map(|(name, _, _)| *name).collect() {
         return Err(GraphError::InvalidSchema);
     }
+    check(c)?;
+    if version == 1 {
+        return Err(GraphError::RebuildRequired);
+    }
+    validate_columns(db, &SCHEMAS[6..])?;
+    let tx = Transaction::new(db, false);
+    super::tracking::read(&tx, c)?;
+    tx.abort()?;
     Ok(())
 }
 
@@ -462,9 +572,12 @@ fn params(value: Value) -> BTreeMap<String, DataValue> {
 fn stage(tx: &Transaction, operation: GraphOperation, c: &Cancellation) -> GraphResult<()> {
     match operation {
         GraphOperation::Reset => {
+            super::incidence::check_all(tx, c)?;
             for script in [
                 "?[paper_id, author_id] := *authored_by{paper_id, author_id} :rm authored_by {paper_id, author_id}",
                 "?[paper_id, topic_id] := *has_topic{paper_id, topic_id} :rm has_topic {paper_id, topic_id}",
+                "?[author_id, paper_id] := *author_paper{author_id, paper_id} :rm author_paper {author_id, paper_id}",
+                "?[topic_id, paper_id] := *topic_paper{topic_id, paper_id} :rm topic_paper {topic_id, paper_id}",
                 "?[paper_id] := *paper{paper_id} :rm paper {paper_id}",
             ] {
                 tx.run(script, BTreeMap::new(), c)?;
@@ -500,12 +613,17 @@ fn stage(tx: &Transaction, operation: GraphOperation, c: &Cancellation) -> Graph
             tx.run("?[topic_id, name, normalized_name] <- $rows :put topic {topic_id => name, normalized_name}", params(json!({"rows": topics})), c)?;
             tx.run("?[paper_id, author_id] <- $rows :put authored_by {paper_id, author_id}", params(json!({"rows": p.authors.iter().map(|a| json!([p.paper_id, a.author_id])).collect::<Vec<_>>()})), c)?;
             tx.run("?[paper_id, topic_id] <- $rows :put has_topic {paper_id, topic_id}", params(json!({"rows": p.topics.iter().map(|t| json!([p.paper_id, t.topic_id])).collect::<Vec<_>>()})), c)?;
+            tx.run("?[author_id, paper_id] <- $rows :put author_paper {author_id, paper_id}", params(json!({"rows": p.authors.iter().map(|a| json!([a.author_id, p.paper_id])).collect::<Vec<_>>()})), c)?;
+            tx.run("?[topic_id, paper_id] <- $rows :put topic_paper {topic_id, paper_id}", params(json!({"rows": p.topics.iter().map(|t| json!([t.topic_id, p.paper_id])).collect::<Vec<_>>()})), c)?;
         }
     }
     Ok(())
 }
 fn remove_edges(tx: &Transaction, id: &str, c: &Cancellation) -> GraphResult<()> {
+    super::incidence::check_paper(tx, id, c)?;
     for script in [
+        "?[author_id, paper_id] := *authored_by{paper_id, author_id}, paper_id = $id :rm author_paper {author_id, paper_id}",
+        "?[topic_id, paper_id] := *has_topic{paper_id, topic_id}, paper_id = $id :rm topic_paper {topic_id, paper_id}",
         "?[paper_id, author_id] := *authored_by{paper_id, author_id}, paper_id = $id :rm authored_by {paper_id, author_id}",
         "?[paper_id, topic_id] := *has_topic{paper_id, topic_id}, paper_id = $id :rm has_topic {paper_id, topic_id}",
     ] {
@@ -530,6 +648,7 @@ fn read_recovery(
     c: &Cancellation,
     after_title: impl FnOnce(),
 ) -> GraphResult<PaperRecoveryArtifact> {
+    super::incidence::check_paper(tx, id, c)?;
     let rows = strings(tx.run(
         "?[title] := *paper{paper_id: $id, title}",
         params(json!({"id": id})),
@@ -565,6 +684,7 @@ fn guard_recovery_node(
     desired_name: &str,
     c: &Cancellation,
 ) -> GraphResult<()> {
+    super::incidence::check_node(tx, author, id, c)?;
     let (node, edges, papers, kind) = if author {
         (
             "?[name, normalized_name] := *author{author_id: $id, name, normalized_name}",
@@ -903,6 +1023,10 @@ fn neighborhood(
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "tracking_tests.rs"]
+mod tracking_tests;
 
 #[cfg(test)]
 mod tests {

@@ -4,11 +4,19 @@
 //! graph transaction and seals its request token exactly once. Do not reuse that
 //! token for another paper/store, or manufacture unlinked tokens for indexing.
 //! Cross-store publication/reconciliation is an indexing integration concern.
+//!
+//! Schema v2 adds a monotonic physical fence and node-first reverse relations.
+//! Marked v1 stores (including empty ones) require explicit rebuild; open never
+//! converts them. Standalone v2 writes are external/untrusted, not journal-owned.
+//! Future production readiness must refuse nonempty data without matching journal
+//! authority. These isolated APIs do not enable a user-facing rebuild/reset flow.
 mod identity;
+mod incidence;
 mod metadata;
 mod publication;
 mod recovery;
 mod store;
+mod tracking;
 mod transaction;
 mod types;
 
@@ -19,6 +27,9 @@ pub use metadata::{
 };
 pub use recovery::{MAX_GRAPH_ARTIFACT_BYTES, MAX_RECOVERY_NODES, PaperRecoveryArtifact};
 pub use store::CozoGraphStore;
+pub use tracking::{
+    GraphJournalAuthority, GraphPaperObservation, GraphPublication, GraphWriteKind,
+};
 pub use types::*;
 
 use crate::{domain::GraphQuery, registry::BackendFuture, runtime::Cancellation};

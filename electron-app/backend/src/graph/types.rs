@@ -11,6 +11,8 @@ pub enum GraphError {
     InvalidInput,
     InvalidPath,
     InvalidSchema,
+    RebuildRequired,
+    GenerationOverflow,
     Locked,
     Closed,
     Storage,

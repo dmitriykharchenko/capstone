@@ -28,7 +28,14 @@ impl Transaction {
         check(c)?;
         Ok(result)
     }
-    pub fn commit(mut self, c: &Cancellation) -> GraphResult<()> {
+    pub fn commit(self, c: &Cancellation) -> GraphResult<()> {
+        self.commit_observed(c, || {})
+    }
+    pub(super) fn commit_observed(
+        mut self,
+        c: &Cancellation,
+        after_seal: impl FnOnce(),
+    ) -> GraphResult<()> {
         let _permit = c.begin_commit().map_err(|e| {
             if e == ErrorCode::Cancelled {
                 GraphError::Cancelled
@@ -36,6 +43,7 @@ impl Transaction {
                 GraphError::AlreadySealed
             }
         })?;
+        after_seal();
         self.finish(TransactionPayload::Commit)
     }
     pub fn abort(mut self) -> GraphResult<()> {
