@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import CLIConfig, load_dotenv_if_present
 from .dispatcher import dispatch
+from .runtime import stream_command
 
 
 def handle_chat_stream(config: CLIConfig, request: dict[str, Any]) -> Any:
@@ -59,12 +60,24 @@ def main() -> int:
         return 1
     config = CLIConfig.from_env()
     if request.get("command") == "chat" and request.get("stream"):
-        return _run_stream(handle_chat_stream(config, request))
+        return _run_stream(
+            stream_command("chat", request, lambda: handle_chat_stream(config, request))
+        )
     if request.get("command") == "index_papers" and request.get("stream"):
-        return _run_stream(handle_index_papers_stream(config))
+        return _run_stream(
+            stream_command(
+                "index_papers", request, lambda: handle_index_papers_stream(config)
+            )
+        )
     if request.get("command") == "evaluate" and request.get("stream"):
         return _run_stream(
-            _persisted_evaluation_stream(handle_evaluation_stream(config, request)),
+            _persisted_evaluation_stream(
+                stream_command(
+                    "evaluate",
+                    request,
+                    lambda: handle_evaluation_stream(config, request),
+                )
+            ),
             safe_error="Evaluation transport failed. Check backend logs and retry.",
         )
     try:

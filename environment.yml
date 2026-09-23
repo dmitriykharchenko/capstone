@@ -22,3 +22,4 @@ dependencies:
       - chromadb
       - pypdf
       - pycozo[embedded]==0.7.6
+      - langgraph==1.2.12
