@@ -1074,22 +1074,12 @@ class AgentLoop:
         successful, non-empty response, then indexed when configured.
         """
 
-        model, _, history = self._start_turn(session_id, user_text)
-        result = run_multihop(
-            model,
-            self._paper_retriever,
-            user_text,
-            history=history,
-            system_prompt=self._system_prompt,
-        )
-        self._persist(
-            session_id,
-            user_text,
-            result.answer,
-            result.sources,
-            result.contexts,
-        )
-        return result.answer
+        from .chat_graph import chat_events
+
+        for event in chat_events(self, session_id, user_text, streaming=False):
+            if isinstance(event, MultihopCompletedEvent):
+                return event.answer
+        raise AgentLoopError("Chat ended before terminal completion")
 
     def stream(self, session_id: str, user_text: str) -> Iterator[str]:
         """Yield assistant text deltas for one turn, persisting when complete.
@@ -1101,88 +1091,24 @@ class AgentLoop:
         non-empty text, matching :meth:`run`.
         """
 
-        for event in self.stream_events(session_id, user_text):
-            if isinstance(event, MultihopFinalDeltaEvent):
-                yield event.text
+        events = self.stream_events(session_id, user_text)
+        try:
+            for event in events:
+                if isinstance(event, MultihopFinalDeltaEvent):
+                    yield event.text
+        finally:
+            close = getattr(events, "close", None)
+            if callable(close):
+                close()
 
     def stream_events(
         self, session_id: str, user_text: str
     ) -> Iterator[MultihopProgress]:
         """Yield typed public progress records and atomically persist on completion."""
 
-        model, types, history = self._start_turn(session_id, user_text)
-        initial_subqueries = self._plan(model, types, history, user_text)
-        subqueries = list(initial_subqueries)
-        yield MultihopPlanEvent(initial_subqueries)
-        subanswers: list[str] = []
-        contexts: list[str] = []
-        hop_sources: list[tuple[SourceRecord, ...]] = []
-        for index, subquery in enumerate(initial_subqueries, start=1):
-            yield MultihopHopStartedEvent(index, len(initial_subqueries), subquery)
-            context, sources = self._retrieve(subquery)
-            answer = self._answer_hop(model, types, user_text, subquery, context)
-            contexts.append(context)
-            hop_sources.append(sources)
-            subanswers.append(answer)
-            yield MultihopHopCompletedEvent(
-                index, len(initial_subqueries), subquery, answer, sources
-            )
-        yield MultihopCoverageStartedEvent(len(initial_subqueries))
-        followups = _review_multihop_coverage(
-            model, types, user_text, initial_subqueries, subanswers
-        )
-        total = len(initial_subqueries) + len(followups)
-        yield MultihopCoverageCompletedEvent(total, followups)
-        for index, subquery in enumerate(followups, start=len(initial_subqueries) + 1):
-            yield MultihopHopStartedEvent(index, total, subquery)
-            try:
-                context, sources = self._retrieve(subquery)
-            except AgentRetrievalError as exc:
-                setattr(exc, "stage", "followup_retrieval")
-                raise
-            try:
-                answer = self._answer_hop(model, types, user_text, subquery, context)
-            except AgentModelError as exc:
-                setattr(exc, "stage", "followup_subanswer")
-                raise
-            subqueries.append(subquery)
-            contexts.append(context)
-            hop_sources.append(sources)
-            subanswers.append(answer)
-            yield MultihopHopCompletedEvent(index, total, subquery, answer, sources)
-        if len(subqueries) > MAX_TOTAL_HOP_COUNT or sum(map(len, hop_sources)) > (
-            MAX_AGGREGATE_SOURCE_COUNT
-        ):
-            raise AgentCoverageError("adaptive multihop bounds were exceeded")
-        messages = self._compose_messages(
-            types, history, user_text, subqueries, subanswers
-        )
-        stream_method = getattr(model, "stream", None)
-        parts: list[str] = []
-        try:
-            if callable(stream_method):
-                for chunk in stream_method(messages):
-                    _raise_if_output_limited(chunk)
-                    delta = _chunk_text(chunk)
-                    if delta:
-                        parts.append(delta)
-                        yield MultihopFinalDeltaEvent(delta)
-            else:
-                response = model.invoke(messages)
-                _raise_if_output_limited(response)
-                answer = _response_text(response)
-                parts.append(answer)
-                yield MultihopFinalDeltaEvent(answer)
-        except AgentLoopError:
-            raise
-        except Exception as exc:
-            raise AgentModelError(f"Composer model streaming failed: {exc}") from exc
-        answer = "".join(parts)
-        if not answer.strip():
-            raise AgentModelError("Chat model returned empty response text")
-        sources = _aggregate_sources(hop_sources)
-        self._persist(session_id, user_text, answer, sources, contexts)
-        yield MultihopCompletedEvent(answer, sources)
+        from .chat_graph import chat_events
+
+        yield from chat_events(self, session_id, user_text, streaming=True)
 
     def invoke(self, session_id: str, user_text: str) -> str:
         """Alias for :meth:`run` for callers using LangChain terminology."""
