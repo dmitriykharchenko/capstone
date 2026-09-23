@@ -70,19 +70,19 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
   function updateWindow(session: Session) {
     if (!live(session) || !session.layout) return;
     const desired = pdfWindow(session.layout, Math.max(0, session.top - 16), height);
-    // PDF.js exposes only document-wide font cleanup. Drain a changed window
-    // before releasing shared fonts, then rebuild its bounded selectable layers.
-    if (desired.some(number => !session.desired.includes(number)) || desired.length !== session.desired.length) clearPages(session);
+    // Preserve overlapping selectable subtrees; detach only pages leaving the
+    // window. Shared fonts must survive while retained text still uses them.
+    for (const [number, entry] of session.entries) if (!desired.includes(number)) retire(session, number, entry);
     session.desired = desired;
-    for (const number of session.desired) if (!session.entries.has(number)) {
+    // Insert only new nodes in reading order. Re-appending an existing node,
+    // even at the same index, resets browser selection ranges in its subtree.
+    for (const [index, number] of [...desired].sort((a, b) => a - b).entries()) if (!session.entries.has(number)) {
       const slot = host.ownerDocument.createElement('div');
       slot.className = 'pdf-slot';
       slot.setAttribute('data-page-number', String(number));
-      session.surface!.append(slot);
+      session.surface!.insertBefore(slot, session.surface!.children[index] ?? null);
       session.entries.set(number, { slot });
     }
-    // DOM order matches reading/selection order, independently of render priority.
-    for (const [, entry] of [...session.entries].sort(([a], [b]) => a - b)) session.surface!.append(entry.slot);
     position(session);
     const page = session.layout.pageAt(Math.max(0, session.top - 16));
     publish({ page, zoom: session.layout.size(page).zoom,

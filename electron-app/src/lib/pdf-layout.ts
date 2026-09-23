@@ -54,12 +54,15 @@ export class PdfLayout {
 // A browser scroll-coordinate span, NOT a PDF size limit. Larger logical documents
 // rebase local wheel movement and map scrollbar jumps across the entire document.
 export const PDF_SCROLL_SPAN = 8_000_000;
-export const PDF_ACTIVE_PAGES = 7;
+export const PDF_OVERSCAN_PAGES = 2;
 export function pdfWindow(layout: PdfLayout, top: number, height: number) {
   const first = layout.pageAt(top), pages = [first];
   let next = first + 1;
-  while (next <= layout.pages && pages.length < PDF_ACTIVE_PAGES - 2 && layout.top(next) < top + height) pages.push(next++);
-  for (let page = first - 1; page >= Math.max(1, first - 2) && pages.length < PDF_ACTIVE_PAGES; page--) pages.push(page);
-  for (let extra = 0; extra < 2 && next <= layout.pages && pages.length < PDF_ACTIVE_PAGES; extra++) pages.push(next++);
+  // Cover the viewport before adding bounded overscan. Even arbitrarily short
+  // pages are separated by 16px, so active resources scale with viewport height,
+  // not document length; a fixed slot ceiling would leave visible pages blank.
+  while (next <= layout.pages && layout.top(next) < top + height) pages.push(next++);
+  for (let page = first - 1; page >= Math.max(1, first - PDF_OVERSCAN_PAGES); page--) pages.push(page);
+  for (let extra = 0; extra < PDF_OVERSCAN_PAGES && next <= layout.pages; extra++) pages.push(next++);
   return pages;
 }

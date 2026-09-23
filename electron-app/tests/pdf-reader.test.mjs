@@ -27,8 +27,15 @@ function surface(options = {}) {
   const document = { defaultView: { devicePixelRatio: 2 }, createElement(tag) {
     const node = { tag, ownerDocument: document, children: [], attributes: {}, style: { setProperty(k, v) { this[k] = v; } },
       append(...nodes) { for (const n of nodes) { n.remove(); this.children.push(n); n.parent = this; } },
+      insertBefore(node, reference) {
+        if (node === reference) return node;
+        node.remove();
+        const index = reference === null ? this.children.length : this.children.indexOf(reference);
+        assert.ok(index >= 0); this.children.splice(index, 0, node); node.parent = this; return node;
+      },
       replaceChildren(...nodes) { this.children = []; this.append(...nodes); },
-      remove() { if (this.parent) this.parent.children = this.parent.children.filter(n => n !== this); this.parent = undefined; },
+      detachments: 0,
+      remove() { if (this.parent) { this.detachments++; this.parent.children = this.parent.children.filter(n => n !== this); } this.parent = undefined; },
       get parentElement() { return this.parent; },
       setAttribute(k, v) { this.attributes[k] = v; }, clientWidth: 632, clientHeight: 800, scrollTop: 0, scrollLeft: 0,
       listeners: new Map(), addEventListener(name, listener) { this.listeners.set(name, listener); },
@@ -49,6 +56,7 @@ const textStyle = { fontFamily: 'sans-serif', vertical: false, ascent: 0.8, desc
 const slots = h => h.host.children[0]?.children ?? [];
 const roots = h => slots(h).flatMap(slot => slot.children);
 const liveCanvases = h => h.elements.filter(n => n.tag === 'canvas' && n.width > 0);
+const viewportPageBound = height => Math.ceil(height / 16) + 1 + 2 * layoutModule.PDF_OVERSCAN_PAGES;
 
 function documentDouble(options = {}) {
   const stats = { pages: [], paints: [], layers: [], cleanups: 0, keepFonts: [], pageCleanups: 0, streamsCancelled: 0 };
@@ -201,8 +209,8 @@ test('one active render and latest-only zoom/resize work prioritize the destinat
 test('a billion pages have a bounded surface/window and can jump to the end and revisit', async t => {
   const h = harness(t, { pages: 1_000_000_000 }); await h.open();
   const assertBounded = () => {
-    assert.ok(slots(h).length <= layoutModule.PDF_ACTIVE_PAGES);
-    assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+    assert.ok(slots(h).length <= viewportPageBound(h.scroll.clientHeight));
+    assert.ok(liveCanvases(h).length <= viewportPageBound(h.scroll.clientHeight));
     assert.ok(parseFloat(h.host.children[0].style.height) <= layoutModule.PDF_SCROLL_SPAN);
     assert.equal(h.state().phase, 'ready'); assert.equal(h.state().pages, 1_000_000_000);
   };
@@ -234,7 +242,7 @@ test('scroll entry/exit releases canvases, selectable DOM and shared fonts befor
   assert.equal(h.state().page, 1);
   assert.equal(h.stats.pages.filter(page => page === 1).length, 2);
   assert.equal(roots(h)[0].children[1].children[0].children[0].textContent, 'Generated selectable text');
-  assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+  assert.ok(liveCanvases(h).length <= viewportPageBound(h.scroll.clientHeight));
 });
 
 test('compressed scrollbar reaches every logical region while local scrolling keeps page-size steps', async t => {
@@ -269,7 +277,7 @@ test('sparse layout covers all pages and updates mixed geometry without allocati
   layout.configure(600, 2, false);
   assert.equal(layout.size(5).height, 2000);
   assert.equal(layout.pageAt(layout.top(999999999)), 999999999);
-  assert.ok(layoutModule.pdfWindow(layout, layout.top(20), 100000).length <= layoutModule.PDF_ACTIVE_PAGES);
+  assert.ok(layoutModule.pdfWindow(layout, layout.top(20), 100000).length <= viewportPageBound(100000));
 });
 
 test('late geometry from an offscreen getPage cannot move or publish over the destination window', async t => {
@@ -283,11 +291,80 @@ test('late geometry from an offscreen getPage cannot move or publish over the de
   assert.equal(h.stats.paints.some(p => p.parameters.viewport.height === 9000), false);
 });
 
-test('tiny pages are not rejected and retain only the bounded active page window', async t => {
+test('one-pixel pages fill the entire viewport with bounded overscan and dispose on exit', async t => {
   const h = harness(t, { pages: 10000, width: 600, height: 1 }); await h.open();
-  assert.equal(h.state().phase, 'ready'); assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
-  h.reader.page(9000); await flush(); assert.equal(h.state().page, 9000);
-  assert.equal(h.state().phase, 'ready'); assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+  const assertCoverage = () => {
+    assert.equal(h.state().phase, 'ready');
+    const rendered = new Set(roots(h).map(root => Number(root.attributes['data-page-number'])));
+    const visible = [];
+    for (let page = 1; page <= 10000; page++) {
+      const top = 16 + (page - 1) * 17;
+      if (top + 1 > h.scroll.scrollTop && top < h.scroll.scrollTop + h.scroll.clientHeight) visible.push(page);
+    }
+    assert.ok(visible.length > 7);
+    for (const page of visible) assert.ok(rendered.has(page), `Visible page ${page} must be rendered`);
+    assert.ok(rendered.size <= visible.length + 2 * layoutModule.PDF_OVERSCAN_PAGES + 1);
+    assert.ok(liveCanvases(h).length <= viewportPageBound(h.scroll.clientHeight));
+    assert.equal(liveCanvases(h).length, rendered.size);
+    assert.deepEqual(slots(h).map(slot => Number(slot.attributes['data-page-number'])), [...rendered].sort((a, b) => a - b));
+  };
+  assertCoverage();
+  const old = [...h.stats.paints], layers = [...h.stats.layers];
+  h.reader.page(9000); await flush(); assert.equal(h.state().page, 9000); assertCoverage();
+  assert.ok(old.every(paint => paint.parameters.canvas.width === 0));
+  assert.ok(layers.every(layer => layer.parameters.container.children.length === 0));
+  h.reader.scrolled(h.scroll.scrollTop + 17 * 10); await flush(); assertCoverage();
+  h.scroll.clientHeight = 1600; h.reader.resize(632, 1600); await flush(); assertCoverage();
+  h.reader.page(1); await flush(); assertCoverage();
+  assert.equal(h.stats.pages.filter(page => page === 1).length, 2);
+});
+
+test('short-page layout covers every intersection independently of total document length', () => {
+  for (const count of [10000, 1_000_000_000]) {
+    const layout = new layoutModule.PdfLayout(count); layout.configure(600, 1, true); layout.measure(1, 600, 1);
+    for (const top of [0, 1, 17, 3000, layout.top(count - 50)]) {
+      const active = layoutModule.pdfWindow(layout, top, 800);
+      const first = layout.pageAt(top), visible = [];
+      for (let page = first; page <= count && layout.top(page) < top + 800; page++) {
+        if (layout.top(page) + layout.size(page).height > top) visible.push(page);
+      }
+      for (const page of visible) assert.ok(active.includes(page));
+      assert.ok(active.length <= visible.length + 2 * layoutModule.PDF_OVERSCAN_PAGES + 1);
+      assert.ok(active.length <= viewportPageBound(800));
+    }
+  }
+});
+
+test('same-window scroll never detaches selected page subtrees or replaces text/canvas nodes', async t => {
+  const h = harness(t); await h.open();
+  const nodes = [...h.elements], detachments = nodes.map(node => node.detachments), original = [...slots(h)];
+  const paints = h.stats.paints.length;
+  h.reader.scrolled(40); h.reader.scrolled(80); h.reader.resize(632, 800); await flush();
+  assert.deepEqual(slots(h), original);
+  assert.deepEqual(nodes.map(node => node.detachments), detachments);
+  assert.equal(h.elements.length, nodes.length); assert.equal(h.stats.paints.length, paints);
+});
+
+test('overlapping windows preserve text nodes and fonts while inserting new slots in reading order', async t => {
+  const h = harness(t, { pages: 100 }); await h.open();
+  h.reader.page(5); await flush();
+  const retained = new Map(slots(h).map(slot => [Number(slot.attributes['data-page-number']), slot]));
+  const text = roots(h).find(root => root.attributes['data-page-number'] === '5').children[1].children[0].children[0];
+  const detachments = new Map(h.elements.map(node => [node, node.detachments]));
+  const fontResets = h.stats.keepFonts.filter(keep => !keep).length;
+  h.reader.page(6); await flush();
+  const exiting = retained.get(3);
+  assert.equal(exiting.parent, undefined); assert.equal(exiting.children.length, 0);
+  for (const slot of slots(h)) {
+    const old = retained.get(Number(slot.attributes['data-page-number']));
+    if (old) { assert.equal(slot, old); assert.equal(slot.detachments, detachments.get(slot)); }
+  }
+  h.reader.page(5); await flush();
+  assert.deepEqual(slots(h).map(slot => Number(slot.attributes['data-page-number'])), [3, 4, 5, 6, 7]);
+  assert.equal(roots(h).find(root => root.attributes['data-page-number'] === '5').children[1].children[0].children[0], text);
+  for (let node = text; node; node = node.parent) assert.equal(node.detachments, detachments.get(node));
+  assert.equal(h.stats.pages.filter(page => page === 5).length, 1);
+  assert.equal(h.stats.keepFonts.filter(keep => !keep).length, fontResets);
 });
 
 test('more than the upstream single-layer text threshold renders every item in uncapped batches', async t => {
@@ -421,7 +498,7 @@ for (const [label, options] of [
     const h = harness(t, options); await h.open();
     for (let page = 1; page <= options.pages; page++) {
       h.reader.page(page); await flush(); assert.equal(h.state().phase, 'ready');
-      assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+      assert.ok(liveCanvases(h).length <= viewportPageBound(h.scroll.clientHeight));
     }
     await h.reader.destroy();
     assert.equal(liveCanvases(h).length, 0);
