@@ -44,7 +44,7 @@ export async function nativePackageSmoke({ root, executable, resources, Backend,
   try {
     start();
     let health = (await run('health')).data;
-    assert.deepEqual(health.commands.filter((c) => c.available).map((c) => c.command), ['get_paper', 'health', 'list_papers', 'read_pdf']);
+    assert.deepEqual(health.commands.filter((c) => c.available).map((c) => c.command), ['get_paper', 'health', 'list_papers', 'read_pdf', 'read_pdf_range']);
     assert.equal(health.chat_mode, 'unavailable');
     assert.equal((await readdir(data)).length, 0, 'no opt-in means no database creation');
     assert.deepEqual(provider.counts, { embedding: 0, model: 0, stream: 0 });
@@ -52,13 +52,17 @@ export async function nativePackageSmoke({ root, executable, resources, Backend,
 
     start({ CAPSTONE_NATIVE_CHAT: '1', CAPSTONE_NATIVE_INDEXING: '1' });
     health = (await run('health')).data;
-    assert.equal(health.commands.length, 19);
+    assert.equal(health.commands.length, 20);
     assert.ok(health.commands.every((c) => c.available), 'all frozen commands must be installed');
     assert.deepEqual(provider.counts, { embedding: 0, model: 0, stream: 0 }, 'startup is provider-free');
     const owner = backend.child.pid;
     assert.equal((await run('listPapers')).data.length, 1);
     assert.equal((await run('getPaper', { paper_id: 'Fixture' })).data.id, 'Fixture');
-    assert.deepEqual(Buffer.from((await run('readPdf', { paper_id: 'Fixture' })).data.bytes), Buffer.from(pdf));
+    const preview = (await run('readPdf', { paper_id: 'Fixture' })).data;
+    assert.equal(preview.total_bytes, pdf.length);
+    assert.equal(preview.bytes, undefined);
+    assert.deepEqual(Buffer.from((await run('readPdfRange', { preview_id: preview.preview_id, begin: 0, end: pdf.length })).data.bytes), Buffer.from(pdf));
+    await run('closePdf', { preview_id: preview.preview_id });
     const indexed = await run('indexPapersStream', { reindex: false });
     assert.equal(indexed.events.at(-1).indexed, 1);
     assert.equal(indexed.events.at(-1).failed, 0);

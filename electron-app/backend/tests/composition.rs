@@ -46,7 +46,13 @@ fn only_browsing_is_installed_without_reading_provider_or_store_settings() {
     ]);
     assert_eq!(
         available(&env),
-        ["get_paper", "health", "list_papers", "read_pdf"]
+        [
+            "get_paper",
+            "health",
+            "list_papers",
+            "read_pdf",
+            "read_pdf_range"
+        ]
     );
     assert!(!data.exists());
     assert!(fs::read_dir(&papers).unwrap().next().is_none());

@@ -11,6 +11,10 @@ import { syntheticPdf } from './pdf-fixtures.mjs';
 let vite, lifecycle, runtime, library;
 const deferred = () => Promise.withResolvers();
 const settle = () => new Promise((done) => setImmediate(done));
+const metadata = { preview_id: '00000000-0000-4000-8000-000000000001', total_bytes: 4 };
+function source(bytes) {
+  return { length: bytes.length, read: async (begin, end) => new Uint8Array(bytes.slice(begin, end)), close: async () => {} };
+}
 before(async () => {
   vite = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), appType: 'custom',
     logLevel: 'silent', server: { middlewareMode: true } });
@@ -23,18 +27,19 @@ function fakeLoader(overrides = {}) {
   const ready = deferred(), calls = { destroyed: 0, disposed: 0, created: 0 };
   const task = { promise: ready.promise, destroy: async () => { calls.destroyed++; } };
   const api = { PasswordResponses: { INCORRECT_PASSWORD: 2 }, TextLayer: class {},
+    PDFDataRangeTransport: class { constructor(length) { this.length = length; } onDataRange() {} },
     getDocument(options) { calls.options = options; return task; } };
   const load = lifecycle.createPdfLoader({ assetBase: 'app://research/assets/pdfjs-test/',
     loadLibrary: async () => api, createWorker(_lib, failed) {
       calls.created++; calls.failed = failed;
       return { worker: {}, dispose() { calls.disposed++; } };
     }, ...overrides });
-  return { load, calls, ready, task, api };
+  return { load: (bytes, options) => load(source(bytes), options), rawLoad: load, calls, ready, task, api };
 }
 
 test('runtime import is SSR-safe and load without a browser fails closed', async () => {
   assert.equal(typeof globalThis.window, 'undefined');
-  const handle = runtime.loadPdf([37, 80, 68, 70]);
+  const handle = runtime.loadPdf(metadata);
   await assert.rejects(handle.promise, { code: 'unavailable', message: 'Local PDF renderer unavailable.' });
   await handle.destroy();
 });
@@ -58,6 +63,7 @@ async function runtimeHost(href, version = runtime.PDFJS_VERSION) {
   vm.runInNewContext(compiled, { exports, URL, Worker: Port, window: { location: { href } }, require(id) {
     if (id === 'pdfjs-dist/package.json') return { version: runtime.PDFJS_VERSION };
     if (id === './pdf-lifecycle') return lifecycle;
+    if (id === './api') return { api: { closePdf: async () => {} } };
     imports.push(id); return api;
   } });
   return { ...f, exports, ports, imports, destroyed: () => destroyed };
@@ -66,7 +72,7 @@ async function runtimeHost(href, version = runtime.PDFJS_VERSION) {
 test('production wrapper supplies an explicit local module port and owns teardown (Node host double)', async () => {
   for (const origin of ['app://research', 'http://127.0.0.1:5173']) {
     const host = await runtimeHost(`${origin}/papers`);
-    const handle = host.exports.loadPdf([1]); await settle();
+    const handle = host.exports.loadPdf(metadata); await settle();
     assert.deepEqual(host.imports, [`${origin}${runtime.PDFJS_ASSET_PATH}build/pdf.mjs`]);
     assert.equal(host.ports[0].url.href, `${origin}${runtime.PDFJS_ASSET_PATH}build/pdf.worker.mjs`);
     assert.equal(host.ports[0].options.type, 'module');
@@ -82,22 +88,25 @@ test('production wrapper rejects wrong origins and version mismatch before creat
   for (const href of ['https://research/papers', 'app://research.evil/papers', 'app://user@research/papers',
     'app://research:99/papers', 'file:///papers', 'http://127.0.0.1:51730/papers']) {
     const host = await runtimeHost(href);
-    await assert.rejects(host.exports.loadPdf([1]).promise, { code: 'unavailable' });
+    await assert.rejects(host.exports.loadPdf(metadata).promise, { code: 'unavailable' });
     assert.equal(host.imports.length, 0); assert.equal(host.ports.length, 0);
   }
   const host = await runtimeHost('app://research/papers', 'mismatch');
-  await assert.rejects(host.exports.loadPdf([1]).promise, { code: 'unavailable' });
+  await assert.rejects(host.exports.loadPdf(metadata).promise, { code: 'unavailable' });
   assert.equal(host.ports.length, 0);
 });
 
-test('captures caller bytes and pins local, non-WASM, quiet options without a URL/password', async () => {
+test('supplies lazy ranges and pins local, non-WASM, quiet options without a URL/password', async () => {
   const { load, calls, ready } = fakeLoader();
   const bytes = new Uint8Array([37, 80, 68, 70]);
-  const handle = load(bytes); bytes[0] = 0;
+  const handle = load(bytes);
   await settle();
-  assert.deepEqual([...calls.options.data], [37, 80, 68, 70]);
+  assert.equal(calls.options.range.length, 4);
+  assert.equal(calls.options.disableAutoFetch, true);
+  assert.equal(calls.options.disableStream, true);
+  assert.equal(calls.options.rangeChunkSize, 65536);
   assert.equal(bytes.byteLength, 4);
-  for (const key of ['url', 'password', 'docBaseUrl', 'iccUrl']) assert.equal(key in calls.options, false);
+  for (const key of ['data', 'url', 'password', 'docBaseUrl', 'iccUrl']) assert.equal(key in calls.options, false);
   assert.equal(calls.options.useWasm, false);
   assert.equal(calls.options.enableXfa, false);
   assert.equal(calls.options.verbosity, 0);
@@ -112,10 +121,10 @@ test('captures caller bytes and pins local, non-WASM, quiet options without a UR
   assert.equal(calls.destroyed, 1); assert.equal(calls.disposed, 1);
 });
 
-test('invalid, sparse, oversized and pre-aborted bytes never create a worker', async () => {
-  for (const bytes of [[], [256], [-1], [1.5], ['1'], new Array(2), new Array(lifecycle.MAX_PDF_INPUT_BYTES + 1)]) {
-    const { load, calls } = fakeLoader();
-    await assert.rejects(load(bytes).promise, { code: 'invalid' });
+test('invalid source lengths and pre-aborted ownership never create a worker', async () => {
+  for (const length of [0, -1, 1.5, '1', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    const { rawLoad, calls } = fakeLoader();
+    await assert.rejects(rawLoad({ ...source([1]), length }).promise, { code: 'invalid' });
     assert.equal(calls.created, 0);
   }
   const { load, calls } = fakeLoader();
@@ -206,7 +215,7 @@ async function realLoader() {
       return { worker, dispose() { worker.destroy(); disposed++; } };
     },
   });
-  return { load, disposed: () => disposed, worker: () => worker };
+  return { load: (bytes, options) => load(source(bytes), options), rawLoad: load, disposed: () => disposed, worker: () => worker };
 }
 
 test('real PDF.js parses generated text, blank, RGB image and JS-decoded fax with Node fake worker', async () => {

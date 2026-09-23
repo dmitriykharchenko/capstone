@@ -30,15 +30,15 @@ async fn preview_worker_joins_normal_error_and_panic_before_returning() {
         let result = super::super::preview::owned(Cancellation::default(), move |_| {
             EXIT.with(|s| *s.borrow_mut() = Some(Exit(flag)));
             assert!(!panic, "synthetic preview panic");
-            Err::<(), _>(PaperError::CorruptPdf)
+            Err::<(), _>(ErrorCode::PdfInvalid)
         })
         .await;
         assert_eq!(
             result,
             Err(if panic {
-                PaperError::Io
+                ErrorCode::PdfClosed
             } else {
-                PaperError::CorruptPdf
+                ErrorCode::PdfInvalid
             })
         );
         assert!(exited.load(Ordering::SeqCst));

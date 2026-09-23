@@ -150,7 +150,7 @@ test('actual native API read cancellation drains before replacement and drops st
   native[0].resolve({ bytes: [99] }); await a; await b; await flush();
   assert.deepEqual(native.map(r => r.id), ['a', 'c']);
   native[1].resolve({ bytes: [37, 80, 68, 70] }); await c; await flush();
-  assert.equal(h.loads.length, 1); assert.deepEqual(h.loads[0].bytes, [37, 80, 68, 70]);
+  assert.equal(h.loads.length, 1); assert.deepEqual(h.loads[0].bytes, { bytes: [37, 80, 68, 70] });
   await h.reader.destroy();
 });
 
@@ -444,7 +444,7 @@ test('stalled page teardown fails closed without overlapping another page', asyn
 test('native/read and page errors expose fixed messages, not raw details', async t => {
   const h = harness(t);
   const opening = h.reader.open('bad'); await flush(); h.reads[0].reject(Error('PRIVATE-DETAIL')); await opening;
-  assert.match(h.state().message, /64 MiB/); assert.doesNotMatch(h.state().message, /PRIVATE/);
+  assert.match(h.state().message, /Reopen the preview/); assert.doesNotMatch(h.state().message, /PRIVATE|64 MiB/);
   const broken = harness(t, { getPage: () => Promise.reject(Error('PRIVATE-DETAIL')) }); await broken.open();
   assert.equal(broken.state().phase, 'error'); assert.doesNotMatch(broken.state().message, /PRIVATE/);
 });
@@ -454,10 +454,12 @@ test('verified loader integrates local password retry, stale prompts, cancel and
   const doc = documentDouble();
   const load = lifecycle.createPdfLoader({ assetBase: 'app://research/assets/generated/',
     async loadLibrary() { return { PasswordResponses: { INCORRECT_PASSWORD: 2 }, TextLayer: doc.loaded.TextLayer,
+      PDFDataRangeTransport: class {},
       getDocument() { const done = deferred(); const task = { ...done, destroy: async () => done.reject(Error('cancelled')) }; tasks.push(task); return task; },
     }; }, createWorker() { return { worker: {}, dispose() { disposed++; } }; },
   });
-  const h = harness(t, { loadPdf: load });
+  const h = harness(t, { loadPdf: (pdf, options) => load({ length: pdf.bytes[0] === 256 ? 0 : pdf.bytes.length,
+    read: async () => new Uint8Array(pdf.bytes), close: async () => {} }, options) });
   const opening = h.reader.open('locked'); await flush(); h.reads[0].resolve({ bytes: [1] }); await flush();
   const send = value => { attempts.push(typeof value); };
   tasks[0].onPassword(send, 1);

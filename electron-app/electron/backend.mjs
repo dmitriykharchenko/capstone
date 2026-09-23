@@ -10,6 +10,9 @@ const MESSAGES = {
   invalid_params: 'Invalid command parameters.',
   transport: 'The backend connection closed. The operation outcome is unknown; check its state before retrying. No operation was replayed.',
   protocol: 'The backend returned an invalid response. The operation outcome is unknown; check its state before retrying.',
+  pdf_changed: 'PDF source changed. Reopen the preview.',
+  pdf_invalid: 'PDF is invalid or unsupported.',
+  pdf_closed: 'PDF preview is closed. Reopen the preview.',
 };
 export function publicError(code = 'transport') {
   const error = new Error(MESSAGES[code] ?? 'Backend operation failed.');
@@ -30,6 +33,7 @@ export class Backend {
     this.pending = new Map();
     this.acks = new Map();
     this.count = 0;
+    this.previewSequence = 0n;
     this.child = null;
     this.stopping = null;
     this.teardown = null;
@@ -38,8 +42,14 @@ export class Backend {
     this.buffer = Buffer.alloc(0);
   }
 
-  async ready() {
+  async ready(previewRange = false) {
     if (this.closed) throw publicError();
+    // Ranges never restart/replay a stale lease, and never consume the general
+    // request ledger. The native preview-only namespace has a high-water mark.
+    if (previewRange) {
+      if (!this.child || this.stopping || this.failed) throw publicError('pdf_closed');
+      return;
+    }
     if (this.stopping) await this.stopping;
     if (this.count >= this.rotateAfter) {
       if (this.pending.size || this.acks.size) throw publicError('busy');
@@ -53,6 +63,7 @@ export class Backend {
     this.child = child;
     this.failed = false;
     this.count = 0;
+    this.previewSequence = 0n;
     this.buffer = Buffer.alloc(0);
     child.stdout.on('data', (bytes) => {
       if (this.child !== child || this.failed) return;
@@ -80,7 +91,7 @@ export class Backend {
     });
   }
 
-  request(command, params, { onEvent = () => {}, signal } = {}) {
+  request(command, params, { onEvent = () => {}, signal, timeout = this.requestTimeout } = {}) {
     let id;
     let submitted;
     let cancelled = false;
@@ -101,14 +112,15 @@ export class Backend {
       rejectLocal = reject;
       void (async () => {
         if (signal?.aborted) throw publicError('cancelled');
-        await this.ready();
+        const range = command === 'read_pdf_range';
+        await this.ready(range);
         if (cancelled || signal?.aborted) throw publicError('cancelled');
         if (this.closed) throw publicError();
         if (this.stopping) throw publicError('busy');
         if (this.pending.size >= MAX_PENDING || this.acks.size >= MAX_PENDING ||
-            this.count >= this.rotateAfter) throw publicError('busy');
-        id = `r${++this.count}`;
-        const timer = setTimeout(() => { void this.fail(); }, this.requestTimeout);
+            (!range && this.count >= this.rotateAfter)) throw publicError('busy');
+        id = range ? `pdf:${++this.previewSequence}` : `r${++this.count}`;
+        const timer = timeout > 0 ? setTimeout(() => { void this.fail(); }, timeout) : undefined;
         submitted = { resolve, reject, seq: 0, onEvent, timer, cancelled: false };
         this.pending.set(id, submitted);
         try { this.write({ v: 1, type: 'request', id, command, params }); }

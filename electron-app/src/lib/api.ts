@@ -44,8 +44,10 @@ export interface PdfData {
   id: string;
   filename: string;
   mime_type: string;
-  bytes: number[];
+  preview_id: string;
+  total_bytes: number;
 }
+export interface PdfRange { preview_id: string; offset: number; bytes: number[] }
 
 export type IndexReadiness = "ready" | "recovering" | "recovery_required" | "rebuild_required" | "unavailable";
 // Durable active publication, revalidated against source/store truth. Attempt
@@ -235,6 +237,8 @@ export interface RendererApi {
   listPapers(): CancellablePromise<PaperInfo[]>;
   getPaper(paperId: string): CancellablePromise<PaperInfo>;
   readPdf(paperId: string): CancellablePromise<PdfData>;
+  readPdfRange(previewId: string, begin: number, end: number): CancellablePromise<PdfRange>;
+  closePdf(previewId: string): CancellablePromise<null>;
   health(): CancellablePromise<HealthInfo>;
   chat(sessionId: string, message: string, turnId?: string): CancellablePromise<ChatResult>;
   chatStream(sessionId: string, message: string, onEvent: (event: ChatStreamEvent) => void, turnId?: string): CancellablePromise<void>;
@@ -269,6 +273,8 @@ export const api: RendererApi = {
   listPapers: () => request("listPapers"),
   getPaper: (id) => request("getPaper", id),
   readPdf: (id) => request("readPdf", id),
+  readPdfRange: (id, begin, end) => request("readPdfRange", id, begin, end),
+  closePdf: (id) => request("closePdf", id),
   health: () => request("health"),
   chat: (id, message, turnId) => request("chat", id, message, turnId),
   chatStream: (id, message, onEvent, turnId) => request("chatStream", id, message, onEvent, turnId),

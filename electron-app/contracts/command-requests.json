@@ -3,6 +3,7 @@
   {"v":1,"type":"request","id":"list_papers","command":"list_papers","params":{}},
   {"v":1,"type":"request","id":"get_paper","command":"get_paper","params":{"paper_id":"paper-1"}},
   {"v":1,"type":"request","id":"read_pdf","command":"read_pdf","params":{"paper_id":"paper-1"}},
+  {"v":1,"type":"request","id":"pdf:1","command":"read_pdf_range","params":{"preview_id":"00000000-0000-4000-8000-000000000001","begin":0,"end":65536}},
   {"v":1,"type":"request","id":"chat","command":"chat","params":{"session_id":"session-1","message":"Question?"}},
   {"v":1,"type":"request","id":"chat_stream","command":"chat_stream","params":{"session_id":"session-1","message":"Question?"}},
   {"v":1,"type":"request","id":"list_sessions","command":"list_sessions","params":{}},

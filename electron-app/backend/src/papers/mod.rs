@@ -6,6 +6,7 @@ mod safe_root;
 mod snapshot;
 
 pub use extraction::{ExtractedPage, MAX_EXTRACTED_BYTES, MAX_PDF_PAGES, extract_pdf_pages};
+pub use preview::{MAX_PREVIEW_RANGE, MAX_PREVIEW_SESSIONS};
 pub use repository::{
     NativePaperRepository, PaperCommand, PaperCommandHandler, PaperRequest, PdfChunk,
 };
@@ -83,8 +84,8 @@ pub fn derive_title(id: &str) -> String {
 pub trait PaperRepository: Send + Sync {
     fn list(&self) -> BackendFuture<Vec<PaperInfo>>;
     fn get(&self, paper_id: String) -> BackendFuture<PaperInfo>;
-    // Emit pdf_chunk with offset + bounded bytes, then return metadata/byte count.
-    // Never place an entire arbitrary-sized PDF into a single JSON frame.
+    // Emit pdf_open metadata; retain a cancellable lease until close/idle expiry.
+    // Separate read_pdf_range requests use this opaque lease, never a file path.
     fn read_pdf(&self, paper_id: String, context: RequestContext) -> BackendFuture<PdfInfo>;
     fn extract_chunks(
         &self,

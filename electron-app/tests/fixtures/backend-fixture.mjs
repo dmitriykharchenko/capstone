@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline';
 const scenario = process.argv[2] ?? 'normal';
 const active = new Set();
+const previews = new Map();
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 createInterface({ input: process.stdin }).on('line', (line) => {
   const req = JSON.parse(line);
@@ -8,7 +9,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   if (req.type === 'cancel') {
     const accepted = active.delete(id);
     if (scenario === 'ignore-cancel') return;
-    if (accepted) send({ v: 1, id, seq: 0, type: 'cancelled' });
+    if (accepted) send({ v: 1, id, seq: previews.has(id) ? 1 : 0, type: 'cancelled' });
+    previews.delete(id);
     send({ v: 1, id, type: 'cancel_ack', accepted });
     return;
   }
@@ -27,9 +29,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const event = (event, data) => send({ v: 1, id, seq: seq++, type: 'event', event, data });
   let data;
   if (command === 'read_pdf') {
-    event('pdf_chunk', { offset: 0, bytes: [37, 80] });
-    event('pdf_chunk', { offset: scenario === 'pdf-gap' ? 3 : 2, bytes: [68, 70] });
-    data = { id: params.paper_id, filename: 'paper.pdf', mime_type: 'application/pdf', total_bytes: 4 };
+    const preview_id = '00000000-0000-4000-8000-000000000001';
+    active.add(id); previews.set(id, preview_id);
+    event('pdf_open', { id: params.paper_id, filename: `${params.paper_id}.pdf`, mime_type: 'application/pdf',
+      preview_id: scenario === 'pdf-gap' ? 'invalid' : preview_id, total_bytes: 4 });
+    return;
+  } else if (command === 'read_pdf_range') {
+    data = { preview_id: params.preview_id, offset: params.begin, bytes: [37, 80, 68, 70].slice(params.begin, params.end) };
   } else if (command === 'chat_stream') {
     const count = scenario === 'flood' ? 40 : 2;
     for (let i = 0; i < count; i++) event('delta', { delta: 'answer' });

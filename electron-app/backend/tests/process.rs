@@ -149,8 +149,14 @@ fn unfinished_domain_commands_report_unavailable_in_the_configured_binary() {
     let requests: Value =
         serde_json::from_str(include_str!("../../contracts/command-requests.json")).unwrap();
     for request in requests.as_array().unwrap() {
-        if ["health", "list_papers", "get_paper", "read_pdf"]
-            .contains(&request["command"].as_str().unwrap())
+        if [
+            "health",
+            "list_papers",
+            "get_paper",
+            "read_pdf",
+            "read_pdf_range",
+        ]
+        .contains(&request["command"].as_str().unwrap())
         {
             continue;
         }
@@ -192,7 +198,7 @@ fn real_binary_lists_gets_and_streams_only_configured_pdf_bytes() {
             .iter()
             .filter(|c| c["available"] == true)
             .count(),
-        4
+        5
     );
     for (id, command, params) in [
         ("list", "list_papers", json!({})),
@@ -211,13 +217,13 @@ fn real_binary_lists_gets_and_streams_only_configured_pdf_bytes() {
     }
     process.send(json!({"v":1,"type":"request","id":"read","command":"read_pdf","params":{"paper_id":"Test"}}));
     let mut bytes = Vec::new();
-    loop {
+    let meta = process.next();
+    assert_eq!(meta["event"], "pdf_open");
+    let length = meta["data"]["total_bytes"].as_u64().unwrap();
+    for begin in (0..length).step_by(64 * 1024) {
+        process.send(json!({"v":1,"type":"request","id":format!("range-{begin}"),"command":"read_pdf_range","params":{"preview_id":meta["data"]["preview_id"],"begin":begin,"end":length.min(begin + 64 * 1024)}}));
         let result = process.next();
-        if result["type"] == "result" {
-            assert_eq!(result["data"]["total_bytes"], bytes.len());
-            break;
-        }
-        assert_eq!(result["event"], "pdf_chunk");
+        assert_eq!(result["type"], "result");
         assert_eq!(result["data"]["offset"], bytes.len());
         let chunk: Vec<u8> = serde_json::from_value(result["data"]["bytes"].clone()).unwrap();
         assert!(chunk.len() <= 64 * 1024);
@@ -244,13 +250,12 @@ fn real_binary_lists_gets_and_streams_only_configured_pdf_bytes() {
     .unwrap();
     process.send(json!({"v":1,"type":"request","id":"locked","command":"read_pdf","params":{"paper_id":"Locked"}}));
     let mut transferred = Vec::new();
-    loop {
+    let meta = process.next();
+    assert_eq!(meta["event"], "pdf_open");
+    for begin in (0..encrypted.len()).step_by(64 * 1024) {
+        process.send(json!({"v":1,"type":"request","id":format!("locked-range-{begin}"),"command":"read_pdf_range","params":{"preview_id":meta["data"]["preview_id"],"begin":begin,"end":encrypted.len().min(begin + 64 * 1024)}}));
         let output = process.next();
-        if output["type"] == "result" {
-            assert_eq!(output["data"]["total_bytes"], encrypted.len());
-            break;
-        }
-        assert_eq!(output["type"], "event");
+        assert_eq!(output["type"], "result");
         assert_eq!(output["data"]["offset"], transferred.len());
         let chunk: Vec<u8> = serde_json::from_value(output["data"]["bytes"].clone()).unwrap();
         transferred.extend(chunk);
@@ -265,7 +270,14 @@ fn real_binary_lists_gets_and_streams_only_configured_pdf_bytes() {
         ("absolute", "/Test"),
     ] {
         process.send(json!({"v":1,"type":"request","id":id,"command":"read_pdf","params":{"paper_id":paper}}));
-        assert_eq!(process.next()["error"]["code"], "invalid_params");
+        assert_eq!(
+            process.next()["error"]["code"],
+            if paper == "missing" {
+                "pdf_invalid"
+            } else {
+                "invalid_params"
+            }
+        );
     }
     assert!(!process._root.path().join("data").exists());
     process.finish();

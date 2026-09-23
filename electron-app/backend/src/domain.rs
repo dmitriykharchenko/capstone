@@ -64,6 +64,7 @@ pub struct PdfInfo {
     pub filename: String,
     pub mime_type: String,
     pub total_bytes: u64,
+    pub preview_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

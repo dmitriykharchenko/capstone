@@ -72,6 +72,9 @@ pub enum ErrorCode {
     ResponseTooLarge,
     Cancelled,
     OutcomeUnknown,
+    PdfChanged,
+    PdfInvalid,
+    PdfClosed,
 }
 
 impl ErrorCode {
@@ -90,6 +93,9 @@ impl ErrorCode {
             Self::Internal => "Backend operation failed.",
             Self::ResponseTooLarge => "Output frame exceeds the byte limit; use bounded chunks.",
             Self::Cancelled => "Request cancelled.",
+            Self::PdfChanged => "PDF source changed. Reopen the preview.",
+            Self::PdfInvalid => "PDF is invalid or unsupported.",
+            Self::PdfClosed => "PDF preview is closed. Reopen the preview.",
             Self::OutcomeUnknown => {
                 "Chat outcome is unknown; reconcile this turn before starting a new one."
             }

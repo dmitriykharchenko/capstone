@@ -20,6 +20,7 @@ use crate::{
 #[derive(Clone)]
 pub struct NativePaperRepository {
     root: Arc<SafeRoot>,
+    previews: Arc<super::preview::Sessions>,
     #[cfg(test)]
     before_preview: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -30,6 +31,7 @@ impl NativePaperRepository {
     pub fn new(directory: impl AsRef<Path>) -> PaperResult<Self> {
         Ok(Self {
             root: Arc::new(SafeRoot::new(directory.as_ref())?),
+            previews: Arc::default(),
             #[cfg(test)]
             before_preview: None,
         })
@@ -241,37 +243,25 @@ impl PaperRepository for NativePaperRepository {
         let repository = self.clone();
         Box::pin(async move {
             let cancellation = context.cancellation();
-            let id = paper_id.clone();
-            let bytes = super::preview::owned(cancellation, move |cancellation| {
-                let bytes = repository.read_pdf_bytes(&id, &cancellation)?;
+            let lease = super::preview::owned(cancellation, move |cancellation| {
                 #[cfg(test)]
                 if let Some(hook) = &repository.before_preview {
                     hook();
                 }
-                super::preview::validate(&bytes, &cancellation)?;
-                Ok(bytes)
+                repository
+                    .previews
+                    .open(repository.root, paper_id, cancellation)
             })
-            .await
-            .map_err(ErrorCode::from)?;
-            for (index, chunk) in bytes.chunks(PDF_CHUNK_BYTES).enumerate() {
-                let event = PdfChunk {
-                    offset: (index * PDF_CHUNK_BYTES) as u64,
-                    bytes: chunk.to_vec(),
-                };
-                context
-                    .emit(
-                        "pdf_chunk",
-                        serde_json::to_value(event).map_err(|_| ErrorCode::Internal)?,
-                    )
-                    .await?;
-            }
-            context.cancellation().check()?;
-            Ok(PdfInfo {
-                id: paper_id.clone(),
-                filename: format!("{paper_id}.pdf"),
-                mime_type: "application/pdf".to_owned(),
-                total_bytes: bytes.len() as u64,
-            })
+            .await?;
+            context
+                .emit(
+                    "pdf_open",
+                    serde_json::to_value(lease.info()).map_err(|_| ErrorCode::Internal)?,
+                )
+                .await?;
+            // This request owns the lease until cancel/EOF/transport loss/idle
+            // expiry. Drop closes the descriptor even during aborted opening.
+            Err(lease.wait().await)
         })
     }
 
@@ -294,8 +284,17 @@ pub struct PaperRequest {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PdfChunk {
+    pub preview_id: String,
     pub offset: u64,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PdfRangeRequest {
+    pub preview_id: String,
+    pub begin: u64,
+    pub end: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +306,7 @@ pub enum PaperCommand {
     List,
     Get,
     ReadPdf,
+    ReadPdfRange,
 }
 
 /// Validated adapters installed only by trusted browsing composition.
@@ -329,6 +329,33 @@ impl CommandHandler for PaperCommandHandler {
         let repository = self.repository.clone();
         let command = self.command;
         Box::pin(async move {
+            if matches!(command, PaperCommand::ReadPdfRange) {
+                let request = serde_json::from_value::<PdfRangeRequest>(params.clone());
+                let request = match request {
+                    Ok(request) if uuid::Uuid::parse_str(&request.preview_id).is_ok() => request,
+                    _ => {
+                        if let Some(id) = params.get("preview_id").and_then(Value::as_str) {
+                            repository.previews.close(id, ErrorCode::PdfInvalid);
+                        }
+                        return Err(ErrorCode::PdfInvalid);
+                    }
+                };
+                return super::preview::owned(context.cancellation(), move |cancellation| {
+                    let bytes = repository.previews.read(
+                        &request.preview_id,
+                        request.begin,
+                        request.end,
+                        &cancellation,
+                    )?;
+                    serde_json::to_value(PdfChunk {
+                        preview_id: request.preview_id,
+                        offset: request.begin,
+                        bytes,
+                    })
+                    .map_err(|_| ErrorCode::Internal)
+                })
+                .await;
+            }
             if matches!(command, PaperCommand::List) {
                 serde_json::from_value::<ListRequest>(params)
                     .map_err(|_| ErrorCode::InvalidParams)?;
@@ -345,7 +372,7 @@ impl CommandHandler for PaperCommandHandler {
                 PaperCommand::ReadPdf => {
                     serde_json::to_value(repository.read_pdf(request.paper_id, context).await?)
                 }
-                PaperCommand::List => unreachable!(),
+                PaperCommand::List | PaperCommand::ReadPdfRange => unreachable!(),
             }
             .map_err(|_| ErrorCode::Internal)
         })

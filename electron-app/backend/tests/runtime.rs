@@ -272,6 +272,35 @@ async fn request_id_memory_is_bounded_by_connection_limit() {
     client.task.await.unwrap().unwrap();
 }
 
+#[tokio::test]
+async fn preview_high_water_mark_rejects_replay_without_consuming_general_ledger() {
+    let mut client = Client::new();
+    for n in 1..=MAX_SESSION_REQUESTS + 1 {
+        client
+            .request(&format!("pdf:{n}"), "read_pdf_range", json!({}))
+            .await;
+        assert_eq!(client.next().await["error"]["code"], "unavailable");
+    }
+    for id in ["pdf:1", "pdf:4097", "pdf:0"] {
+        client.request(id, "read_pdf_range", json!({})).await;
+        assert_eq!(client.next().await["error"]["code"], "duplicate_id");
+    }
+    for (id, command) in [
+        ("pdf:01", "read_pdf_range"),
+        ("pdf:-1", "read_pdf_range"),
+        ("pdf:5000", "health"),
+    ] {
+        client.request(id, command, json!({})).await;
+        assert_eq!(client.next().await["error"]["code"], "invalid_request");
+    }
+    client.request("h", "health", json!({})).await;
+    assert_eq!(client.next().await["type"], "result");
+    client.request("h", "health", json!({})).await;
+    assert_eq!(client.next().await["error"]["code"], "duplicate_id");
+    client.writer.shutdown().await.unwrap();
+    client.task.await.unwrap().unwrap();
+}
+
 struct BlockingHandler(Arc<AtomicUsize>);
 impl CommandHandler for BlockingHandler {
     fn call(&self, _: Value, context: RequestContext) -> BackendFuture<Value> {

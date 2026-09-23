@@ -26,6 +26,7 @@ pub fn browsing_registry(env: impl Fn(&str) -> Option<String>) -> Registry {
             ("list_papers", PaperCommand::List),
             ("get_paper", PaperCommand::Get),
             ("read_pdf", PaperCommand::ReadPdf),
+            ("read_pdf_range", PaperCommand::ReadPdfRange),
         ] {
             registry
                 .install(

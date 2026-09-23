@@ -30,12 +30,21 @@ const limit = (v) => { positive(v); requireValid(v <= 100); return v; };
 export const testCase = object({ question: nonempty, grading_notes: nonempty, sources: array(nonempty, 1000) });
 const cases = (v) => { const result = array(testCase, 1000)(v); requireValid(result.length > 0); return result; };
 const chatArgs = object({ session_id: identifier, turn_id: identifier, message: nonempty });
+export const previewId = (v) => { requireValid(typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v)); return v; };
+export const MAX_PDF_RANGE = 64 * 1024;
+export const pdfRangeArgs = (v) => {
+  const args = object({ preview_id: previewId, begin: uint, end: positive })(v);
+  requireValid(args.begin < args.end && args.end - args.begin <= MAX_PDF_RANGE);
+  return args;
+};
 
 // Renderer methods are a closed allowlist. There is no raw command/path/env API.
 export const methods = Object.freeze({
   health: ['health', empty], listPapers: ['list_papers', empty],
   getPaper: ['get_paper', object({ paper_id: paperId })],
   readPdf: ['read_pdf', object({ paper_id: paperId })],
+  readPdfRange: ['read_pdf_range', pdfRangeArgs],
+  closePdf: ['close_pdf', object({ preview_id: previewId })],
   chat: ['chat', chatArgs], chatStream: ['chat_stream', chatArgs],
   listSessions: ['list_sessions', empty],
   getMessages: ['get_messages', object({ session_id: identifier })],

@@ -3,6 +3,7 @@
   {"command":"list_papers","owner":"papers","streaming":false},
   {"command":"get_paper","owner":"papers","streaming":false},
   {"command":"read_pdf","owner":"papers","streaming":true},
+  {"command":"read_pdf_range","owner":"papers","streaming":false},
   {"command":"chat","owner":"chat","streaming":false},
   {"command":"chat_stream","owner":"chat","streaming":true},
   {"command":"list_sessions","owner":"history","streaming":false},

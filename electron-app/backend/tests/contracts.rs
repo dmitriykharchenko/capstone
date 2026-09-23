@@ -64,6 +64,7 @@ fn inventory_contains_all_ui_commands_and_non_ui_capabilities() {
         "list_papers",
         "get_paper",
         "read_pdf",
+        "read_pdf_range",
         "chat",
         "chat_stream",
         "list_sessions",

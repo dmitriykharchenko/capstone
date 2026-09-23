@@ -438,29 +438,30 @@ test('idle child retirement and shutdown after known success are also bounded wi
   h.clean();
 });
 
-for (const accepted of [true, false]) {
-  test(`partial PDF cancellation accepted=${accepted} retains validation until its real terminal then clears bytes`, async (t) => {
+for (const opened of [true, false]) {
+  test(`PDF lease cancellation after metadata=${opened} clears ownership without retaining bytes`, async (t) => {
     const h = host(t);
     const request = h.api.readPdf('p');
     const state = observe(request.done);
     await flush();
     const child = h.children[0], { id } = child.frames[0];
-    const pdf = [...h.broker.requests.values()][0].pdf;
-    child.frame({ id, seq: 0, type: 'event', event: 'pdf_chunk', data: { offset: 0, bytes: [37, 80] } });
-    request.cancel();
-    child.frame({ id, type: 'cancel_ack', accepted });
-    await h.tick(2000);
-    assert.equal(state.settled, false);
-    if (accepted) child.frame({ id, seq: 1, type: 'cancelled' });
-    else {
-      child.frame({ id, seq: 1, type: 'event', event: 'pdf_chunk', data: { offset: 2, bytes: [68, 70] } });
-      child.frame({ id, seq: 2, type: 'result', data: { id: 'p', filename: 'p.pdf', mime_type: 'application/pdf', total_bytes: 4 } });
+    if (opened) {
+      child.frame({ id, seq: 0, type: 'event', event: 'pdf_open', data: { id: 'p', filename: 'p.pdf',
+        mime_type: 'application/pdf', total_bytes: 4, preview_id: '00000000-0000-4000-8000-000000000001' } });
+      await state.done;
+      assert.equal(state.value.total_bytes, 4);
+      assert.equal(state.value.bytes, undefined);
+      assert.equal(h.active(), 0);
     }
+    request.cancel();
+    request.cancel();
+    child.frame({ id, type: 'cancel_ack', accepted: true });
+    child.frame({ id, seq: opened ? 1 : 0, type: 'cancelled' });
     await state.done;
-    if (accepted) assert.match(state.error.message, /cancelled/);
-    else assert.deepEqual(state.value.bytes, [37, 80, 68, 70]);
-    assert.equal(pdf.chunks.length, 0);
-    assert.equal(pdf.size, 0);
+    await flush();
+    if (!opened) assert.match(state.error.message, /closed/);
+    assert.equal(h.broker.previews.sessions.size, 0);
+    assert.equal(h.broker.previews.pending.size, 0);
     h.clean();
   });
 }

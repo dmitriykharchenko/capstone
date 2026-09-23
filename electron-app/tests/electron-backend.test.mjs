@@ -61,6 +61,25 @@ test('cancellation before startup does not send or replay a mutation', async (t)
   assert.equal(value.count, 0);
 });
 
+test('preview-only ranges exceed the general request ledger without rotation and never restart stale leases', async t => {
+  let starts = 0;
+  const value = backend(t, 'normal', { rotateAfter: 1, spawnChild(...args) { starts++; return spawn(...args); } });
+  const broker = new Broker(value);
+  const opened = await broker.run(1, { token: 'open', method: 'readPdf', args: { paper_id: 'p' } }, () => {});
+  assert.equal(opened.ok, true);
+  const pid = value.child.pid;
+  for (let i = 0; i < 4097; i++) {
+    const read = await broker.run(1, { token: `range${i}`, method: 'readPdfRange',
+      args: { preview_id: opened.data.preview_id, begin: 0, end: 1 } }, () => {});
+    assert.equal(read.ok, true); assert.deepEqual(read.data.bytes, [37]);
+  }
+  assert.equal(value.count, 1); assert.equal(value.previewSequence, 4097n);
+  assert.equal(value.child.pid, pid); assert.equal(starts, 1); assert.equal(value.pending.size, 1);
+  broker.cancelOwner(1); await value.stop(false);
+  await assert.rejects(value.request('read_pdf_range', { preview_id: opened.data.preview_id, begin: 0, end: 1 }).done, /closed/);
+  assert.equal(starts, 1); assert.equal(broker.previews.sessions.size, 0);
+});
+
 for (const scenario of ['out-of-order', 'wrong-id', 'missing-data', 'oversized', 'invalid-utf8', 'truncated', 'crash']) {
   test(`rejects and cleans up ${scenario} child output without leaking diagnostics`, { timeout: 5000 }, async (t) => {
     const value = backend(t, scenario, { requestTimeout: 1500 });
@@ -100,12 +119,15 @@ test('oversized request is rejected and all pending work is settled', async (t) 
   assert.equal(value.pending.size, 0);
 });
 
-test('broker assembles PDF and adapts ordered chat/index events only at terminal result', async (t) => {
+test('broker opens pathless PDF ranges and adapts ordered chat/index events only at terminal result', async (t) => {
   const broker = new Broker(backend(t));
   const events = [];
   const send = (id, event, seq) => { events.push(event); broker.acknowledge(1, id, seq); };
   const pdf = await broker.run(1, { token: 'p', method: 'readPdf', args: { paper_id: 'paper' } }, send);
-  assert.deepEqual(pdf.data.bytes, [37, 80, 68, 70]);
+  assert.equal(pdf.data.bytes, undefined);
+  const range = await broker.run(1, { token: 'r', method: 'readPdfRange', args: { preview_id: pdf.data.preview_id, begin: 0, end: 4 } }, send);
+  assert.deepEqual(range.data.bytes, [37, 80, 68, 70]);
+  await broker.run(1, { token: 'close', method: 'closePdf', args: { preview_id: pdf.data.preview_id } }, send);
   assert.equal(events.length, 0);
   assert.equal((await broker.run(1, { token: 'c', method: 'chatStream', args: { session_id: 's', turn_id: 'turn', message: '?' } }, send)).ok, true);
   assert.deepEqual(events.map((event) => event.event), ['delta', 'delta', 'done']);
@@ -144,7 +166,7 @@ test('unconfigured actual Rust binary stays health-only outside repository witho
   assert.equal(health.ok, true);
   assert.equal(health.data.backend, 'rust');
   assert.equal(health.data.commands.filter((item) => item.available).length, 1);
-  assert.equal(health.data.commands.length, 19);
+  assert.equal(health.data.commands.length, 20);
   const pid = value.child.pid;
   const papers = await broker.run(1, { token: 'p', method: 'listPapers', args: {} }, () => {});
   assert.equal(papers.ok, false);
@@ -152,7 +174,7 @@ test('unconfigured actual Rust binary stays health-only outside repository witho
   assert.equal(value.child.pid, pid);
 });
 
-test('configured actual binary and broker list/get/assemble generated PDFs with only browsing capabilities', async (t) => {
+test('configured actual binary and broker list/get/read ranges with only browsing capabilities', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'research-shell-papers-'));
   const executable = join(dir, 'research-backend');
   const resources = join(dir, 'resources'), papers = join(resources, 'ResearchPapers');
@@ -172,7 +194,7 @@ test('configured actual binary and broker list/get/assemble generated PDFs with 
   const run = (method, args = {}) => broker.run(1, { token: `p${++sequence}`, method, args }, () => {});
   const health = await run('health');
   assert.deepEqual(health.data.commands.filter((c) => c.available).map((c) => c.command),
-    ['get_paper', 'health', 'list_papers', 'read_pdf']);
+    ['get_paper', 'health', 'list_papers', 'read_pdf', 'read_pdf_range']);
   assert.equal(health.data.search_enabled, false);
   const listed = await run('listPapers');
   assert.deepEqual(listed.data.map((p) => p.id), ['Corrupt', 'Oversized', 'Preview']);
@@ -181,7 +203,10 @@ test('configured actual binary and broker list/get/assemble generated PDFs with 
   const read = await run('readPdf', { paper_id: 'Preview' });
   assert.equal(read.ok, true);
   assert.equal(read.data.mime_type, 'application/pdf');
-  assert.deepEqual(Buffer.from(read.data.bytes), bytes);
+  assert.equal(read.data.bytes, undefined);
+  const range = await run('readPdfRange', { preview_id: read.data.preview_id, begin: 0, end: bytes.length });
+  assert.deepEqual(Buffer.from(range.data.bytes), bytes);
+  await run('closePdf', { preview_id: read.data.preview_id });
   for (const id of ['missing', 'Corrupt', 'Oversized', '../Preview', '/Preview']) {
     const result = await run('readPdf', { paper_id: id });
     assert.equal(result.ok, false);

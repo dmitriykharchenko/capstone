@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { webcrypto } from 'node:crypto';
 import { assertSender, trustedURL, webPreferences, csp, secureContents, appResponse } from '../electron/security.mjs';
 import { Broker } from '../electron/broker.mjs';
-import { methods, parseResponse } from '../electron/validation.mjs';
-import { PdfAssembler, MAX_PDF_BYTES, MAX_PDF_CHUNK, parseEvent, terminalEvent } from '../electron/adapters.mjs';
+import { methods, parseResponse, MAX_PDF_RANGE } from '../electron/validation.mjs';
+import { pdfInfo, pdfRange, parseEvent, terminalEvent } from '../electron/adapters.mjs';
 
 test('only exact app/dev origins and the owning top-level frame can invoke', () => {
   const frame = { url: 'app://research/chat?sessionId=s' };
@@ -112,19 +112,18 @@ test('duplicate tokens cannot remove existing work and cancellation is owner-sco
   assert.equal(broker.requests.size, 0);
 });
 
-test('PDF validation enforces integer bytes, chunk/frame bounds, contiguous offsets and terminal byte equality', () => {
-  for (const bytes of [[-1], [256], [1.5], ['1'], [], Array(MAX_PDF_CHUNK + 1).fill(0)]) {
-    assert.throws(() => new PdfAssembler('p').event('pdf_chunk', { offset: 0, bytes }));
+test('PDF validation enforces range bytes, identity and offsets without a total byte cap', () => {
+  const preview_id = '00000000-0000-4000-8000-000000000001';
+  const args = { preview_id, begin: 0, end: 1 };
+  for (const bytes of [[-1], [256], [1.5], ['1'], [], new Array(1), Array(MAX_PDF_RANGE + 1).fill(0)]) {
+    assert.throws(() => pdfRange(args, { preview_id, offset: 0, bytes }));
   }
-  const pdf = new PdfAssembler('p');
-  assert.throws(() => pdf.event('pdf_chunk', { offset: 1, bytes: [1] }));
-  pdf.event('pdf_chunk', { offset: 0, bytes: [1, 2] });
-  assert.throws(() => pdf.result({ id: 'p', filename: 'p.pdf', mime_type: 'application/pdf', total_bytes: 1 }));
-  assert.throws(() => pdf.result({ id: 'other', filename: 'p.pdf', mime_type: 'application/pdf', total_bytes: 2 }));
-  pdf.size = MAX_PDF_BYTES;
-  assert.throws(() => pdf.event('pdf_chunk', { offset: MAX_PDF_BYTES, bytes: [1] }));
-  pdf.clear();
-  assert.equal(pdf.chunks.length, 0);
+  assert.throws(() => pdfRange(args, { preview_id, offset: 1, bytes: [1] }));
+  assert.equal(pdfRange(args, { preview_id, offset: 0, bytes: [1] }).bytes[0], 1);
+  const metadata = { preview_id, id: 'p', filename: 'p.pdf', mime_type: 'application/pdf', total_bytes: 65 * 1024 * 1024 };
+  assert.equal(pdfInfo('p', metadata).total_bytes, metadata.total_bytes);
+  assert.throws(() => pdfInfo('other', metadata));
+  assert.throws(() => pdfInfo('p', { ...metadata, path: '/private' }));
 });
 
 test('domain output validation preserves evaluation casing/nested provenance and denies premature terminal events', () => {

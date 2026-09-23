@@ -1,27 +1,21 @@
 import { publicError } from './backend.mjs';
-import { requireValid, object, array, nonempty, text, uint, positive, nullable, oneOf,
+import { requireValid, object, array, nonempty, text, uint, positive, nullable, oneOf, previewId, MAX_PDF_RANGE,
   sources, chatResult, indexResult, indexFailure, indexOutcome, evaluationResult, caseResult, testCase, progress } from './validation.mjs';
 
-export const MAX_PDF_BYTES = 64 * 1024 * 1024;
-export const MAX_PDF_CHUNK = 64 * 1024;
-export class PdfAssembler {
-  constructor(id) { this.id = id; this.chunks = []; this.size = 0; }
-  event(name, value) {
-    requireValid(name === 'pdf_chunk');
-    const chunk = object({ offset: uint, bytes: array((v) => {
-      uint(v); requireValid(v <= 255); return v;
-    }, MAX_PDF_CHUNK) })(value);
-    requireValid(chunk.offset === this.size && chunk.bytes.length > 0 && this.size + chunk.bytes.length <= MAX_PDF_BYTES);
-    this.chunks.push(Buffer.from(chunk.bytes));
-    this.size += chunk.bytes.length;
-  }
-  result(value) {
-    const info = object({ id: nonempty, filename: nonempty, mime_type: oneOf('application/pdf'), total_bytes: positive })(value);
-    requireValid(info.id === this.id && info.total_bytes === this.size && this.size <= MAX_PDF_BYTES);
-    return { id: info.id, filename: info.filename, mime_type: info.mime_type,
-      bytes: [...Buffer.concat(this.chunks, this.size)] };
-  }
-  clear() { this.chunks = []; this.size = 0; }
+export function pdfInfo(id, value) {
+  const info = object({ id: nonempty, filename: nonempty, mime_type: oneOf('application/pdf'),
+    total_bytes: positive, preview_id: previewId })(value);
+  requireValid(info.id === id && info.filename === `${id}.pdf`);
+  return info;
+}
+export function pdfRange(args, value) {
+  const chunk = object({ preview_id: previewId, offset: uint, bytes: array((v) => {
+    uint(v); requireValid(v <= 255); return v;
+  }, MAX_PDF_RANGE) })(value);
+  // Array.map skips holes; reject sparse in-process/structured-clone payloads too.
+  for (const byte of chunk.bytes) uint(byte);
+  requireValid(chunk.preview_id === args.preview_id && chunk.offset === args.begin && chunk.bytes.length === args.end - args.begin);
+  return chunk;
 }
 
 const subqueries = array(object({ id: nonempty, index: (v) => { positive(v); requireValid(v <= 7); return v; }, query: nonempty }), 7);

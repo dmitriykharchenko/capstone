@@ -6,7 +6,7 @@ export type ReaderState = { phase: 'idle' | 'loading' | 'password' | 'rendering'
   page: number; pages: number; rendered: number; zoom: number; fit: boolean; message: string; notice: string };
 export const initialReaderState = (): ReaderState => ({ phase: 'idle', page: 1, pages: 0,
   rendered: 0, zoom: 1, fit: true, message: '', notice: '' });
-const READ_ERROR = 'Cannot open this PDF. It may be missing, empty, corrupt, unsafe, unsupported, or larger than 64 MiB. Check the file and native backend, then retry.';
+const READ_ERROR = 'Cannot open this PDF. It may be missing, changed, closed, corrupt, unsafe, or unsupported. Reopen the preview.';
 // Svelte unmount cannot await async destruction. A remounted reader waits for the
 // old instance's drain; this barrier contains no PDF data or password values.
 let readerDrain: Promise<void> = Promise.resolve();
@@ -153,9 +153,8 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
     try {
       session.read = dependencies.readPdf(id);
       let pdf: PdfData | undefined = await session.read;
-      session.read = undefined;
       if (!live(session)) return;
-      session.load = dependencies.loadPdf(pdf.bytes, { onPassword(prompt) {
+      session.load = dependencies.loadPdf(pdf, { onError(error) { fail(session, error.message); }, onPassword(prompt) {
         if (!live(session)) return;
         const passwordVersion = ++session.passwordVersion;
         let pending: PdfPasswordPrompt | undefined = prompt;

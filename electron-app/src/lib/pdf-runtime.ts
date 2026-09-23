@@ -1,12 +1,13 @@
 import { version } from 'pdfjs-dist/package.json';
 import { createPdfLoader, PdfLoadError, type PdfLoad, type PdfLoadOptions } from './pdf-lifecycle';
-export { PdfLoadError, MAX_PDF_INPUT_BYTES } from './pdf-lifecycle';
+import { api, type PdfData } from './api';
+export { PdfLoadError } from './pdf-lifecycle';
 export type { PdfLoad, PdfLoadOptions, PdfPasswordPrompt } from './pdf-lifecycle';
 export const PDFJS_VERSION = version;
 export const PDFJS_ASSET_PATH = `/assets/pdfjs-${version}/`;
 
 /** No browser/PDF.js side effects at import time (SSR and test discovery safe). */
-export function loadPdf(bytes: readonly number[] | Uint8Array, options?: PdfLoadOptions): PdfLoad {
+export function loadPdf(pdf: PdfData, options?: PdfLoadOptions): PdfLoad {
   const loader = createPdfLoader({
     assetBase: typeof window === 'undefined' ? '' : new URL(PDFJS_ASSET_PATH, window.location.href).href,
     async loadLibrary() {
@@ -39,5 +40,14 @@ export function loadPdf(bytes: readonly number[] | Uint8Array, options?: PdfLoad
       }
     },
   });
-  return loader(bytes, options);
+  return loader({ length: pdf.total_bytes,
+    read(begin, end) {
+      const request = api.readPdfRange(pdf.preview_id, begin, end);
+      return Object.assign(request.then(result => {
+        if (result.preview_id !== pdf.preview_id || result.offset !== begin || result.bytes.length !== end - begin) throw new PdfLoadError('invalid');
+        return new Uint8Array(result.bytes);
+      }), { cancel: request.cancel });
+    },
+    close: () => api.closePdf(pdf.preview_id),
+  }, options);
 }

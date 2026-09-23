@@ -30,12 +30,20 @@ function request(method, args = {}, callback) {
   }, () => {
     throw new Error('The backend connection closed. The operation outcome is unknown; check its state before retrying. No operation was replayed.');
   }).finally(() => active.delete(token));
-  return { done, cancel: () => cancel(token) };
+  let closed = false;
+  return { done, cancel: () => {
+    if (closed) return;
+    closed = true;
+    if (method === 'readPdf' && !active.has(token)) void ipcRenderer.invoke('research:cancel', token).catch(() => {});
+    else cancel(token);
+  } };
 }
 contextBridge.exposeInMainWorld('research', Object.freeze({
   health: () => request('health'), listPapers: () => request('listPapers'),
   getPaper: (paper_id) => request('getPaper', { paper_id }),
   readPdf: (paper_id) => request('readPdf', { paper_id }),
+  readPdfRange: (preview_id, begin, end) => request('readPdfRange', { preview_id, begin, end }),
+  closePdf: (preview_id) => request('closePdf', { preview_id }),
   chat: (session_id, message, turn_id = crypto.randomUUID()) => request('chat', { session_id, message, turn_id }),
   chatStream: (session_id, message, callback, turn_id = crypto.randomUUID()) => request('chatStream', { session_id, message, turn_id }, callback),
   listSessions: () => request('listSessions'),

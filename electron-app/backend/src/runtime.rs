@@ -301,6 +301,10 @@ where
     let mut active: BTreeMap<String, Active> = BTreeMap::new();
     let mut joins = FuturesUnordered::new();
     let mut seen = HashSet::new();
+    // Preview-only read traffic must not turn connection retirement into a
+    // document-size cap. A reserved monotonic namespace rejects ALL replays
+    // with one high-water mark; mutation/general request accounting is unchanged.
+    let mut preview_sequence = 0_u128;
     let mut input_error = None;
     let mut transport = async {
     loop {
@@ -323,15 +327,29 @@ where
                         write_output(&mut writer, Output {v: VERSION, id: Some(id), seq: None, body: OutputBody::CancelAck { accepted }}).await?;
                     }
                     Input::Request { id, command, params, .. } => {
-                        if seen.contains(&id) {
-                            write_output(&mut writer, Output::protocol_error(ErrorCode::DuplicateId)).await?;
-                            continue;
+                        if let Some(sequence) = id.strip_prefix("pdf:") {
+                            let parsed = sequence.parse::<u128>().ok().filter(|n| n.to_string() == sequence);
+                            if command != "read_pdf_range" || parsed.is_none() {
+                                write_output(&mut writer, Output::protocol_error(ErrorCode::InvalidRequest)).await?;
+                                continue;
+                            }
+                            let sequence = parsed.unwrap();
+                            if sequence <= preview_sequence {
+                                write_output(&mut writer, Output::protocol_error(ErrorCode::DuplicateId)).await?;
+                                continue;
+                            }
+                            preview_sequence = sequence;
+                        } else {
+                            if seen.contains(&id) {
+                                write_output(&mut writer, Output::protocol_error(ErrorCode::DuplicateId)).await?;
+                                continue;
+                            }
+                            if seen.len() == MAX_SESSION_REQUESTS {
+                                write_output(&mut writer, Output::protocol_error(ErrorCode::SessionLimit)).await?;
+                                break;
+                            }
+                            seen.insert(id.clone());
                         }
-                        if seen.len() == MAX_SESSION_REQUESTS {
-                            write_output(&mut writer, Output::protocol_error(ErrorCode::SessionLimit)).await?;
-                            break;
-                        }
-                        seen.insert(id.clone());
                         // Health/control traffic remains responsive even at the work limit.
                         if command == "health" {
                             let body = if params.as_object().is_some_and(|p| p.is_empty()) {

@@ -1,5 +1,12 @@
 {
   "version": 1,
+  "pdf_preview_contract": {
+    "open": "read_pdf emits exactly one pdf_open metadata event with opaque preview_id and total_bytes, then retains a descriptor lease until cancellation, connection loss or idle timeout. Structural parsing and passwords belong to PDF.js, not the indexing parser.",
+    "range": "read_pdf_range accepts exactly preview_id, begin, end (exclusive); at most 65536 bytes per request, validated against one observed source identity before and after IO. Returns exactly preview_id, offset, bytes. No total document byte limit.",
+    "ownership": "At most four native preview leases. Cancel the owning read_pdf request to close. All ordinary protocol frame, queue and active request bounds apply. No paths or native identity fields leave the backend.",
+    "request_ids": "The reserved pdf:<canonical positive u128 decimal> namespace is exclusively for read_pdf_range. Its strictly increasing high-water mark rejects replay without retained history or general session-request accounting. All other request IDs retain the unchanged no-reuse/4096-request policy. No range is replayed after backend restart.",
+    "errors": ["pdf_invalid", "pdf_changed", "pdf_closed"]
+  },
   "limits": {"frame_bytes":1048576,"active_requests":32,"session_requests":4096,"request_id_bytes":64,"worker_queue":32},
   "requests": [
     {"v":1,"type":"request","id":"health-1","command":"health","params":{}},
@@ -43,7 +50,7 @@
   "stream_payload_examples": {
     "chat_plan":{"event":"plan","data":{"subqueries":[{"id":"subquery-1","index":1,"query":"First?"},{"id":"subquery-2","index":2,"query":"Second?"}]}},
     "chat_coverage":{"event":"coverage","data":{"status":"complete","total":2,"subqueries":[]}},
-    "pdf_chunk":{"event":"pdf_chunk","data":{"offset":0,"bytes":[37,80,68,70]}},
+    "pdf_open":{"event":"pdf_open","data":{"id":"paper-1","filename":"paper-1.pdf","mime_type":"application/pdf","total_bytes":68157883,"preview_id":"00000000-0000-4000-8000-000000000001"}},
     "index_progress":{"event":"progress","data":{"completed":1,"total":2,"paper_id":"paper-1","filename":"paper.pdf","status":"indexed","chunk_count":1,"error":null}},
     "evaluation_case_start":{"event":"case_start","data":{"case_index":1,"total":1,"retrieval_type":"hybrid","input":{"question":"What is retrieval?","grading_notes":"Describe evidence lookup.","sources":["paper-1"]}}}
   }

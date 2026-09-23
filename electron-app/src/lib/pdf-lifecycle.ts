@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy, PDFDocumentLoadingTask, PDFWorker, TextLayer } from 'pdfjs-dist';
+import { pdfRangeTransport, PDF_RANGE_BYTES, type PdfSource } from './pdf-range';
 
-export const MAX_PDF_INPUT_BYTES = 64 * 1024 * 1024;
 export const PDF_DESTROY_GRACE_MS = 1000;
 type PdfLibrary = typeof import('pdfjs-dist');
 export type PdfPasswordPrompt = {
@@ -12,6 +12,7 @@ export type PdfPasswordPrompt = {
 export type PdfLoadOptions = {
   signal?: AbortSignal;
   onPassword?: (prompt: PdfPasswordPrompt) => void;
+  onError?: (error: PdfLoadError) => void;
 };
 export type PdfLoad = {
   /** Borrowed resources, valid only until destroy/signal abort. Do not store in Redux. */
@@ -33,8 +34,8 @@ export function createPdfLoader(environment: {
   loadLibrary(): Promise<PdfLibrary>;
   createWorker(library: PdfLibrary, failed: () => void): { worker: PDFWorker; dispose(): void };
 }) {
-  return (bytes: readonly number[] | Uint8Array, options: PdfLoadOptions = {}): PdfLoad => {
-    let data: Uint8Array | undefined;
+  return (source: PdfSource, options: PdfLoadOptions = {}): PdfLoad => {
+    let range: ReturnType<typeof pdfRangeTransport> | undefined;
     let loading: PDFDocumentLoadingTask | undefined;
     let owner: ReturnType<typeof environment.createWorker> | undefined;
     let stopped = false;
@@ -60,23 +61,22 @@ export function createPdfLoader(environment: {
       stopped = true;
       clearPassword();
       onPassword = undefined;
-      data = undefined;
       signal?.removeEventListener('abort', abort);
       reject(new PdfLoadError('cancelled'));
       const task = loading;
       const ownedWorker = owner;
       loading = undefined;
       owner = undefined;
+      const closing = range ? range.release() : Promise.resolve().then(() => source?.close()).catch(() => {});
+      range = undefined;
       disposal = (async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          if (task) {
-            task.onPassword = () => {};
-            // A crashed/non-responsive worker cannot acknowledge Terminate forever.
-            await Promise.race([task.destroy().catch(() => {}), new Promise<void>((done) => {
-              timer = setTimeout(done, PDF_DESTROY_GRACE_MS);
-            })]);
-          }
+          if (task) task.onPassword = () => {};
+          // A crashed/non-responsive worker cannot acknowledge Terminate forever.
+          await Promise.race([Promise.all([task?.destroy().catch(() => {}), closing]), new Promise<void>((done) => {
+            timer = setTimeout(done, PDF_DESTROY_GRACE_MS);
+          })]);
         } finally {
           clearTimeout(timer);
           ownedWorker?.dispose();
@@ -88,22 +88,14 @@ export function createPdfLoader(environment: {
       if (stopped) return;
       reject(new PdfLoadError(code));
       void destroy();
+      try { options.onError?.(new PdfLoadError(code)); } catch { /* Consumer failures cannot retain ownership. */ }
     }
 
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) abort();
     if (!stopped) {
-      if (!(Array.isArray(bytes) || bytes instanceof Uint8Array) || bytes.length === 0 ||
-          bytes.length > MAX_PDF_INPUT_BYTES) fail('invalid');
-      else {
-        // Capture now; never transfer/detach the caller's buffer or retain its number[].
-        data = new Uint8Array(bytes.length);
-        for (let i = 0; i < bytes.length; i++) {
-          const byte = bytes[i];
-          if (!Number.isInteger(byte) || byte < 0 || byte > 255) { fail('invalid'); break; }
-          data[i] = byte;
-        }
-      }
+      if (!source || !Number.isSafeInteger(source.length) || source.length <= 0 ||
+          typeof source.read !== 'function' || typeof source.close !== 'function') fail('invalid');
     }
     if (!stopped) void (async () => {
       try {
@@ -111,8 +103,10 @@ export function createPdfLoader(environment: {
         if (stopped) return;
         owner = environment.createWorker(library, () => fail('unavailable'));
         if (stopped) { owner.dispose(); owner = undefined; return; }
+        range = pdfRangeTransport(library, source, () => fail('invalid'));
         loading = library.getDocument({
-          data, worker: owner.worker, verbosity: 0,
+          range: range.transport, rangeChunkSize: PDF_RANGE_BYTES,
+          disableAutoFetch: true, disableStream: true, worker: owner.worker, verbosity: 0,
           cMapUrl: `${environment.assetBase}cmaps/`, cMapPacked: true,
           standardFontDataUrl: `${environment.assetBase}standard_fonts/`,
           wasmUrl: `${environment.assetBase}wasm/`,
@@ -120,7 +114,6 @@ export function createPdfLoader(environment: {
           enableXfa: false, stopAtErrors: true,
           canvasMaxAreaInBytes: 32 * 1024 * 1024,
         });
-        data = undefined;
         loading.onPassword = (update: (password: string) => void, reason: number) => {
           if (stopped) return;
           if (!onPassword) { fail('password'); return; }
