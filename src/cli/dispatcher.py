@@ -7,6 +7,7 @@ from typing import Any
 from .config import CLIConfig
 from .graph_queries import handle_graph_query
 from .runtime import run_command
+from .unary import run_unary
 
 
 def dispatch(
@@ -15,8 +16,8 @@ def dispatch(
     """Route one CLI command without changing established command handlers."""
 
     def execute(command: Any, request: dict[str, Any]) -> dict[str, Any]:
-        if command == "graph_query":
-            return handle_graph_query(config, request)
+        if command != "chat":
+            return run_unary(command, config, request, graph_query=handle_graph_query)
         from .commands import dispatch as dispatch_legacy
 
         return dispatch_legacy(command, config, request)
