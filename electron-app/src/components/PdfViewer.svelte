@@ -41,7 +41,6 @@
   }
   onMount(() => {
     reader = createPdfReader(surface, next => {
-      if (next.page !== viewState.page) scroll.scrollTo(0, 0);
       viewState = next;
       pageInput = next.page;
     }, clearPassword);
@@ -79,7 +78,7 @@
     </div>
   {/if}
   {#if viewState.phase === 'loading' || viewState.phase === 'rendering'}
-    <p role="status" class="p-2 text-center text-sm">{viewState.phase === 'loading' ? 'Loading PDF…' : `Rendering page ${viewState.page}…`}</p>
+    <p role="status" class="p-2 text-center text-sm">{viewState.phase === 'loading' ? 'Loading PDF…' : `Rendering PDF… ${viewState.rendered} of ${viewState.pages} pages`}</p>
   {:else if viewState.phase === 'error' || viewState.phase === 'cancelled'}
     <div class="p-4 text-center text-sm">
       <p role="alert">{viewState.message}</p>
@@ -99,7 +98,7 @@
   {/if}
   {#if viewState.notice}<p role="status" class="p-2 text-center text-xs">{viewState.notice}</p>{/if}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex (The scroll region must receive keyboard scrolling.) -->
-  <div bind:this={scroll} class="min-h-0 flex-1 overflow-auto bg-muted/40" role="region" aria-label="PDF page, scroll to read" tabindex="0" aria-busy={viewState.phase === 'rendering'}>
+  <div bind:this={scroll} onscroll={() => reader?.scrolled(scroll.scrollTop)} class="relative min-h-0 flex-1 overflow-auto bg-muted/40" role="region" aria-label="PDF document, scroll to read" tabindex="0" aria-busy={viewState.phase === 'rendering'}>
     <div bind:this={surface} class="pdf-surface p-4"></div>
   </div>
 </div>

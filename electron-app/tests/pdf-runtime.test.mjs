@@ -228,6 +228,34 @@ test('real PDF.js parses generated text, blank, RGB image and JS-decoded fax wit
   }
 });
 
+test('real multipage PDF text and operators survive sequential page cleanup and a new view generation', async () => {
+  const f = await realLoader(), handle = f.load(syntheticPdf('multipage').bytes);
+  try {
+    const { document } = await handle.promise;
+    assert.equal(document.numPages, 3);
+    for (let generation = 0; generation < 2; generation++) {
+      await document.cleanup();
+      for (let number = 1; number <= document.numPages; number++) {
+        const page = await document.getPage(number);
+        const operators = await page.getOperatorList();
+        assert.ok(operators.fnArray.includes(library.OPS.showText));
+        const source = page.streamTextContent().getReader();
+        let text = '';
+        while (true) {
+          const chunk = await source.read();
+          if (chunk.done) break;
+          text += chunk.value.items.map(item => item.str ?? '').join('');
+        }
+        assert.ok(text.includes(`Synthetic PDF page ${number} of 3`));
+        assert.ok(text.includes('End of generated page.'));
+        assert.equal(page.cleanup(), true);
+        await document.cleanup(true);
+      }
+    }
+  } finally { await handle.destroy(); }
+  assert.equal(f.disposed(), 1); assert.equal(f.worker().destroyed, true);
+});
+
 test('real PDF.js password required, incorrect, correct and cancel lifecycle with generated locked bytes', async () => {
   const fixture = syntheticPdf('locked'), f = await realLoader(), reasons = [], prompts = [];
   const handle = f.load(fixture.bytes, { onPassword(prompt) {

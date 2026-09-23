@@ -2,12 +2,16 @@ import type { PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import type { PdfLoad } from './pdf-runtime';
 
 export const PDF_LIMITS = Object.freeze({ pages: 500, pixels: 4_000_000, dimension: 8192,
-  textItems: 10_000, textCharacters: 1_000_000, textStyles: 256, minZoom: 0.25, maxZoom: 4 });
+  textItems: 10_000, textCharacters: 1_000_000, textStyles: 256, minZoom: 0.25, maxZoom: 4,
+  documentPixels: 32_000_000, documentTextItems: 100_000, documentTextCharacters: 5_000_000,
+  documentTextStyles: 4096 });
 export class PdfReaderError extends Error {
   constructor(readonly code: 'limit' | 'render') { super(code); }
 }
 export type LoadedPdf = Awaited<PdfLoad['promise']>;
-export type PageView = { page: number; zoom: number; fit: boolean; width: number; pixelRatio: number };
+export type TextBudget = { items: number; characters: number; styles: number };
+export type PageView = { page: number; zoom: number; fit: boolean; width: number; pixelRatio: number;
+  pixelLimit?: number; textBudget?: TextBudget };
 export type PageResult = { zoom: number; reduced: boolean };
 export type PageRender = { promise: Promise<PageResult>; destroy(): Promise<void> };
 
@@ -31,14 +35,17 @@ export function pageGeometry(page: PDFPageProxy, view: PageView) {
     throw new PdfReaderError('limit');
   }
   const requested = Math.min(2, Math.max(1, view.pixelRatio || 1));
-  const ratio = Math.min(requested, Math.sqrt(PDF_LIMITS.pixels / (viewport.width * viewport.height)),
+  const pixels = Math.min(PDF_LIMITS.pixels, view.pixelLimit ?? PDF_LIMITS.pixels);
+  if (!Number.isFinite(pixels) || pixels < 1) throw new PdfReaderError('limit');
+  const ratio = Math.min(requested, Math.sqrt(pixels / (viewport.width * viewport.height)),
     PDF_LIMITS.dimension / viewport.width, PDF_LIMITS.dimension / viewport.height);
   const width = Math.max(1, Math.floor(viewport.width * ratio));
   const height = Math.max(1, Math.floor(viewport.height * ratio));
+  if (width * height > pixels) throw new PdfReaderError('limit');
   return { viewport, zoom, width, height, ratio, reduced: ratio < requested };
 }
 
-/** One owned canvas and text layer. No page prefetch, thumbnails, annotations or offscreen page cache. */
+/** One owned page in a continuous surface; only the caller's sequential pump starts page work. */
 export function renderPdfPage(loaded: LoadedPdf, view: PageView, host: HTMLElement): PageRender {
   let stopped = false;
   let page: PDFPageProxy | undefined;
@@ -66,6 +73,7 @@ export function renderPdfPage(loaded: LoadedPdf, view: PageView, host: HTMLEleme
     root.style.height = `${viewport.height}px`;
     root.style.visibility = 'hidden';
     root.style.setProperty('--total-scale-factor', String(viewport.scale * page.userUnit));
+    root.setAttribute('data-page-number', String(view.page));
     canvas = host.ownerDocument.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -76,7 +84,7 @@ export function renderPdfPage(loaded: LoadedPdf, view: PageView, host: HTMLEleme
     container = host.ownerDocument.createElement('div');
     container.className = 'textLayer';
     root.append(canvas, container);
-    host.replaceChildren(root);
+    host.append(root);
     render = page.render({ canvas, viewport, transform: [ratio, 0, 0, ratio, 0, 0] });
     await render.promise;
     if (stopped) throw new PdfReaderError('render');
@@ -84,6 +92,7 @@ export function renderPdfPage(loaded: LoadedPdf, view: PageView, host: HTMLEleme
     const reader = source;
     let items = 0, characters = 0;
     const styles = new Set<string>();
+    const budget = view.textBudget ?? { items: 0, characters: 0, styles: 0 };
     const boundedText = new ReadableStream({
       async pull(controller) {
         try {
@@ -91,9 +100,17 @@ export function renderPdfPage(loaded: LoadedPdf, view: PageView, host: HTMLEleme
           if (stopped) { controller.close(); return; }
           if (chunk.done) { controller.close(); return; }
           items += chunk.value.items.length;
-          for (const item of chunk.value.items) characters += typeof item.str === 'string' ? item.str.length : 0;
+          budget.items += chunk.value.items.length;
+          for (const item of chunk.value.items) {
+            const length = typeof item.str === 'string' ? item.str.length : 0;
+            characters += length; budget.characters += length;
+          }
+          const previousStyles = styles.size;
           for (const key of Object.keys(chunk.value.styles)) styles.add(key);
-          if (items > PDF_LIMITS.textItems || characters > PDF_LIMITS.textCharacters || styles.size > PDF_LIMITS.textStyles) {
+          budget.styles += styles.size - previousStyles;
+          if (items > PDF_LIMITS.textItems || characters > PDF_LIMITS.textCharacters || styles.size > PDF_LIMITS.textStyles ||
+            budget.items > PDF_LIMITS.documentTextItems || budget.characters > PDF_LIMITS.documentTextCharacters ||
+            budget.styles > PDF_LIMITS.documentTextStyles) {
             void cancelSource().catch(() => {});
             controller.error(new PdfReaderError('limit'));
             return;
@@ -106,6 +123,12 @@ export function renderPdfPage(loaded: LoadedPdf, view: PageView, host: HTMLEleme
     text = new loaded.TextLayer({ textContentSource: boundedText, container, viewport });
     await text.render();
     if (stopped) throw new PdfReaderError('render');
+    // Keep only the bounded DOM/canvas output, not the page's operator/image cache.
+    page.cleanup();
+    page = undefined;
+    render = undefined;
+    text = undefined;
+    source = undefined;
     root.style.visibility = 'visible';
     return { zoom, reduced };
   })();

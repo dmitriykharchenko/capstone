@@ -9,6 +9,7 @@
 .pdf-reader :is(button, input):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .pdf-reader .pdf-surface { min-width: 100%; width: max-content; }
 .pdf-reader .pdf-page { position: relative; margin: 0 auto; background: white; color-scheme: only light; }
+.pdf-reader .pdf-page + .pdf-page { margin-top: 1rem; }
 .pdf-reader canvas { display: block; }
 /* Text-layer rules adapted from PDF.js 6.3.289 web/pdf_viewer.css.
  * Copyright Mozilla Foundation; Apache-2.0 (bundled PDF.js LICENSE).

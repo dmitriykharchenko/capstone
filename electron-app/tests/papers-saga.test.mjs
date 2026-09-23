@@ -129,6 +129,7 @@ test('Papers source contract disables unsupported controls and shows unknown sta
   assert.match(viewer, /onDestroy\(\(\) => store.dispatch\(closePaper\(\)\)\)/);
   assert.match(viewer, /selectedId.subscribe/);
   assert.match(viewer, /createPdfReader/);
-  assert.match(viewer, /role="region" aria-label="PDF page, scroll to read" tabindex="0"/);
+  assert.match(viewer, /role="region" aria-label="PDF document, scroll to read" tabindex="0"/);
+  assert.match(viewer, /onscroll=\{\(\) => reader\?\.scrolled\(scroll.scrollTop\)\}/);
   assert.doesNotMatch(viewer, /<iframe/);
 });
