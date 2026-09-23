@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { syntheticPdf } from './pdf-fixtures.mjs';
+import { fontHarness, holdFontTermination } from './helpers/pdf-fonts.mjs';
 
 let vite, readerModule, pageModule, lifecycle, actions, nativeApi, layoutModule;
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -413,6 +414,64 @@ test('real PDF.js range-loaded page geometry/text feed the renderer across clean
   assert.equal(states.at(-1).page, 3);
   await reader.destroy(); assert.equal(liveCanvases(dom).length, 0);
   assert.equal(closed, 1); assert.equal(disposed, 1);
+});
+
+test('reader reopen, close and unmount release real PDF.js fonts before delayed acknowledgement', async t => {
+  const dom = surface(), f = await fontHarness(lifecycle, dom.host.ownerDocument);
+  dom.host.ownerDocument.fonts = new Set();
+  const sentinel = { family: 'generated-shared-name' }, markers = [], held = [], states = [];
+  dom.host.ownerDocument.fonts.add(sentinel);
+  // Real loader/cleanup/registration, with the existing geometry/paint double.
+  const reader = readerModule.createPdfReader(dom.host, s => states.push(s), () => {}, {
+    readPdf: async () => ({}), renderPage: pageModule.renderPdfPage,
+    loadPdf(_metadata, options) {
+      const record = f.load(options), marker = { family: sentinel.family }, doc = documentDouble();
+      markers.push(marker);
+      return { destroy: record.handle.destroy, promise: holdFontTermination(record).then(fonts => {
+        held.push(fonts);
+        return { TextLayer: doc.loaded.TextLayer, document: { numPages: fonts.document.numPages,
+          cleanup: keep => fonts.document.cleanup(keep), getPage(n) {
+            fonts.add(marker); return doc.loaded.document.getPage(n);
+          } } };
+      }) };
+    },
+  });
+  const ready = async () => {
+    for (let i = 0; i < 200 && states.at(-1)?.phase !== 'ready' && states.at(-1)?.phase !== 'error'; i++) await flush();
+    assert.equal(states.at(-1)?.phase, 'ready');
+  };
+  try {
+    await reader.open('generated-first'); await ready();
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, markers[0]]);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const reopened = reader.open('generated-second');
+    await flush(); assert.equal(f.loads.length, 1);
+    t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS); await reopened; await ready();
+    assert.equal(f.loads.length, 2);
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, markers[1]]);
+    held[0].add({ family: 'generated-late-font' }); await held[0].drain();
+    assert.equal(held[0].remaining(), 0);
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, markers[1]]);
+    const closed = reader.open(null); t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS); await closed;
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel]);
+    assert.equal(liveCanvases(dom).length, 0); assert.equal(dom.host.children.length, 0);
+    await reader.open('generated-third'); await ready();
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, markers[2]]);
+    await held[1].drain(); assert.deepEqual([...f.ownerDocument.fonts], [sentinel, markers[2]]);
+    const unmounted = reader.destroy(); t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS); await unmounted;
+    await reader.destroy(); await reader.open('ignored-after-unmount');
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel]);
+    assert.equal(liveCanvases(dom).length, 0); assert.equal(dom.host.children.length, 0);
+    await held[2].drain(); assert.equal(held[2].remaining(), 0);
+    assert.equal(f.loads.length, 3);
+    for (const record of f.loads) {
+      assert.equal(record.closed, 1); assert.equal(record.disposed, 1); assert.equal(record.terminated, 1);
+    }
+  } finally {
+    for (const fonts of held) fonts.release();
+    await reader.destroy();
+    for (const fonts of held) await fonts.drain();
+  }
 });
 
 test('page controls and scrolling synchronize without repainting the same small window', async t => {

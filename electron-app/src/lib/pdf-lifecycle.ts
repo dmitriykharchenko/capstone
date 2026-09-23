@@ -28,9 +28,44 @@ export class PdfLoadError extends Error {
   }
 }
 
+/** Public getDocument.ownerDocument seam; never patch the application document. */
+function ownFonts(document: Document) {
+  const registered = document.fonts;
+  if (!registered) throw new PdfLoadError('unavailable');
+  const owned = new Set<FontFace>();
+  let disposed = false;
+  const remove = (font: FontFace) => owned.delete(font) && registered.delete(font);
+  const clear = () => { for (const font of owned) remove(font); };
+  const fonts = new Proxy(registered, {
+    get(target, key) {
+      if (key === 'add') return (font: FontFace) => {
+        if (!disposed && !registered.has(font)) {
+          registered.add(font);
+          owned.add(font);
+        }
+        return fonts;
+      };
+      if (key === 'delete') return remove;
+      if (key === 'clear') return clear;
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const ownerDocument = new Proxy(document, {
+    get(target, key) {
+      if (key === 'fonts') return fonts;
+      // Native DOM methods/getters require the real document as their receiver.
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return { ownerDocument, dispose() { disposed = true; clear(); } };
+}
+
 /** Internal dependency seam for Node lifecycle tests; the app uses loadPdf only. */
 export function createPdfLoader(environment: {
   assetBase: string;
+  ownerDocument?: Document;
   loadLibrary(): Promise<PdfLibrary>;
   createWorker(library: PdfLibrary, failed: () => void): { worker: PDFWorker; dispose(): void };
 }) {
@@ -38,6 +73,7 @@ export function createPdfLoader(environment: {
     let range: ReturnType<typeof pdfRangeTransport> | undefined;
     let loading: PDFDocumentLoadingTask | undefined;
     let owner: ReturnType<typeof environment.createWorker> | undefined;
+    let fonts: ReturnType<typeof ownFonts> | undefined;
     let stopped = false;
     let promptGeneration = 0;
     let releasePassword: (() => void) | undefined;
@@ -65,8 +101,10 @@ export function createPdfLoader(environment: {
       reject(new PdfLoadError('cancelled'));
       const task = loading;
       const ownedWorker = owner;
+      const ownedFonts = fonts;
       loading = undefined;
       owner = undefined;
+      fonts = undefined;
       const closing = range ? range.release() : Promise.resolve().then(() => source?.close()).catch(() => {});
       range = undefined;
       disposal = (async () => {
@@ -79,7 +117,9 @@ export function createPdfLoader(environment: {
           })]);
         } finally {
           clearTimeout(timer);
-          ownedWorker?.dispose();
+          // PDF.js may still be awaiting Terminate. Release only this load's
+          // registrations now, and refuse late adds through its document seam.
+          try { ownedFonts?.dispose(); } finally { ownedWorker?.dispose(); }
         }
       })();
       return disposal;
@@ -101,10 +141,13 @@ export function createPdfLoader(environment: {
       try {
         const library = await environment.loadLibrary();
         if (stopped) return;
+        const documentContext = environment.ownerDocument ?? globalThis.document;
+        if (documentContext) fonts = ownFonts(documentContext);
         owner = environment.createWorker(library, () => fail('unavailable'));
         if (stopped) { owner.dispose(); owner = undefined; return; }
         range = pdfRangeTransport(library, source, () => fail('invalid'));
         loading = library.getDocument({
+          ownerDocument: fonts?.ownerDocument,
           range: range.transport, rangeChunkSize: PDF_RANGE_BYTES,
           disableAutoFetch: true, disableStream: true, worker: owner.worker, verbosity: 0,
           cMapUrl: `${environment.assetBase}cmaps/`, cMapPacked: true,

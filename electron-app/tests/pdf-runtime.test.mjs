@@ -8,6 +8,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { syntheticPdf } from './pdf-fixtures.mjs';
 import { sparsePdf } from './fixtures/sparse-pdf.mjs';
+import { fontHarness, holdFontTermination } from './helpers/pdf-fonts.mjs';
 
 let vite, lifecycle, runtime, library;
 const deferred = () => Promise.withResolvers();
@@ -167,6 +168,109 @@ test('unresponsive worker teardown has a deadline then disposes its port', async
   assert.equal(f.calls.disposed, 0);
   t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS);
   await drained; assert.equal(f.calls.disposed, 1);
+});
+
+test('per-load public document seam preserves native receivers and unrelated font identities', async () => {
+  const sentinel = { family: 'same-family' }, marker = { family: 'same-family' };
+  const registered = new Set([sentinel]);
+  const document = { get fonts() { assert.equal(this, document); return registered; },
+    createElement(tag) { assert.equal(this, document); return { tag }; } };
+  const f = fakeLoader({ ownerDocument: document }), handle = f.load([1]); await settle();
+  const context = f.calls.options.ownerDocument;
+  assert.notEqual(context, document); assert.equal(document.fonts, registered);
+  assert.deepEqual(context.createElement('canvas'), { tag: 'canvas' });
+  assert.equal(context.fonts.add(marker), context.fonts);
+  context.fonts.add(marker); context.fonts.add(sentinel);
+  assert.equal(context.fonts.delete(sentinel), false);
+  assert.equal(context.fonts.size, 2); assert.equal(context.fonts.has(marker), true);
+  context.fonts.clear(); assert.deepEqual([...registered], [sentinel]);
+  context.fonts.add(marker);
+  f.task.destroy = async () => { f.calls.destroyed++; throw Error('synthetic failure'); };
+  await handle.destroy(); await handle.destroy();
+  context.fonts.add(marker); assert.deepEqual([...registered], [sentinel]);
+  assert.equal(f.calls.destroyed, 1); assert.equal(f.calls.disposed, 1);
+});
+
+test('a supplied document without the Font Loading API fails closed before worker creation', async () => {
+  const f = fakeLoader({ ownerDocument: {} }), handle = f.load([1]);
+  await assert.rejects(handle.promise, { code: 'unavailable' }); await handle.destroy();
+  assert.equal(f.calls.created, 0);
+});
+
+test('browser document default owns fonts without replacing its shared FontFaceSet', async t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const document = { fonts: new Set() }, sentinel = {};
+  document.fonts.add(sentinel);
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: document });
+  t.after(() => { if (original) Object.defineProperty(globalThis, 'document', original); else delete globalThis.document; });
+  const f = fakeLoader(), handle = f.load([1]); await settle();
+  assert.notEqual(f.calls.options.ownerDocument, document);
+  f.calls.options.ownerDocument.fonts.add({ family: 'generated-default-context' });
+  await handle.destroy();
+  assert.equal(globalThis.document, document); assert.deepEqual([...document.fonts], [sentinel]);
+});
+
+test('real PDF.js normal cleanup retains then removes only this load fonts', async () => {
+  const f = await fontHarness(lifecycle), record = f.load(), held = await holdFontTermination(record);
+  const sentinel = { family: 'generated-shared-name' }, marker = { family: sentinel.family };
+  f.ownerDocument.fonts.add(sentinel); held.release();
+  try {
+    held.add(marker); await held.document.cleanup(true);
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, marker]);
+    await held.document.cleanup(false);
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel]); assert.equal(held.remaining(), 0);
+    // Once normal cleanup released it, a new application registration is not ours.
+    f.ownerDocument.fonts.add(marker);
+    held.add({ family: marker.family }); await record.handle.destroy();
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, marker]); assert.equal(held.remaining(), 0);
+    assert.equal(record.closed, 1); assert.equal(record.disposed, 1); assert.equal(record.terminated, 1);
+  } finally { await held.drain(); }
+});
+
+test('real delayed Terminate deadline isolates concurrent fonts, late adds, abort and repeated destroy', async t => {
+  const f = await fontHarness(lifecycle), controller = new AbortController();
+  const a = f.load(), b = f.load({ signal: controller.signal });
+  const [first, second] = await Promise.all([holdFontTermination(a), holdFontTermination(b)]);
+  const sentinel = { family: 'generated-shared-name' }, lateSentinel = { family: sentinel.family };
+  const firstFont = { family: sentinel.family }, secondFont = { family: sentinel.family };
+  f.ownerDocument.fonts.add(sentinel); first.add(firstFont); second.add(secondFont);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const stopping = a.handle.destroy(); assert.equal(stopping, a.handle.destroy());
+    let completed = false; void stopping.then(() => { completed = true; });
+    await settle(); t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS - 1); await settle();
+    assert.equal(completed, false); assert.equal(a.disposed, 0);
+    f.ownerDocument.fonts.add(lateSentinel);
+    t.mock.timers.tick(1); await stopping;
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, secondFont, lateSentinel]);
+    assert.equal(first.remaining(), 1, 'only the acknowledgement, not library cleanup, is held');
+    first.add({ family: 'late-owned-marker' });
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, secondFont, lateSentinel]);
+    await first.drain(); assert.equal(first.remaining(), 0);
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, secondFont, lateSentinel]);
+    assert.equal(a.closed, 1); assert.equal(a.disposed, 1); assert.equal(a.terminated, 1);
+    controller.abort(); const cancelled = b.handle.destroy();
+    t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS); await cancelled;
+    assert.deepEqual([...f.ownerDocument.fonts], [sentinel, lateSentinel]);
+    await second.drain(); assert.equal(second.remaining(), 0);
+    assert.equal(b.closed, 1); assert.equal(b.disposed, 1); assert.equal(b.terminated, 1);
+  } finally { await first.drain(); await second.drain(); }
+});
+
+test('password cancellation clears owned fonts at the unchanged deadline', async t => {
+  const document = { fonts: new Set() }, sentinel = {}, prompts = [];
+  document.fonts.add(sentinel);
+  const f = fakeLoader({ ownerDocument: document }), handle = f.load([1], { onPassword: p => prompts.push(p) });
+  await settle(); const registered = f.calls.options.ownerDocument.fonts;
+  registered.add({ family: 'generated-password-marker' });
+  const drained = deferred(); f.task.destroy = () => { f.calls.destroyed++; return drained.promise; };
+  f.task.onPassword(() => {}, 1);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const cancelled = prompts[0].cancel(); t.mock.timers.tick(lifecycle.PDF_DESTROY_GRACE_MS);
+  await cancelled; await assert.rejects(handle.promise, { code: 'cancelled' });
+  assert.deepEqual([...document.fonts], [sentinel]);
+  drained.resolve(); await handle.destroy(); await prompts[0].cancel();
+  assert.equal(f.calls.destroyed, 1); assert.equal(f.calls.disposed, 1);
 });
 
 test('password prompts are transient single-use capabilities, invalidated on retry/close', async () => {
