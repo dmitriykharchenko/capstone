@@ -182,20 +182,19 @@ def test_unary_graph_has_only_named_ephemeral_nodes():
         unary.get_unary_graph.__wrapped__().get_graph().to_json()
     )
     with pytest.raises(TypeError):
-        unary.UNARY_COMMANDS["chat"] = True
+        unary.UNARY_COMMANDS[0] = "chat"
 
 
 @pytest.mark.parametrize("command", COMMANDS)
-def test_dispatch_executes_selected_node_once_without_legacy_router(
+def test_dispatch_executes_selected_node_once_through_legacy_boundary(
     monkeypatch, config, command
 ):
     expected = {"marker": object()}
     handler = Mock(return_value=expected)
     owner = dispatcher if command == "graph_query" else commands
     monkeypatch.setattr(owner, f"handle_{command}", handler)
-    monkeypatch.setattr(
-        commands, "dispatch", Mock(side_effect=AssertionError("legacy"))
-    )
+    legacy = Mock(wraps=commands.dispatch)
+    monkeypatch.setattr(commands, "dispatch", legacy)
     graph = unary.get_unary_graph()
     invoke = Mock(wraps=graph.invoke)
     monkeypatch.setattr(graph, "invoke", invoke)
@@ -204,8 +203,17 @@ def test_dispatch_executes_selected_node_once_without_legacy_router(
     invoke.assert_called_once()
     assert invoke.call_args.args == ({"command": command, "request": request},)
     handler.assert_called_once_with(
-        config, *([request] if unary.UNARY_COMMANDS[command] else [])
+        config,
+        *(
+            [request]
+            if command in {"messages", "search", "search_papers", "graph_query"}
+            else []
+        ),
     )
+    if command == "graph_query":
+        legacy.assert_not_called()
+    else:
+        legacy.assert_called_once_with(command, config, request)
     handler.reset_mock()
     updates = list(
         graph.stream(
@@ -216,6 +224,29 @@ def test_dispatch_executes_selected_node_once_without_legacy_router(
     )
     assert updates == [{command: {"result": expected}}]
     assert handler.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "command", ["paper_statuses", "bm25_status", "reset_all_indices"]
+)
+@pytest.mark.parametrize("installed", [False, True])
+def test_optional_handlers_use_current_legacy_boundary(
+    monkeypatch, config, command, installed
+):
+    expected = {"marker": "current handler result"}
+    error = ValueError(f"unknown command {command!r}")
+    legacy = Mock(return_value=expected, side_effect=None if installed else error)
+    monkeypatch.setattr(commands, "dispatch", legacy)
+    # No direct handler lookup is needed, even for names absent from clean core.
+    monkeypatch.delattr(commands, f"handle_{command}", raising=False)
+    request = {"command": command}
+    if installed:
+        assert dispatcher.dispatch(command, config, request) is expected
+    else:
+        with pytest.raises(ValueError) as actual:
+            dispatcher.dispatch(command, config, request)
+        assert actual.value is error
+    legacy.assert_called_once_with(command, config, request)
 
 
 @pytest.mark.parametrize("command", COMMANDS)

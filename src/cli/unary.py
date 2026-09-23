@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from types import MappingProxyType
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from .config import CLIConfig
@@ -20,20 +19,17 @@ if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
     from langgraph.runtime import Runtime
 
-# Whether the established handler takes the request in addition to config.
-UNARY_COMMANDS = MappingProxyType(
-    {
-        "health": False,
-        "sessions": False,
-        "messages": True,
-        "search": True,
-        "search_papers": True,
-        "graph_query": True,
-        "index_papers": False,
-        "paper_statuses": False,
-        "bm25_status": False,
-        "reset_all_indices": False,
-    }
+UNARY_COMMANDS = (
+    "health",
+    "sessions",
+    "messages",
+    "search",
+    "search_papers",
+    "graph_query",
+    "index_papers",
+    "paper_statuses",
+    "bm25_status",
+    "reset_all_indices",
 )
 
 
@@ -62,24 +58,21 @@ def _route(state: UnaryState) -> str:
 
 
 def _handler_node(
-    command: str, takes_request: bool
+    command: str,
 ) -> Callable[[UnaryState, Runtime[UnaryInvocation]], dict[str, Payload]]:
     def execute(
         state: UnaryState, runtime: Runtime[UnaryInvocation]
     ) -> dict[str, Payload]:
         context = runtime.context
-        if command == "graph_query":
-            handler = context.graph_query
-        else:
-            from . import commands
-
-            handler = getattr(commands, f"handle_{command}")
         try:
-            result = (
-                handler(context.config, state["request"])
-                if takes_request
-                else handler(context.config)
-            )
+            if command == "graph_query":
+                result = context.graph_query(context.config, state["request"])
+            else:
+                from .commands import dispatch
+
+                # Resolve at execution time, including legacy unknown-command
+                # behavior when an optional handler is absent from this checkout.
+                result = dispatch(command, context.config, state["request"])
         except Exception as exc:
             raise _HandlerFailure(exc) from None
         return {"result": result}
@@ -94,8 +87,8 @@ def get_unary_graph() -> CompiledStateGraph:
     from langgraph.graph import END, START, StateGraph
 
     graph = StateGraph(UnaryState, context_schema=UnaryInvocation)
-    for command, takes_request in UNARY_COMMANDS.items():
-        graph.add_node(command, _handler_node(command, takes_request))
+    for command in UNARY_COMMANDS:
+        graph.add_node(command, _handler_node(command))
         graph.add_edge(command, END)
     graph.add_conditional_edges(START, _route, {name: name for name in UNARY_COMMANDS})
     return graph.compile(name="cli_unary")
