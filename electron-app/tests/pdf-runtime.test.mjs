@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { syntheticPdf } from './pdf-fixtures.mjs';
+import { sparsePdf } from './fixtures/sparse-pdf.mjs';
 
 let vite, lifecycle, runtime, library;
 const deferred = () => Promise.withResolvers();
@@ -113,6 +114,7 @@ test('supplies lazy ranges and pins local, non-WASM, quiet options without a URL
   assert.equal(calls.options.useWorkerFetch, true);
   assert.equal(calls.options.stopAtErrors, true);
   assert.equal(calls.options.useSystemFonts, false);
+  assert.equal('canvasMaxAreaInBytes' in calls.options, false);
   assert.match(calls.options.wasmUrl, /^app:\/\/research\/assets\/pdfjs-test\/wasm\/$/);
   ready.resolve({ numPages: 1 });
   assert.equal((await handle.promise).document.numPages, 1);
@@ -290,4 +292,19 @@ test('real PDF.js malformed input rejects and releases the Node fake worker', as
   const handle = f.load(new TextEncoder().encode('%PDF-1.4\nnot a document\n%%EOF'));
   await assert.rejects(handle.promise, { code: 'invalid' });
   await handle.destroy(); assert.equal(f.disposed(), 1);
+});
+
+test('real PDF.js consumes a virtual 65MiB content stream through bounded reads with no total-byte cap', async () => {
+  const f = await realLoader(), fixture = sparsePdf();
+  let bytes = 0, reads = 0, closed = 0;
+  const handle = f.rawLoad({ length: fixture.length,
+    async read(begin, end) { assert.ok(end - begin <= 65536); reads++; bytes += end - begin; return fixture.read(begin, end); },
+    async close() { closed++; } });
+  try {
+    const { document } = await handle.promise;
+    assert.ok(bytes < 1024 * 1024); assert.equal(document.numPages, 1);
+    const content = await (await document.getPage(1)).getTextContent();
+    assert.equal(content.items.length, 0); assert.ok(bytes > 64 * 1024 * 1024); assert.ok(reads > 1024);
+  } finally { await handle.destroy(); }
+  assert.equal(closed, 1); assert.equal(f.disposed(), 1);
 });

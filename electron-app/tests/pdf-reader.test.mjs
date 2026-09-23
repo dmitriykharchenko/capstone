@@ -6,36 +6,49 @@ import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { syntheticPdf } from './pdf-fixtures.mjs';
 
-let vite, readerModule, pageModule, lifecycle, actions, nativeApi;
+let vite, readerModule, pageModule, lifecycle, actions, nativeApi, layoutModule;
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => Promise.withResolvers();
 before(async () => {
   vite = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), appType: 'custom',
     logLevel: 'silent', server: { middlewareMode: true } });
-  [readerModule, pageModule, lifecycle, actions, nativeApi] = await Promise.all([
+  [readerModule, pageModule, lifecycle, actions, nativeApi, layoutModule] = await Promise.all([
     '/src/lib/pdf-reader.ts', '/src/lib/pdf-page.ts', '/src/lib/pdf-lifecycle.ts',
-    '/src/slices/papers/papers-slice.ts', '/src/lib/api.ts',
+    '/src/slices/papers/papers-slice.ts', '/src/lib/api.ts', '/src/lib/pdf-layout.ts',
   ].map(path => vite.ssrLoadModule(path)));
 });
 after(async () => vite.close());
 
 // Deliberately a DOM/paint double, not a browser or evidence of native pixel rendering.
-function surface() {
+function surface(options = {}) {
   const elements = [];
   const document = { defaultView: { devicePixelRatio: 2 }, createElement(tag) {
     const node = { tag, ownerDocument: document, children: [], attributes: {}, style: { setProperty(k, v) { this[k] = v; } },
-      append(...nodes) { this.children.push(...nodes); for (const n of nodes) n.parent = this; },
+      append(...nodes) { for (const n of nodes) { n.remove(); this.children.push(n); n.parent = this; } },
       replaceChildren(...nodes) { this.children = []; this.append(...nodes); },
-      remove() { if (this.parent) this.parent.children = this.parent.children.filter(n => n !== this); },
-      setAttribute(k, v) { this.attributes[k] = v; }, clientWidth: 632,
+      remove() { if (this.parent) this.parent.children = this.parent.children.filter(n => n !== this); this.parent = undefined; },
+      get parentElement() { return this.parent; },
+      setAttribute(k, v) { this.attributes[k] = v; }, clientWidth: 632, clientHeight: 800, scrollTop: 0, scrollLeft: 0,
+      listeners: new Map(), addEventListener(name, listener) { this.listeners.set(name, listener); },
+      removeEventListener(name) { this.listeners.delete(name); },
+      getContext() { if (options.noContext) return null; return { fillRect() {}, clearRect() {},
+        getImageData() { if (options.allocationError) throw Error('PRIVATE-ALLOCATION'); return { data: [0, 0, 0, options.blankCanvas ? 0 : 255] }; } }; },
       get offsetTop() { return 16 + (this.parent?.children.slice(0, this.parent.children.indexOf(this)) ?? [])
         .reduce((height, sibling) => height + parseFloat(sibling.style.height) + 16, 0); },
       scrollIntoView(options) { this.scrolled = options; this.scrolls = (this.scrolls ?? 0) + 1; } };
     elements.push(node); return node;
   } };
-  return { host: document.createElement('div'), elements };
+  const scroll = document.createElement('div'), host = document.createElement('div'); scroll.append(host);
+  return { host, scroll, elements };
 }
+const textItem = (str = 'Generated selectable text', extra = {}) => ({ str, dir: 'ltr', fontName: 'f1',
+  transform: [12, 0, 0, 12, 20, 20], width: 120, height: 12, hasEOL: false, ...extra });
+const textStyle = { fontFamily: 'sans-serif', vertical: false, ascent: 0.8, descent: -0.2 };
+const slots = h => h.host.children[0]?.children ?? [];
+const roots = h => slots(h).flatMap(slot => slot.children);
+const liveCanvases = h => h.elements.filter(n => n.tag === 'canvas' && n.width > 0);
 
 function documentDouble(options = {}) {
   const stats = { pages: [], paints: [], layers: [], cleanups: 0, keepFonts: [], pageCleanups: 0, streamsCancelled: 0 };
@@ -57,7 +70,7 @@ function documentDouble(options = {}) {
         if (options.holdText) return;
         if (emitted) { controller.close(); return; }
         emitted = true;
-        controller.enqueue({ items: options.items ?? [{ str: 'Generated selectable text' }], styles: options.styles ?? {} });
+        controller.enqueue(options.chunk ?? { items: options.items ?? [textItem()], styles: options.styles ?? { f1: textStyle } });
       }, cancel() { stats.streamsCancelled++; return options.cancelText?.(); } });
     },
     cleanup() { stats.pageCleanups++; return true; },
@@ -65,16 +78,12 @@ function documentDouble(options = {}) {
   class TextLayer {
     constructor(parameters) { this.parameters = parameters; this.cancelled = 0; stats.layers.push(this); }
     async render() {
-      this.reader = this.parameters.textContentSource.getReader();
-      while (true) {
-        const chunk = await this.reader.read();
-        if (chunk.done) break;
-        for (const item of chunk.value.items) {
+        if (options.textError) throw Error('PRIVATE-TEXT');
+        for (const item of this.parameters.textContentSource.items) {
           const span = this.parameters.container.ownerDocument.createElement('span');
           span.textContent = item.str;
           this.parameters.container.append(span);
         }
-      }
     }
     cancel() { this.cancelled++; void this.reader?.cancel().catch(() => {}); }
   }
@@ -86,7 +95,7 @@ function documentDouble(options = {}) {
 }
 
 function harness(t, options = {}) {
-  const dom = surface(), reads = [], loads = [], snapshots = [], prompts = [];
+  const dom = surface(options), reads = [], loads = [], snapshots = [], prompts = [];
   const doc = documentDouble(options);
   const readPdf = options.readPdf ?? (id => {
     const done = deferred();
@@ -120,12 +129,12 @@ test('real open/close reducers drive the component controller without storing by
   h.reads[0].resolve({ bytes: [37, 80, 68, 70] }); await opened; await flush();
   assert.equal(h.state().phase, 'ready');
   assert.deepEqual(h.stats.pages, [1, 2, 3]);
-  assert.equal(h.state().rendered, 3); assert.equal(h.host.children.length, 3);
-  for (const [index, root] of h.host.children.entries()) {
+  assert.equal(h.state().rendered, 3); assert.equal(slots(h).length, 3);
+  for (const [index, root] of roots(h).entries()) {
     assert.equal(root.attributes['data-page-number'], String(index + 1));
     assert.equal(root.style.visibility, 'visible');
     assert.equal(h.stats.layers[index].parameters.container.children[0].textContent, 'Generated selectable text');
-    assert.equal(h.stats.paints[index].parameters.canvas.width * h.stats.paints[index].parameters.canvas.height <= pageModule.PDF_LIMITS.pixels, true);
+    assert.equal(h.stats.paints[index].parameters.canvas.width, 1200);
   }
   assert.deepEqual(h.stats.keepFonts, [false, true, true, true]);
   for (const key of ['pdfUrl', 'pdfLoading', 'pdfError', 'bytes', 'document', 'password']) assert.equal(key in state, false);
@@ -166,13 +175,13 @@ test('switch waits for the old loader destroy and stale load never mounts a page
   assert.deepEqual(h.stats.pages, [1, 2, 3]);
 });
 
-test('one active render and latest-only zoom/resize work; navigation does not cancel continuous rendering', async t => {
+test('one active render and latest-only zoom/resize work prioritize the destination page', async t => {
   const h = harness(t, { holdPaint: true }); await h.open();
   assert.equal(h.state().phase, 'rendering');
   h.reader.page(2); h.reader.page(999); h.reader.zoom(99); h.reader.zoom(1.5);
   for (let i = 0; i < 200; i++) h.reader.resize(800 + i);
   await flush();
-  assert.deepEqual(h.stats.pages, [1, 1]);
+  assert.deepEqual(h.stats.pages, [1, 3]);
   assert.equal(h.state().page, 3); assert.equal(h.state().zoom, 1.5);
   assert.equal(h.stats.paints[0].parameters.canvas.width, 0);
   assert.equal(h.stats.paints[0].cancelled, 1);
@@ -180,89 +189,206 @@ test('one active render and latest-only zoom/resize work; navigation does not ca
   h.stats.paints[0].resolve(); await flush(); assert.equal(h.state().phase, 'rendering');
   for (const index of [1, 2, 3]) { h.stats.paints[index].resolve(); await flush(); }
   assert.equal(h.state().phase, 'ready'); assert.equal(h.state().rendered, 3);
-  assert.deepEqual(h.stats.pages, [1, 1, 2, 3]);
-  assert.equal(h.host.children.length, 3); assert.equal(h.stats.layers.length, 3);
-  assert.deepEqual(h.host.children[2].scrolled, { block: 'start', inline: 'nearest' });
+  assert.deepEqual(h.stats.pages, [1, 3, 2, 1]);
+  assert.equal(slots(h).length, 3); assert.equal(h.stats.layers.length, 3);
+  assert.equal(h.scroll.scrollTop, 2 * (1200 + 16) + 16);
   h.reader.page(-99); h.reader.zoom(-10); await flush();
   assert.equal(h.state().page, 1); assert.equal(h.state().zoom, 0.25);
   const count = h.stats.pages.length; h.reader.page(NaN); h.reader.zoom(Infinity); await flush();
   assert.equal(h.stats.pages.length, count);
 });
 
-test('all 500 permitted pages remain scrollable within a shared pixel budget through zoom and fit', async t => {
-  const h = harness(t, { pages: 500 }); await h.open();
+test('a billion pages have a bounded surface/window and can jump to the end and revisit', async t => {
+  const h = harness(t, { pages: 1_000_000_000 }); await h.open();
   const assertBounded = () => {
-    const canvases = h.elements.filter(n => n.tag === 'canvas' && n.width > 0);
-    assert.equal(h.host.children.length, 500); assert.equal(canvases.length, 500);
-    assert.ok(canvases.reduce((sum, c) => sum + c.width * c.height, 0) <= pageModule.PDF_LIMITS.documentPixels);
-    assert.ok(canvases.every(c => c.width * c.height <= pageModule.PDF_LIMITS.pixels));
-    assert.equal(h.state().phase, 'ready'); assert.equal(h.state().rendered, 500);
+    assert.ok(slots(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+    assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+    assert.ok(parseFloat(h.host.children[0].style.height) <= layoutModule.PDF_SCROLL_SPAN);
+    assert.equal(h.state().phase, 'ready'); assert.equal(h.state().pages, 1_000_000_000);
   };
-  assertBounded(); assert.match(h.state().notice, /pixel limit/);
+  assertBounded(); assert.equal(h.stats.pages.length, 3); assert.equal(h.state().notice, '');
+  const old = [...h.stats.paints];
+  h.reader.page(1_000_000_000); await flush(); assertBounded();
+  assert.equal(h.state().page, 1_000_000_000);
+  assert.ok(old.every(p => p.parameters.canvas.width === 0));
+  h.reader.page(1); await flush(); assertBounded();
+  assert.equal(h.stats.pages.filter(n => n === 1).length, 2);
   assert.equal(h.state().zoom, 1); h.reader.resize(332); await flush();
   assert.equal(h.state().zoom, 0.5); assertBounded();
   h.reader.zoom(2); await flush(); h.reader.resize(632); await flush();
   assert.equal(h.state().zoom, 2); assertBounded(); h.reader.fit(); await flush(); assert.equal(h.state().zoom, 1);
-  assertBounded(); assert.equal(h.stats.pages.length, 2000);
+  assertBounded(); assert.ok(h.stats.pages.length < 40);
 });
 
-test('page controls and scrolling keep every page and text layer without new PDF work', async t => {
+test('scroll entry/exit releases canvases, selectable DOM and shared fonts before deterministic revisit', async t => {
+  const h = harness(t, { pages: 1000 }); await h.open();
+  const old = [...h.stats.paints], layers = [...h.stats.layers];
+  h.reader.scrolled(816 * 50 + 16);
+  assert.equal(liveCanvases(h).length, 0);
+  assert.ok(layers.every(layer => layer.parameters.container.children.length === 0));
+  await flush(); assert.equal(h.state().page, 51);
+  assert.ok(h.stats.pages.includes(51)); assert.ok(!h.stats.pages.includes(25));
+  assert.ok(old.every(p => p.parameters.canvas.width === 0 && p.parameters.canvas.height === 0));
+  assert.ok(h.stats.keepFonts.filter(keep => !keep).length >= 2);
+  h.reader.scrolled(0); await flush();
+  assert.equal(h.state().page, 1);
+  assert.equal(h.stats.pages.filter(page => page === 1).length, 2);
+  assert.equal(roots(h)[0].children[1].children[0].children[0].textContent, 'Generated selectable text');
+  assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+});
+
+test('compressed scrollbar reaches every logical region while local scrolling keeps page-size steps', async t => {
+  const h = harness(t, { pages: 1_000_000 }); await h.open();
+  const end = layoutModule.PDF_SCROLL_SPAN - h.scroll.clientHeight;
+  h.reader.scrolled(end / 2); await flush();
+  const page = h.state().page;
+  assert.ok(page > 490000 && page < 510000);
+  const physical = h.scroll.scrollTop;
+  assert.equal(h.reader.scrollBy(400), true); await flush();
+  assert.ok(h.state().page >= page && h.state().page <= page + 1);
+  const paints = h.stats.paints.length;
+  h.reader.scrolled(h.scroll.scrollTop); h.reader.resize(632, 800); await flush();
+  assert.equal(h.stats.paints.length, paints);
+  h.reader.scrolled(physical + 20); await flush(); assert.ok(h.state().page > page + 1);
+  assert.equal(h.reader.scrollKey('PageDown'), true); await flush();
+  assert.equal(h.reader.scrollKey('x'), false);
+  assert.equal(h.reader.scrollKey('toString'), false);
+  h.reader.scrolled(end); await flush(); assert.equal(h.state().page, 1_000_000);
+  h.reader.scrolled(0); await flush(); assert.equal(h.state().page, 1);
+  h.reader.scrollKey('End'); await flush(); assert.equal(h.state().page, 1_000_000);
+  h.reader.scrollKey('Home'); await flush(); assert.equal(h.state().page, 1);
+});
+
+test('sparse layout covers all pages and updates mixed geometry without allocating per-page arrays', () => {
+  const layout = new layoutModule.PdfLayout(1_000_000_000);
+  layout.configure(600, 1, true);
+  assert.equal(layout.pageAt(layout.top(987654321)), 987654321);
+  layout.measure(5, 300, 1000);
+  assert.equal(layout.top(6), 5 * 816 + 1200);
+  assert.equal(layout.pageAt(layout.top(6) - 1), 5);
+  layout.configure(600, 2, false);
+  assert.equal(layout.size(5).height, 2000);
+  assert.equal(layout.pageAt(layout.top(999999999)), 999999999);
+  assert.ok(layoutModule.pdfWindow(layout, layout.top(20), 100000).length <= layoutModule.PDF_ACTIVE_PAGES);
+});
+
+test('late geometry from an offscreen getPage cannot move or publish over the destination window', async t => {
+  const pending = deferred();
+  const h = harness(t, { pages: 100, getPage: (page, n) => n === 1 ? pending.promise : Promise.resolve(page) }); await h.open();
+  h.reader.page(80); h.reader.resize(332); await flush();
+  assert.deepEqual(h.stats.pages, [1]);
+  pending.resolve(documentDouble({ width: 200, height: 9000 }).page); await flush();
+  assert.equal(h.state().page, 80); assert.equal(h.state().zoom, 0.5);
+  assert.equal(h.state().phase, 'ready'); assert.equal(h.scroll.scrollTop, 79 * 416 + 16);
+  assert.equal(h.stats.paints.some(p => p.parameters.viewport.height === 9000), false);
+});
+
+test('tiny pages are not rejected and retain only the bounded active page window', async t => {
+  const h = harness(t, { pages: 10000, width: 600, height: 1 }); await h.open();
+  assert.equal(h.state().phase, 'ready'); assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+  h.reader.page(9000); await flush(); assert.equal(h.state().page, 9000);
+  assert.equal(h.state().phase, 'ready'); assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+});
+
+test('more than the upstream single-layer text threshold renders every item in uncapped batches', async t => {
+  const items = Array.from({ length: 100005 }, (_, n) => textItem(`item-${n}`));
+  const h = harness(t, { pages: 1, items }); await h.open();
+  assert.equal(h.state().phase, 'ready');
+  assert.equal(h.stats.layers.reduce((sum, layer) => sum + layer.parameters.container.children.length, 0), items.length);
+  assert.equal(h.stats.layers.at(-1).parameters.container.children.at(-1).textContent, 'item-100004');
+  assert.ok(h.stats.layers.every(layer => layer.parameters.textContentSource.items.length <= 4096));
+  await h.reader.destroy(); assert.ok(h.stats.layers.every(layer => layer.parameters.container.children.length === 0));
+});
+
+test('real PDF.js range-loaded page geometry/text feed the renderer across cleanup and revisit (paint double)', async t => {
+  await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const library = await import('pdfjs-dist/build/pdf.mjs'), fixture = syntheticPdf('multipage');
+  let closed = 0, disposed = 0;
+  const load = lifecycle.createPdfLoader({ assetBase: fileURLToPath(new URL('../node_modules/pdfjs-dist/', import.meta.url)),
+    loadLibrary: async () => ({ ...library, getDocument: options => library.getDocument({ ...options, useWorkerFetch: false }) }),
+    createWorker() { const worker = library.PDFWorker.create({ verbosity: 0 }); return { worker, dispose() { worker.destroy(); disposed++; } }; } });
+  const handle = load({ length: fixture.bytes.length, async read(begin, end) { return fixture.bytes.slice(begin, end); }, async close() { closed++; } });
+  t.after(() => handle.destroy());
+  const loaded = await handle.promise, dom = surface(), doc = documentDouble(), states = [];
+  const reader = readerModule.createPdfReader(dom.host, state => states.push(state), () => {}, {
+    readPdf: async () => ({}), loadPdf: () => ({ destroy: handle.destroy, promise: Promise.resolve({ TextLayer: doc.loaded.TextLayer,
+      document: { numPages: loaded.document.numPages, cleanup: keep => loaded.document.cleanup(keep), async getPage(n) {
+        const page = await loaded.document.getPage(n);
+        return { userUnit: page.userUnit, getViewport: options => page.getViewport(options),
+          streamTextContent: options => page.streamTextContent(options), cleanup: () => page.cleanup(),
+          render() { return { promise: page.getOperatorList().then(operators => assert.ok(operators.fnArray.includes(library.OPS.showText))), cancel() {} }; } };
+      } },
+    }) }), renderPage: pageModule.renderPdfPage,
+  });
+  t.after(() => reader.destroy());
+  const ready = async () => {
+    for (let i = 0; i < 200 && states.at(-1)?.phase !== 'ready' && states.at(-1)?.phase !== 'error'; i++) await flush();
+    assert.equal(states.at(-1)?.phase, 'ready');
+  };
+  await reader.open('generated'); await ready();
+  assert.equal(roots(dom).length, 3);
+  assert.ok(doc.stats.layers.flatMap(layer => layer.parameters.container.children).some(span => span.textContent.includes('Synthetic PDF page 3')));
+  const canvases = liveCanvases(dom);
+  reader.zoom(2); await flush(); await ready();
+  assert.ok(canvases.every(canvas => canvas.width === 0));
+  assert.ok(roots(dom).every(root => root.style.width === '1224px'));
+  reader.page(3); reader.fit(); await flush(); await ready();
+  assert.equal(states.at(-1).page, 3);
+  await reader.destroy(); assert.equal(liveCanvases(dom).length, 0);
+  assert.equal(closed, 1); assert.equal(disposed, 1);
+});
+
+test('page controls and scrolling synchronize without repainting the same small window', async t => {
   const h = harness(t); await h.open();
-  const roots = [...h.host.children], paints = h.stats.paints.length, cleanups = h.stats.cleanups;
-  h.reader.page(3); assert.equal(h.state().page, 3); assert.equal(roots[2].scrolls, 1);
-  h.reader.scrolled(roots[1].offsetTop); assert.equal(h.state().page, 2);
+  const original = roots(h), paints = h.stats.paints.length;
+  h.reader.page(3); assert.equal(h.state().page, 3); assert.equal(h.scroll.scrollTop, 1648);
+  h.reader.scrolled(832); assert.equal(h.state().page, 2);
   h.reader.scrolled(0); assert.equal(h.state().page, 1);
   h.reader.scrolled(Infinity); assert.equal(h.state().page, 1);
   h.reader.page(999); assert.equal(h.state().page, 3);
   h.reader.page(-99); assert.equal(h.state().page, 1);
   h.reader.page(NaN); await flush();
-  assert.deepEqual(h.host.children, roots); assert.equal(h.stats.paints.length, paints);
-  assert.equal(h.stats.cleanups, cleanups);
+  assert.deepEqual(roots(h), original); assert.equal(h.stats.paints.length, paints);
   assert.ok(h.stats.layers.every(layer => layer.cancelled === 0));
 });
 
 test('mixed page sizes fit individually and report the visible page zoom without repainting', async t => {
   const sizes = [documentDouble({ width: 600 }), documentDouble({ width: 300 }), documentDouble({ width: 800, rotation: 90 })];
   const h = harness(t, { getPage: (_page, n) => Promise.resolve(sizes[n - 1].page) }); await h.open();
-  assert.ok(h.host.children.every(root => root.style.width === '600px'));
+  assert.ok(roots(h).every(root => root.style.width === '600px'));
   assert.equal(h.state().zoom, 1);
-  h.reader.scrolled(h.host.children[1].offsetTop); assert.equal(h.state().zoom, 2);
+  h.reader.scrolled(832); assert.equal(h.state().zoom, 2);
   h.reader.page(3); assert.equal(h.state().zoom, 0.75);
   h.reader.zoom(1.5); await flush();
-  assert.deepEqual(h.host.children.map(root => root.style.width), ['900px', '450px', '1200px']);
+  assert.deepEqual(roots(h).map(root => root.style.width), ['900px', '450px', '1200px']);
   h.reader.page(2); assert.equal(h.state().zoom, 1.5);
   h.reader.resize(332); h.reader.fit(); await flush();
-  assert.ok(h.host.children.every(root => root.style.width === '300px'));
+  assert.ok(roots(h).every(root => root.style.width === '300px'));
   assert.equal(h.state().page, 2); assert.equal(h.state().zoom, 1);
-  assert.equal(h.host.children[1].scrolls, 1);
+  assert.equal(h.scroll.scrollTop, 432);
 });
 
-test('progressive pages paint sequentially and page jumps wait without cancelling current work', async t => {
-  const h = harness(t, { holdPaint: true }); await h.open();
-  h.reader.page(3); h.reader.scrolled(0);
-  assert.equal(h.state().page, 3); assert.equal(h.stats.paints.length, 1);
-  h.stats.paints[0].resolve(); await flush();
-  assert.equal(h.state().rendered, 1); assert.equal(h.state().phase, 'rendering');
-  assert.equal(h.host.children[0].style.visibility, 'visible');
-  assert.equal(h.host.children[1].style.visibility, 'hidden');
-  h.stats.paints[1].resolve(); await flush();
-  assert.equal(h.state().rendered, 2); assert.equal(h.stats.layers.length, 2);
-  h.stats.paints[2].resolve(); await flush();
-  assert.equal(h.state().phase, 'ready'); assert.equal(h.host.children[2].scrolls, 1);
-  assert.ok(h.stats.paints.every(paint => paint.cancelled === 0));
+test('page jumps cancel offscreen paint immediately without visiting intermediate pages', async t => {
+  const h = harness(t, { pages: 10000, holdPaint: true }); await h.open();
+  h.reader.page(9999); h.reader.page(8000); await flush();
+  assert.equal(h.state().page, 8000); assert.equal(h.stats.paints.length, 2);
+  assert.equal(h.stats.paints[0].cancelled, 1); assert.equal(h.stats.paints[0].parameters.canvas.width, 0);
+  assert.deepEqual(h.stats.pages, [1, 8000]);
+  h.stats.paints[0].resolve(); await flush(); assert.equal(h.state().rendered, 0);
+  h.stats.paints[1].resolve(); await flush(); assert.equal(h.state().rendered, 1);
 });
 
 test('a resize storm keeps only the latest fitted generation including after a completed page', async t => {
   const h = harness(t, { holdPaint: true }); await h.open();
   h.stats.paints[0].resolve(); await flush();
-  const oldRoot = h.host.children[0];
+  const oldRoot = roots(h)[0];
   for (let i = 0; i < 200; i++) h.reader.resize(433 + i);
-  assert.equal(h.host.children.length, 0); assert.equal(oldRoot.children.length, 0);
+  assert.equal(roots(h).length, 0); assert.equal(oldRoot.children.length, 0);
   await flush(); assert.deepEqual(h.stats.pages, [1, 2, 1]);
   assert.equal(h.stats.paints[1].cancelled, 1);
   for (const i of [2, 3, 4]) { h.stats.paints[i].resolve(); await flush(); }
   assert.equal(h.state().phase, 'ready'); assert.equal(h.state().zoom, 1);
-  assert.equal(h.state().rendered, 3); assert.equal(h.host.children.length, 3);
+  assert.equal(h.state().rendered, 3); assert.equal(slots(h).length, 3);
   assert.ok(h.stats.paints.slice(0, 2).every(p => p.parameters.canvas.width === 0));
 });
 
@@ -275,28 +401,30 @@ test('resize during initial cleanup does not prevent later generation cancellati
   assert.equal(h.stats.paints[0].cancelled, 1);
   assert.equal(h.stats.paints[0].parameters.canvas.width, 0);
   for (const i of [1, 2, 3]) { h.stats.paints[i].resolve(); await flush(); }
-  assert.equal(h.host.children.length, 3); assert.equal(h.state().phase, 'ready');
+  assert.equal(slots(h).length, 3); assert.equal(h.state().phase, 'ready');
 });
 
 test('a page jump during a zoom rebuild cannot reuse the previous generation zoom', async t => {
   const h = harness(t); await h.open();
   h.reader.zoom(2); h.reader.page(2); await flush();
   assert.equal(h.state().zoom, 2); assert.equal(h.state().page, 2);
-  assert.ok(h.host.children.every(root => root.style.width === '1200px'));
-  assert.equal(h.host.children[1].scrolls, 1);
+  assert.ok(roots(h).every(root => root.style.width === '1200px'));
+  assert.equal(h.scroll.scrollTop, 1632);
 });
 
-for (const [label, options, admitted] of [
-  ['document text items', { pages: 11, items: Array.from({ length: 10000 }, () => ({ str: 'a' })) }, 10],
-  ['document text characters', { pages: 6, items: [{ str: 'a'.repeat(1000000) }] }, 5],
-  ['document text styles', { pages: 17, styles: Object.fromEntries(Array.from({ length: 256 }, (_, n) => [n, {}])) }, 16],
+for (const [label, options] of [
+  ['document text items', { pages: 11, items: Array.from({ length: 10000 }, () => textItem('a')) }],
+  ['document text characters', { pages: 6, items: [textItem('a'.repeat(1000001))] }],
+  ['document text styles', { pages: 17, styles: { f1: textStyle, ...Object.fromEntries(Array.from({ length: 257 }, (_, n) => [n, textStyle])) } }],
 ]) {
-  test(`${label} aggregate limit fails closed after the permitted pages and releases every surface`, async t => {
-    const h = harness(t, options); await h.open(); await flush();
-    assert.equal(h.state().phase, 'error'); assert.match(h.state().message, /limit/);
-    assert.equal(h.state().rendered, admitted); assert.equal(h.stats.pages.length, admitted + 1);
-    assert.equal(h.loads[0].destroyed, 1); assert.equal(h.host.children.length, 0);
-    assert.ok(h.stats.paints.every(paint => paint.parameters.canvas.width === 0));
+  test(`${label} has no aggregate cap across window changes`, async t => {
+    const h = harness(t, options); await h.open();
+    for (let page = 1; page <= options.pages; page++) {
+      h.reader.page(page); await flush(); assert.equal(h.state().phase, 'ready');
+      assert.ok(liveCanvases(h).length <= layoutModule.PDF_ACTIVE_PAGES);
+    }
+    await h.reader.destroy();
+    assert.equal(liveCanvases(h).length, 0);
     assert.ok(h.stats.layers.every(layer => layer.parameters.container.children.length === 0));
   });
 }
@@ -305,7 +433,7 @@ test('a later page failure clears earlier selectable pages and publishes only a 
   const h = harness(t, { getPage: (page, n) => n === 2 ? Promise.reject(Error('PRIVATE-DETAIL')) : Promise.resolve(page) });
   await h.open(); await flush();
   assert.equal(h.state().phase, 'error'); assert.doesNotMatch(h.state().message, /PRIVATE/);
-  assert.equal(h.state().rendered, 1); assert.deepEqual(h.stats.pages, [1, 2]);
+  assert.equal(h.state().rendered, 0); assert.deepEqual(h.stats.pages, [1, 2]);
   assert.equal(h.loads[0].destroyed, 1); assert.equal(h.host.children.length, 0);
   assert.equal(h.stats.layers[0].parameters.container.children.length, 0);
   assert.equal(h.stats.paints[0].parameters.canvas.width, 0);
@@ -320,7 +448,7 @@ test('reopen while a later page paints drains all old pages and suppresses late 
   assert.equal(h.state().phase, 'loading'); assert.equal(h.state().rendered, 0);
   h.reads[1].resolve({ bytes: [1] }); await reopened; await flush();
   for (const i of [2, 3, 4]) { h.stats.paints[i].resolve(); await flush(); }
-  assert.equal(h.state().phase, 'ready'); assert.equal(h.host.children.length, 3);
+  assert.equal(h.state().phase, 'ready'); assert.equal(slots(h).length, 3);
   assert.equal(h.loads[0].destroyed, 1); assert.equal(h.loads[1].destroyed, 0);
   assert.ok(h.stats.paints.slice(0, 2).every(paint => paint.parameters.canvas.width === 0));
 });
@@ -341,41 +469,44 @@ test('rejected inter-page cleanup fails closed even when a newer zoom is pending
   assert.equal(h.host.children.length, 0); assert.equal(h.loads[0].destroyed, 1);
 });
 
-test('page geometry limits account for device scale, extreme dimensions and user units', () => {
+test('page geometry uses requested device pixels without dimension/pixel caps and validates numbers', () => {
   const view = { zoom: 4, fit: false, width: 1000, pixelRatio: 3 };
   const { page } = documentDouble();
   const result = pageModule.pageGeometry(page, view);
-  assert.ok(result.width * result.height <= pageModule.PDF_LIMITS.pixels);
-  assert.equal(result.reduced, true);
-  for (const width of [NaN, Infinity, 0, -1, 40_000]) {
+  assert.equal(result.width, 7200); assert.equal(result.height, 9600);
+  const wide = pageModule.pageGeometry(documentDouble({ width: 40_000 }).page, view);
+  assert.equal(wide.width, 480_000);
+  for (const width of [NaN, Infinity, 0, -1]) {
     const { page } = documentDouble({ width });
-    assert.throws(() => pageModule.pageGeometry(page, view), { code: 'limit' });
+    assert.throws(() => pageModule.pageGeometry(page, view), { code: 'render' });
   }
-  for (const pixelLimit of [NaN, 0, -1]) {
-    assert.throws(() => pageModule.pageGeometry(page, { ...view, pixelLimit }), { code: 'limit' });
+  for (const pixelRatio of [NaN, 0, -1, Infinity]) {
+    assert.throws(() => pageModule.pageGeometry(page, { ...view, pixelRatio }), { code: 'render' });
   }
-  const clamped = pageModule.pageGeometry(page, { ...view, pixelLimit: Infinity });
-  assert.ok(clamped.width * clamped.height <= pageModule.PDF_LIMITS.pixels);
+  const fit = pageModule.pageGeometry(documentDouble({ width: 40_000 }).page, { ...view, fit: true });
+  assert.equal(fit.viewport.width, 1000); assert.equal(fit.zoom, 0.025);
 });
 
 for (const [label, options] of [['blank', { items: [] }], ['image-only', { items: [], pages: 1 }]]) {
   test(`${label} pages with no selectable text still complete and clean up`, async t => {
     const h = harness(t, options); await h.open();
-    assert.equal(h.state().phase, 'ready'); assert.equal(h.stats.layers[0].parameters.container.children.length, 0);
-    assert.equal(h.host.children[0].style.visibility, 'visible'); await h.reader.destroy();
+    assert.equal(h.state().phase, 'ready'); assert.equal(h.stats.layers.length, 0);
+    assert.equal(roots(h)[0].style.visibility, 'visible'); await h.reader.destroy();
     assert.equal(h.host.children.length, 0);
   });
 }
 
 for (const [label, options] of [
-  ['pages', { pages: 501 }], ['dimensions', { width: 1e8, height: 1e8 }],
-  ['text items', { items: Array.from({ length: 10001 }, () => ({ str: 'a' })) }],
-  ['text characters', { items: [{ str: 'a'.repeat(1000001) }] }],
-  ['text styles', { styles: Object.fromEntries(Array.from({ length: 257 }, (_, n) => [n, {}])) }],
+  ['pages', { pages: 0 }], ['fractional pages', { pages: 1.5 }], ['dimensions', { width: Infinity }],
+  ['malformed text item', { items: [{ str: 'a' }] }], ['sparse text items', { items: new Array(2) }],
+  ['malformed transform', { items: [textItem('a', { transform: new Array(6) })] }],
+  ['missing styles', { chunk: { items: [] } }], ['malformed styles', { styles: { f1: {} } }],
+  ['text renderer rejection', { textError: true }], ['missing canvas context', { noContext: true }],
+  ['canvas allocation exception', { allocationError: true }], ['unallocated canvas', { blankCanvas: true }],
 ]) {
-  test(`${label} limit is visible and frees the document instead of leaving a blank page`, async t => {
+  test(`${label} fails with a fixed error and drains the document`, async t => {
     const h = harness(t, options); await h.open(); await flush();
-    assert.equal(h.state().phase, 'error'); assert.match(h.state().message, /limit/);
+    assert.equal(h.state().phase, 'error'); assert.doesNotMatch(h.state().message, /PRIVATE/);
     assert.equal(h.loads[0].destroyed, 1); assert.equal(h.host.children.length, 0);
     assert.equal(h.elements.filter(n => n.tag === 'canvas' && n.width > 0).length, 0);
   });
@@ -383,9 +514,9 @@ for (const [label, options] of [
 
 test('close during text streaming cancels text, clears its DOM/canvas and destroys once', async t => {
   const h = harness(t, { holdText: true }); await h.open();
-  const root = h.host.children[0];
-  assert.equal(h.stats.layers.length, 1); await h.reader.open(null);
-  assert.equal(h.stats.layers[0].cancelled, 1); assert.equal(h.stats.streamsCancelled, 1);
+  const root = roots(h)[0];
+  await h.reader.open(null);
+  assert.equal(h.stats.streamsCancelled, 1);
   assert.equal(root.children.length, 0);
   assert.equal(h.host.children.length, 0); assert.equal(h.stats.paints[0].parameters.canvas.height, 0);
   assert.equal(h.loads[0].destroyed, 1); await h.reader.destroy();
@@ -400,7 +531,7 @@ test('zoom waits for text-source cancellation before document cleanup or another
     h.reader.zoom(2); await flush();
     assert.equal(h.stats.streamsCancelled, 1);
     assert.deepEqual(h.stats.pages, [1]); assert.equal(h.stats.cleanups, cleanups);
-    assert.equal(h.host.children.length, 0);
+    assert.equal(roots(h).length, 0);
   } finally { cancelled.resolve(); }
   await flush();
   assert.deepEqual(h.stats.pages, [1, 1]);
@@ -516,7 +647,7 @@ test('rotated user-unit page shares the exact viewport and text CSS scale with i
   const canvas = h.stats.paints[0].parameters, text = h.stats.layers[0].parameters;
   assert.equal(canvas.viewport, text.viewport); assert.equal(canvas.viewport.rotation, 90);
   assert.equal(h.state().zoom, 600 / 1600);
-  assert.equal(h.host.children[0].style['--total-scale-factor'], String(h.state().zoom * 2));
+  assert.equal(roots(h)[0].style['--total-scale-factor'], String(h.state().zoom * 2));
   assert.equal(canvas.canvas.style.width, '600px');
 });
 
@@ -527,7 +658,7 @@ test('actual component script owns selection, password retry/cancel/input cleari
   const compiled = ts.transpileModule(script + expose, { compilerOptions: { target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.CommonJS } }).outputText;
   const dom = surface(), doc = documentDouble(), mount = [], unmount = [], listeners = new Set(), reads = [], loads = [];
-  const events = new Map();
+  const events = new Map(), observers = [];
   let state = actions.papersReducer(undefined, { type: 'init' }); let destroyed = 0, submitted = 0, nativeArgs = [];
   const store = { dispatch(action) {
     const old = state.selectedId; state = actions.papersReducer(state, action);
@@ -536,7 +667,7 @@ test('actual component script owns selection, password retry/cancel/input cleari
   const selector = { subscribe(fn) { listeners.add(fn); fn(state.selectedId); return () => listeners.delete(fn); } };
   const bindings = { exports: {}, $state: Object.assign(value => value, { raw: value => value }), $derived: value => value,
     window: { addEventListener(name, fn) { events.set(name, fn); }, removeEventListener(name) { events.delete(name); } },
-    ResizeObserver: class { observe() {} disconnect() {} },
+    ResizeObserver: class { constructor(callback) { observers.push(callback); } observe() {} disconnect() {} },
     require(id) {
       if (id === 'svelte') return { onMount: fn => mount.push(fn), onDestroy: fn => unmount.push(fn) };
       if (id.endsWith('/store')) return { store };
@@ -557,7 +688,7 @@ test('actual component script owns selection, password retry/cancel/input cleari
   };
   vm.runInNewContext(compiled, bindings);
   const component = bindings.exports.harness;
-  component.setNodes(dom.host, { clientWidth: 632, scrollTo() {} });
+  dom.scroll.scrollTo = () => {}; component.setNodes(dom.host, dom.scroll);
   const cleanup = mount[0]();
   t.after(() => { cleanup(); unmount.forEach(fn => fn()); });
   store.dispatch(actions.openPaper('component-generated')); await flush();
@@ -569,7 +700,10 @@ test('actual component script owns selection, password retry/cancel/input cleari
   assert.equal(component.state().phase, 'password');
   input.value = randomBytes(16).toString('hex'); component.unlock({ preventDefault() {} });
   assert.equal(input.value, ''); assert.equal(submitted, 2);
-  loads[0].resolve(doc.loaded); await flush(); assert.equal(dom.host.children.length, 3);
+  loads[0].resolve(doc.loaded); await flush(); assert.equal(slots(dom).length, 3);
+  const paints = doc.stats.paints.length;
+  observers[0](); observers[0](); await flush(); assert.equal(doc.stats.paints.length, paints);
+  dom.scroll.listeners.get('wheel')({ deltaMode: 0, deltaY: 10, deltaX: 0, preventDefault() { assert.fail('Small document keeps native scrolling'); } });
   store.dispatch(actions.openPaper('component-cancel')); await flush();
   reads[1].resolve({ bytes: [2] }); await flush();
   loads[1].options.onPassword({ reason: 'required', submit() { submitted++; return true; }, cancel: async () => {} });
@@ -583,5 +717,7 @@ test('actual component script owns selection, password retry/cancel/input cleari
   cleanup(); unmount.forEach(fn => fn()); await flush();
   assert.equal(destroyed, 3); assert.equal(listeners.size, 0); assert.equal(dom.host.children.length, 0);
   assert.equal(events.size, 0);
+  assert.equal(dom.scroll.listeners.size, 0);
+  observers[0](); await flush(); assert.equal(dom.host.children.length, 0);
   assert.deepEqual(nativeArgs, ['component-generated', 'component-cancel', 'component-shutdown']); assert.equal(state.selectedId, null);
 });

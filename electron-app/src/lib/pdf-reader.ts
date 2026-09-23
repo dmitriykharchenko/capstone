@@ -1,6 +1,7 @@
 import { api, type CancellablePromise, type PdfData } from './api';
 import { loadPdf, PdfLoadError, type PdfLoad, type PdfPasswordPrompt } from './pdf-runtime';
-import { renderPdfPage, drainPdfWork, PDF_LIMITS, PdfReaderError, type LoadedPdf, type PageRender } from './pdf-page';
+import { renderPdfPage, drainPdfWork, PDF_LIMITS, type LoadedPdf, type PageRender } from './pdf-page';
+import { PdfLayout, PDF_SCROLL_SPAN, pdfWindow } from './pdf-layout';
 
 export type ReaderState = { phase: 'idle' | 'loading' | 'password' | 'rendering' | 'ready' | 'error' | 'cancelled';
   page: number; pages: number; rendered: number; zoom: number; fit: boolean; message: string; notice: string };
@@ -11,8 +12,12 @@ const READ_ERROR = 'Cannot open this PDF. It may be missing, changed, closed, co
 // old instance's drain; this barrier contains no PDF data or password values.
 let readerDrain: Promise<void> = Promise.resolve();
 type Session = { read?: CancellablePromise<PdfData>; load?: PdfLoad; loaded?: LoadedPdf;
-  renders: PageRender[]; results: number[]; pageDrain?: Promise<unknown>; jump?: number; stopped: boolean; pumping: boolean;
-  renderVersion: number; passwordVersion: number; queue: Promise<void> };
+  layout?: PdfLayout; surface?: HTMLDivElement; entries: Map<number, Entry>; retired: Promise<void>[];
+  desired: number[]; top: number; physicalTop: number; stopped: boolean; pumping: boolean;
+  cleanup: boolean; passwordVersion: number; queue: Promise<void> };
+type Entry = { slot: HTMLDivElement; task?: PageRender; zoom?: number };
+const RENDER_ERROR = 'Cannot render this PDF page. Retry or choose another document.';
+const RELEASE_ERROR = 'Cannot release the previous PDF page safely. Retry the document.';
 
 /** Component-owned: never dispatch bytes, documents, promises or password callbacks to the store. */
 export function createPdfReader(host: HTMLElement, changed: (state: ReaderState) => void,
@@ -24,20 +29,67 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
   let disposed = false;
   let teardown = Promise.resolve();
   let width = Math.max(1, host.clientWidth - 32);
+  let height = Math.max(1, host.parentElement?.clientHeight ?? 800);
   const publish = (patch: Partial<ReaderState>) => { state = { ...state, ...patch }; if (!disposed) changed(state); };
   const live = (session: Session) => current === session && !session.stopped && !disposed;
 
-  function clearPages(session: Session) {
-    // Every destroy synchronously hides/zeros its output before awaiting work.
-    return session.pageDrain ??= Promise.all(session.renders.map(render => render.destroy()));
+  function retire(session: Session, number: number, entry: Entry) {
+    session.entries.delete(number);
+    entry.slot.remove();
+    if (entry.task) {
+      const drained = entry.task.destroy();
+      void drained.catch(() => {});
+      session.retired.push(drained);
+    }
+    session.cleanup = true;
   }
-
-  function jumpToPage(session: Session) {
-    if (!session.jump || !session.results[session.jump - 1]) return;
-    const root = host.children[session.jump - 1] as HTMLElement | undefined;
-    if (!root) return;
-    root.scrollIntoView({ block: 'start', inline: 'nearest' });
-    session.jump = undefined;
+  function clearPages(session: Session) {
+    for (const [number, entry] of session.entries) retire(session, number, entry);
+  }
+  function position(session: Session) {
+    const layout = session.layout!, surface = session.surface!;
+    const total = scrollHeight(layout);
+    if (!Number.isFinite(total) || total <= 0) throw Error('Invalid layout');
+    const physicalHeight = Math.min(PDF_SCROLL_SPAN, total);
+    session.top = Math.max(0, Math.min(session.top, Math.max(0, total - height)));
+    session.physicalTop = total <= PDF_SCROLL_SPAN ? session.top :
+      session.top / Math.max(1, total - height) * Math.max(0, physicalHeight - height);
+    surface.style.height = `${physicalHeight - 32}px`;
+    let widest = width;
+    for (const [number, entry] of session.entries) {
+      const size = layout.size(number);
+      entry.slot.style.top = `${layout.top(number) - session.top + session.physicalTop}px`;
+      entry.slot.style.width = `${size.width}px`;
+      entry.slot.style.height = `${size.height}px`;
+      widest = Math.max(widest, size.width);
+    }
+    surface.style.width = `${widest}px`;
+    const scroll = host.parentElement;
+    if (scroll && Math.abs(scroll.scrollTop - session.physicalTop) > 0.5) scroll.scrollTop = session.physicalTop;
+  }
+  function updateWindow(session: Session) {
+    if (!live(session) || !session.layout) return;
+    const desired = pdfWindow(session.layout, Math.max(0, session.top - 16), height);
+    // PDF.js exposes only document-wide font cleanup. Drain a changed window
+    // before releasing shared fonts, then rebuild its bounded selectable layers.
+    if (desired.some(number => !session.desired.includes(number)) || desired.length !== session.desired.length) clearPages(session);
+    session.desired = desired;
+    for (const number of session.desired) if (!session.entries.has(number)) {
+      const slot = host.ownerDocument.createElement('div');
+      slot.className = 'pdf-slot';
+      slot.setAttribute('data-page-number', String(number));
+      session.surface!.append(slot);
+      session.entries.set(number, { slot });
+    }
+    // DOM order matches reading/selection order, independently of render priority.
+    for (const [, entry] of [...session.entries].sort(([a], [b]) => a - b)) session.surface!.append(entry.slot);
+    position(session);
+    const page = session.layout.pageAt(Math.max(0, session.top - 16));
+    publish({ page, zoom: session.layout.size(page).zoom,
+      rendered: [...session.entries.values()].filter(entry => entry.zoom !== undefined).length });
+  }
+  function scrollHeight(layout: PdfLayout) {
+    return Math.max(layout.height + 32, layout.top(layout.pages) + height + 16);
   }
 
   function stop(): Promise<void> {
@@ -47,10 +99,11 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
     if (!session) return teardown;
     session.stopped = true;
     session.passwordVersion++;
-    session.renderVersion++;
     session.read?.cancel?.();
     // Synchronously cancel/reset surfaces before terminating the owning worker.
-    const rendering = clearPages(session).catch(() => {});
+    clearPages(session);
+    session.surface?.remove();
+    const rendering = Promise.all(session.retired).catch(() => {});
     const loading = session.load?.destroy().catch(() => {});
     const reading = session.read?.then(() => {}, () => {});
     session.loaded = undefined;
@@ -61,78 +114,70 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
 
   function fail(session: Session, message: string) {
     if (!live(session)) return;
-    publish({ phase: 'error', message, notice: '' });
+    publish({ phase: 'error', rendered: 0, message, notice: '' });
     // Do not await this from a render queue which stop itself drains.
     void stop();
   }
 
-  function schedulePages() {
+  function schedulePages(rebuild = false) {
     const session = current;
-    if (!session?.loaded || !live(session)) return;
-    session.renderVersion++;
-    session.jump = state.page;
-    void clearPages(session).catch(() => {});
-    session.results = [];
-    publish({ phase: 'rendering', rendered: 0, message: '', notice: '' });
+    if (!session?.loaded || !session.layout || !live(session)) return;
+    try {
+      if (rebuild) {
+        const page = state.page;
+        const fraction = (session.top - 16 - session.layout.top(page)) / session.layout.size(page).height;
+        clearPages(session);
+        session.layout.configure(width, state.zoom, state.fit);
+        session.top = session.layout.top(page) + Math.max(0, fraction) * session.layout.size(page).height + 16;
+      }
+      updateWindow(session);
+      if ([...session.entries.values()].some(entry => entry.zoom === undefined)) publish({ phase: 'rendering', message: '' });
+    } catch { fail(session, RENDER_ERROR); return; }
     if (session.pumping) return;
     session.pumping = true;
-    // One pump and one latest desired view, not a promise/task per zoom/resize event.
+    // One sequential pump; events only replace the desired window. Disposed tasks
+    // drain before any replacement starts, including late getPage/text promises.
     session.queue = (async () => {
       try {
         while (live(session) && session.loaded) {
           try {
-            await clearPages(session);
-            session.renders = [];
-            session.results = [];
-            session.pageDrain = undefined;
+            const retired = session.retired.splice(0);
+            await Promise.all(retired);
             if (!live(session) || !session.loaded) return;
-            // The old generation is fully drained before shared resources are reset.
-            await drainPdfWork(session.loaded.document.cleanup());
+            if (session.cleanup) {
+              session.cleanup = false;
+              await drainPdfWork(session.loaded.document.cleanup([...session.entries.values()].some(entry => entry.zoom !== undefined)));
+            }
           } catch {
-            fail(session, 'Cannot release the previous PDF page safely. Retry the document.');
-            return;
+            fail(session, RELEASE_ERROR); return;
           }
           if (!live(session) || !session.loaded) return;
-          // A resize may have asked to drain the empty surface during cleanup.
-          session.pageDrain = undefined;
-          const version = session.renderVersion;
+          if (session.retired.length || session.cleanup) continue;
+          const number = session.desired.find(number => !session.entries.get(number)?.task);
+          if (number === undefined) { publish({ phase: 'ready' }); return; }
+          const entry = session.entries.get(number)!;
+          publish({ phase: 'rendering', message: '' });
           try {
-            const view = { zoom: state.zoom, fit: state.fit, width,
+            const task = dependencies.renderPage(session.loaded, { page: number, zoom: state.zoom, fit: state.fit, width,
               pixelRatio: host.ownerDocument.defaultView?.devicePixelRatio ?? 1,
-              pixelLimit: Math.floor(PDF_LIMITS.documentPixels / state.pages),
-              textBudget: { items: 0, characters: 0, styles: 0 } };
-            let reduced = false;
-            for (let page = 1; page <= state.pages; page++) {
-              if (!live(session) || version !== session.renderVersion || !session.loaded) break;
-              const task = dependencies.renderPage(session.loaded, { ...view, page }, host);
-              session.renders.push(task);
-              const result = await task.promise;
-              if (!live(session) || version !== session.renderVersion || !session.loaded) break;
-              session.results.push(result.zoom);
-              reduced ||= result.reduced;
-              // No active page work. Keep font faces used by retained selectable text,
-              // but release shared image/operator caches before starting the next page.
-              try { await drainPdfWork(session.loaded.document.cleanup(true)); }
-              catch {
-                fail(session, 'Cannot release the previous PDF page safely. Retry the document.');
-                return;
-              }
-              if (!live(session) || version !== session.renderVersion) break;
-              publish({ rendered: page, zoom: session.results[state.page - 1] ?? state.zoom,
-                notice: reduced ? 'Display resolution reduced to stay within the page pixel limit.' : '' });
-              jumpToPage(session);
+              measured(pageWidth, pageHeight) {
+                if (!live(session) || session.entries.get(number) !== entry) return;
+                const anchor = state.page, offset = session.top - session.layout!.top(anchor);
+                session.layout!.measure(number, pageWidth, pageHeight);
+                session.top = session.layout!.top(anchor) + offset;
+                updateWindow(session);
+              },
+            }, entry.slot);
+            entry.task = task;
+            const result = await task.promise;
+            if (!live(session)) return;
+            if (session.entries.get(number) === entry) {
+              entry.zoom = result.zoom;
+              updateWindow(session);
             }
-            if (live(session) && version === session.renderVersion) {
-              publish({ phase: 'ready' });
-              return;
-            }
-          } catch (error) {
-            if (live(session) && version === session.renderVersion) {
-              fail(session, error instanceof PdfReaderError && error.code === 'limit'
-                ? 'This PDF exceeds the safe display or text limit. Try another document.'
-                : 'Cannot render this PDF page. Retry or choose another document.');
-              return;
-            }
+            session.cleanup = true;
+          } catch {
+            if (live(session) && session.entries.get(number) === entry) { fail(session, RENDER_ERROR); return; }
           }
         }
       } finally { session.pumping = false; }
@@ -147,8 +192,8 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
     publish({ phase: id ? 'loading' : 'idle' });
     await Promise.all([pending, readerDrain]);
     if (disposed || version !== generation || !id) return;
-    const session: Session = { renders: [], results: [], stopped: false, pumping: false,
-      renderVersion: 0, passwordVersion: 0, queue: Promise.resolve() };
+    const session: Session = { entries: new Map(), retired: [], desired: [], top: 0, physicalTop: 0,
+      stopped: false, pumping: false, cleanup: true, passwordVersion: 0, queue: Promise.resolve() };
     current = session;
     try {
       session.read = dependencies.readPdf(id);
@@ -184,10 +229,15 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
       session.passwordVersion++;
       passwordChanged(undefined);
       const pages = session.loaded.document.numPages;
-      if (!Number.isInteger(pages) || pages < 1 || pages > PDF_LIMITS.pages) {
-        void fail(session, `This PDF exceeds the reader limit of ${PDF_LIMITS.pages} pages or has no readable pages.`);
+      if (!Number.isSafeInteger(pages) || pages < 1) {
+        void fail(session, 'This PDF has no readable pages.');
         return;
       }
+      session.layout = new PdfLayout(pages);
+      session.layout.configure(width, state.zoom, state.fit);
+      session.surface = host.ownerDocument.createElement('div');
+      session.surface.className = 'pdf-document';
+      host.append(session.surface);
       publish({ pages });
       schedulePages();
     } catch (error) {
@@ -197,33 +247,51 @@ export function createPdfReader(host: HTMLElement, changed: (state: ReaderState)
   return {
     open,
     page(value: number) {
-      if (!Number.isFinite(value) || !current?.loaded) return;
+      if (!Number.isFinite(value) || !current?.layout) return;
       const page = Math.min(state.pages, Math.max(1, Math.trunc(value)));
-      current.jump = page;
-      publish({ page, zoom: current.results[page - 1] ?? state.zoom });
-      jumpToPage(current);
+      current.top = current.layout.top(page) + 16;
+      schedulePages();
     },
     scrolled(top: number) {
-      if (!Number.isFinite(top) || !current?.loaded || current.jump) return;
-      // At most 500 lightweight roots. Scrolling never schedules PDF.js work.
-      let page = 1;
-      for (let index = 0; index < state.rendered; index++) {
-        if ((host.children[index] as HTMLElement).offsetTop > top + 1) break;
-        page = index + 1;
+      if (!Number.isFinite(top) || !current?.layout) return;
+      const delta = top - current.physicalTop;
+      if (Math.abs(delta) < 0.5) return; // A queued event from our own rebasing.
+      const total = scrollHeight(current.layout);
+      if (total <= PDF_SCROLL_SPAN) {
+        current.top += delta;
+      } else {
+        current.top = top / Math.max(1, PDF_SCROLL_SPAN - height) * Math.max(0, total - height);
       }
-      if (page !== state.page) publish({ page, zoom: current.results[page - 1] ?? state.zoom });
+      schedulePages();
+    },
+    scrollBy(delta: number) {
+      if (!Number.isFinite(delta) || !current?.layout || scrollHeight(current.layout) <= PDF_SCROLL_SPAN) return false;
+      current.top += delta;
+      schedulePages();
+      return true;
+    },
+    scrollKey(key: string) {
+      if (!current?.layout || scrollHeight(current.layout) <= PDF_SCROLL_SPAN) return false;
+      const steps: Record<string, number> = { ArrowDown: 40, ArrowUp: -40, PageDown: height, PageUp: -height,
+        Home: -current.top, End: scrollHeight(current.layout) - height - current.top };
+      if (!Object.hasOwn(steps, key)) return false;
+      const delta = steps[key];
+      current.top += delta;
+      schedulePages();
+      return true;
     },
     zoom(value: number) {
       if (!Number.isFinite(value) || !current?.loaded) return;
-      publish({ zoom: Math.min(PDF_LIMITS.maxZoom, Math.max(PDF_LIMITS.minZoom, value)), fit: false }); schedulePages();
+      publish({ zoom: Math.min(PDF_LIMITS.maxZoom, Math.max(PDF_LIMITS.minZoom, value)), fit: false }); schedulePages(true);
     },
-    fit() { if (current?.loaded) { publish({ fit: true }); schedulePages(); } },
-    resize(value: number) {
+    fit() { if (current?.loaded) { publish({ fit: true }); schedulePages(true); } },
+    resize(value: number, viewportHeight = host.parentElement?.clientHeight ?? height) {
       if (!Number.isFinite(value) || value <= 32) return;
       const next = Math.floor(value - 32);
-      if (width === next) return;
+      const resized = width !== next;
       width = next;
-      if (state.fit) schedulePages();
+      if (Number.isFinite(viewportHeight) && viewportHeight > 0) height = viewportHeight;
+      schedulePages(resized && state.fit);
     },
     destroy() {
       if (!disposed) { disposed = true; generation++; }

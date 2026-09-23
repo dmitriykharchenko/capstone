@@ -112,7 +112,6 @@ export function createPdfLoader(environment: {
           wasmUrl: `${environment.assetBase}wasm/`,
           useWasm: false, useWorkerFetch: true, useSystemFonts: false,
           enableXfa: false, stopAtErrors: true,
-          canvasMaxAreaInBytes: 32 * 1024 * 1024,
         });
         loading.onPassword = (update: (password: string) => void, reason: number) => {
           if (stopped) return;
