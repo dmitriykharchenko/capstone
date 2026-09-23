@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
 import { Broker } from '../electron/broker.mjs';
 import * as security from '../electron/security.mjs';
+import { configureDesktopData } from '../electron/paths.mjs';
 
 // Execute the actual main module against a deterministic Electron host, not a browser.
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -23,6 +24,7 @@ async function host({ locked = true, ready = true, failure, stopped = Promise.re
   const counts = { backend: 0, window: 0, ready: 0, protocol: 0, handlers: 0 };
   const jobs = [];
   const diagnostics = [];
+  const signals = new EventEmitter();
   const fail = (stage) => { if (failure === stage) throw new Error('PRIVATE startup details'); };
   Object.assign(app, { isPackaged: packaged, requestSingleInstanceLock: () => locked,
     quit: () => {
@@ -73,12 +75,13 @@ async function host({ locked = true, ready = true, failure, stopped = Promise.re
   const evaluation = vm.runInNewContext(`(async () => {${source}\n})()`, { app, BrowserWindow: FakeWindow,
     ipcMain: { handle: (name, fn) => { counts.handlers++; handlers.set(name, fn); } }, protocol, Backend: FakeBackend, Broker,
     console: { error: (...args) => diagnostics.push(args) },
-    ...security, dirname, join, fileURLToPath, process: { argv: [], env, resourcesPath: '/tmp/fake-resources' } });
+    ...security, configureDesktopData, dirname, join, fileURLToPath, process: {
+      argv: [], env, resourcesPath: '/tmp/fake-resources', once: signals.once.bind(signals) } });
   void evaluation.then(() => { evaluated = true; });
   if (ready) { resolveReady(); await evaluation; await settle(); }
   const event = () => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
   return { app, get window() { return window; }, get backend() { return backend; }, jobs, handlers, protocol, event,
-    counts, resolveReady, rejectReady, diagnostics, evaluated: () => evaluated, quits: () => quits, sandbox: () => sandbox };
+    signals, counts, resolveReady, rejectReady, diagnostics, evaluated: () => evaluated, quits: () => quits, sandbox: () => sandbox };
 }
 
 test('trusted startup supplies deterministic browsing roots, never backend cwd or renderer paths', async () => {
@@ -125,6 +128,13 @@ test('entry evaluation finishes before readiness, then initializes exactly once'
   await settle();
   assert.deepEqual(h.counts, { backend: 1, window: 1, ready: 1, protocol: 1, handlers: 5 });
   assert.equal(h.quits(), 0);
+});
+
+test('invalid desktop data override fails before backend, window or single-instance readiness', async () => {
+  const h = await host({ env: { CAPSTONE_DESKTOP_DATA_DIR: 'relative-invalid' } });
+  assert.deepEqual(h.diagnostics, [['Application startup failed.']]);
+  assert.equal(h.quits(), 1);
+  assert.deepEqual(h.counts, { backend: 0, window: 0, ready: 0, protocol: 0, handlers: 0 });
 });
 
 test('main creates one isolated window/backend and validates every privileged handler', async () => {
@@ -184,6 +194,19 @@ test('second app instance exits without constructing a backend/window', async ()
   assert.deepEqual(h.counts, { backend: 0, window: 0, ready: 0, protocol: 0, handlers: 0 });
   assert.equal(h.handlers.size, 0);
 });
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`${signal} uses graceful backend drain before exiting`, async () => {
+    let finish;
+    const h = await host({ stopped: new Promise((resolve) => { finish = resolve; }) });
+    h.signals.emit(signal);
+    assert.equal(h.backend.stopped, true);
+    assert.equal(h.quits(), 0);
+    finish();
+    await settle();
+    assert.equal(h.quits(), 1);
+  });
+}
 
 test('readiness failure quits with only a fixed startup diagnostic', async () => {
   const h = await host({ ready: false });

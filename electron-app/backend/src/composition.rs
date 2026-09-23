@@ -2,6 +2,8 @@
 //! indexing may initialize/recover derived stores, but never calls providers here.
 use std::{path::PathBuf, sync::Arc};
 
+mod commands;
+
 use crate::{
     config::PaperBrowsingConfig,
     papers::{NativePaperRepository, PaperCommand, PaperCommandHandler},
@@ -141,8 +143,14 @@ pub async fn native_registry(env: impl Fn(&str) -> Option<String>) -> Registry {
         }
         index.recover().await?;
         let embeddings = Arc::new(embeddings);
+        let retriever = index.retriever(embeddings.clone());
+        let evaluations = crate::evaluations::NativeEvaluationService::from_config(
+            Arc::new(model.clone()),
+            Arc::new(retriever.clone()),
+            &config,
+        )
+        .ok();
         let chat = if let Some(h) = &history {
-            let retriever = index.retriever(embeddings.clone());
             let pipeline = crate::rag::AdaptiveRag::from_config(
                 Arc::new(model),
                 Arc::new(retriever.clone()),
@@ -152,24 +160,25 @@ pub async fn native_registry(env: impl Fn(&str) -> Option<String>) -> Registry {
             Some(crate::chat::NativeChat::new(
                 h.clone(),
                 index.clone(),
-                retriever,
+                retriever.clone(),
                 Arc::new(pipeline),
             ))
         } else {
             None
         };
         let indexer = NativeIndexer::new(
-            index,
+            index.clone(),
             embeddings,
             Arc::new(metadata),
             config.providers.index_max_workers,
         )
         .map_err(IndexError::from)?;
-        Ok::<_, IndexError>((indexer, chat))
+        Ok::<_, IndexError>((indexer, chat, index, retriever, evaluations))
     }
     .await;
     let result = match result {
-        Ok((indexer, chat)) => {
+        Ok((indexer, chat, index, retriever, evaluations)) => {
+            commands::install(&mut registry, index, retriever, evaluations);
             if let Some(h) = history {
                 crate::chat::install_commands(&mut registry, h, chat);
             }

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Backend } from './backend.mjs';
 import { Broker } from './broker.mjs';
+import { configureDesktopData } from './paths.mjs';
 import { APP_ORIGIN, DEV_ORIGIN, webPreferences, assertSender, secureContents, appResponse, csp } from './security.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -14,12 +15,15 @@ let window;
 let backend;
 let quitting = false;
 
-if (!app.requestSingleInstanceLock()) app.quit();
-else {
-  app.on('second-instance', () => { if (window && !window.isDestroyed()) { window.restore(); window.focus(); } });
-  // Electron waits for ESM entry evaluation before ready; never await readiness here.
-  void app.whenReady().then(initialize).catch(startupFailed);
-}
+try {
+  configureDesktopData(app, process.env);
+  if (!app.requestSingleInstanceLock()) app.quit();
+  else {
+    app.on('second-instance', () => { if (window && !window.isDestroyed()) { window.restore(); window.focus(); } });
+    // Electron waits for ESM entry evaluation before ready; never await readiness here.
+    void app.whenReady().then(initialize).catch(startupFailed);
+  }
+} catch { startupFailed(); }
 
 function startupFailed() {
   console.error('Application startup failed.');
@@ -42,6 +46,8 @@ function initialize() {
     quitting = true;
     void backend.stop().finally(() => app.quit());
   });
+  // Developer launcher and isolated package smoke use the same graceful drain.
+  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => app.quit());
   const broker = new Broker(backend);
   let generation = 0;
   protocol.handle('app', (request) => appResponse(request, join(root, 'dist')));

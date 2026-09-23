@@ -197,6 +197,24 @@ impl CoordinatedIndex {
         }
         result
     }
+    /// Production graph reads use the same journal authority as retrieval.
+    pub(crate) async fn query_graph(
+        &self,
+        query: crate::domain::GraphQuery,
+        cancellation: Cancellation,
+    ) -> crate::registry::BackendResult<serde_json::Value> {
+        let _guard = self
+            .gate
+            .read()
+            .await
+            .map_err(|_| crate::protocol::ErrorCode::Unavailable)?;
+        self.verify_read()
+            .await
+            .map_err(|_| crate::protocol::ErrorCode::Unavailable)?;
+        cancellation.check()?;
+        let response = self.graph.query_typed(query, cancellation).await?;
+        serde_json::to_value(response).map_err(|_| crate::protocol::ErrorCode::Internal)
+    }
     pub(super) fn papers(&self) -> NativePaperRepository {
         self.papers.clone()
     }
