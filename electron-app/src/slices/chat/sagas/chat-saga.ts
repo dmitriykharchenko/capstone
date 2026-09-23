@@ -128,7 +128,7 @@ function createChatStreamChannel(
           emit({
             event: "error",
             message:
-              "Chat stream ended before a complete response was received. Please try again.",
+              "Chat outcome is unknown because the final response was not received. Check saved history before explicitly starting a new turn; no turn was replayed.",
           });
         }
         emit(END);

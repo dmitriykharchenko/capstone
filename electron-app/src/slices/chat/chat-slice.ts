@@ -57,7 +57,8 @@ const validSubquery = (subquery: ChatSubquery) =>
   Number.isInteger(subquery.index) &&
   subquery.index > 0 &&
   subquery.index <= 7 &&
-  subquery.id === `subquery-${subquery.index}` &&
+  // Preserve native IDs and the existing exact legacy form, never arbitrary IDs.
+  (subquery.id === `hop-${subquery.index}` || subquery.id === `subquery-${subquery.index}`) &&
   Boolean(subquery.query.trim());
 
 export const chatReducer: StoreReducerFunction<ChatState> = createReducer<ChatState>(
@@ -245,7 +246,7 @@ export const chatReducer: StoreReducerFunction<ChatState> = createReducer<ChatSt
       const current = state.activeTurn ?? emptyTurn();
       const total = eventTotal ?? current.total;
       if (
-        id !== `subquery-${index}` ||
+        !validSubquery({ id, index, query }) ||
         !answer.trim() ||
         total !== current.total ||
         !current.subqueries.some(
