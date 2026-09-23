@@ -379,9 +379,9 @@ def test_graph_tracing_does_not_create_external_persistence(monkeypatch):
     assert calls == [{"enabled": False}]
 
 
-@pytest.mark.parametrize("consume_terminal", [False, True])
+@pytest.mark.parametrize("exhaust_stream", [False, True])
 def test_evaluation_adapter_preserves_terminal_persistence_boundary(
-    monkeypatch, tmp_path, consume_terminal
+    monkeypatch, tmp_path, exhaust_stream
 ):
     saved = []
     terminal = {
@@ -399,9 +399,10 @@ def test_evaluation_adapter_preserves_terminal_persistence_boundary(
         runtime.stream_command("evaluate", {}, lambda: iter([terminal])),
         results_path=tmp_path / "results.json",
     )
-    assert next(stream) is terminal
     assert saved == []
-    if consume_terminal:
+    assert next(stream) is terminal
+    assert len(saved) == 1
+    if exhaust_stream:
         with pytest.raises(StopIteration):
             next(stream)
         assert len(saved) == 1
@@ -410,7 +411,7 @@ def test_evaluation_adapter_preserves_terminal_persistence_boundary(
         assert len(saved) == 1
     else:
         stream.close()
-        assert saved == []
+        assert len(saved) == 1
 
 
 def test_interrupt_is_not_retried_or_converted_into_runtime_failure():

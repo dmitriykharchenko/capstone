@@ -1097,4 +1097,113 @@ mod tests {
             .unwrap()
             .contains("python exited"));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn evaluation_persistence_outcomes_have_one_terminal_channel_frame() {
+        let _lock = PYTHON_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let input = serde_json::json!({"question": "q", "grading_notes": "g", "sources": []});
+        let progress = [
+            serde_json::json!({"event": "run_start", "retrieval_type": "hybrid", "total": 1}),
+            serde_json::json!({
+                "event": "case_start", "case_index": 1, "total": 1,
+                "retrieval_type": "hybrid", "input": input,
+            }),
+            serde_json::json!({
+                "event": "case_failure", "completed": 1, "total": 1,
+                "result": {
+                    "case_index": 1, "input": input, "retrieval_strategy": "hybrid",
+                    "retrieved_chunks": [], "generated_answer": null, "judge_scores": null,
+                    "error": {"stage": "judge", "message": "Judge evaluation failed for this case. Check backend configuration and retry."},
+                },
+            }),
+        ];
+        let complete = serde_json::json!({
+            "event": "complete", "retrieval_type": "hybrid", "completed": 1,
+            "total": 1, "succeeded": 0, "failed": 1,
+            "aggregate_scores": {
+                "context_precision": null, "context_recall": null,
+                "relevant_chunk_ranking": null, "context_utilization": null,
+                "semantic_similarity": null, "completeness": null, "hallucination_rate": null,
+            },
+        });
+        // Mirror the Python persistence boundary: success completes; a failed
+        // write emits only the sanitized error and exits nonzero.
+        for (terminal, exit_code, terminal_name) in [
+            (complete, 0, "complete"),
+            (
+                serde_json::json!({"ok": false, "error": evaluation_transport_error_message()}),
+                1,
+                "error",
+            ),
+        ] {
+            let frames = progress.iter().chain(std::iter::once(&terminal));
+            let mut contents = String::from("#!/bin/sh\n");
+            for frame in frames {
+                contents.push_str(&format!("printf '%s\\n' '{}'\n", frame));
+            }
+            contents.push_str(&format!("exit {exit_code}\n"));
+            let script = executable_script(&contents);
+            let previous = std::env::var_os("CAPSTONE_PYTHON");
+            std::env::set_var("CAPSTONE_PYTHON", &script);
+            let received = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let received_clone = Arc::clone(&received);
+            let channel = Channel::new(move |body| {
+                if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                    received_clone
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(&json).unwrap());
+                }
+                Ok(())
+            });
+
+            let result = tauri::async_runtime::block_on(evaluate_stream(
+                EvaluationRetrievalType::Hybrid,
+                vec![serde_json::from_value(input.clone()).unwrap()],
+                channel,
+            ));
+            match previous {
+                Some(value) => std::env::set_var("CAPSTONE_PYTHON", value),
+                None => std::env::remove_var("CAPSTONE_PYTHON"),
+            }
+            let _ = fs::remove_file(script);
+
+            assert_eq!(result.is_ok(), exit_code == 0);
+            let events = received.lock().unwrap();
+            let names: Vec<_> = events
+                .iter()
+                .map(|event| event["event"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                names,
+                ["runStart", "caseStart", "caseFailure", terminal_name]
+            );
+            assert_eq!(events[1]["input"], input);
+            assert_eq!(events[2]["result"], progress[2]["result"]);
+            assert_eq!(
+                events.last().unwrap(),
+                &serde_json::to_value(evaluation_stream_event(terminal)).unwrap()
+            );
+            assert_eq!(
+                names
+                    .iter()
+                    .filter(|name| matches!(**name, "complete" | "error"))
+                    .count(),
+                1
+            );
+            if let Err(error) = result {
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        "python bridge failed: {}",
+                        evaluation_transport_error_message()
+                    )
+                );
+            }
+        }
+    }
 }

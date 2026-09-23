@@ -109,7 +109,7 @@ def _run_stream(events: Any, *, safe_error: str | None = None) -> int:
 def _persisted_evaluation_stream(
     events: Any, *, results_path: str | Path | None = None
 ) -> Any:
-    """Forward evaluation events and persist only a terminal completed run."""
+    """Persist a completed evaluation before forwarding its terminal event."""
 
     from ..evaluation_results import (
         DEFAULT_EVALUATION_RESULTS_PATH,
@@ -125,7 +125,6 @@ def _persisted_evaluation_stream(
                 input_cases.append(event["input"])
             elif event_type in {"case_success", "case_failure"}:
                 results.append(event["result"])
-            yield event
             if event_type == "complete":
                 persist_evaluation_results(
                     DEFAULT_EVALUATION_RESULTS_PATH
@@ -138,6 +137,7 @@ def _persisted_evaluation_stream(
                     succeeded=event["succeeded"],
                     failed=event["failed"],
                 )
+            yield event
     finally:
         close = getattr(events, "close", None)
         if close is not None:

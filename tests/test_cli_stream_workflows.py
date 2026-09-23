@@ -284,7 +284,9 @@ def test_evaluation_visits_real_graph_once_per_frame_without_prefetch(monkeypatc
 
 
 @pytest.mark.parametrize("cut", range(9))
-def test_evaluation_close_keeps_previous_artifact_without_later_cases(tmp_path, cut):
+def test_evaluation_close_respects_persistence_boundary_without_later_cases(
+    tmp_path, cut
+):
     path = tmp_path / "results.json"
     path.write_text("previous", encoding="utf-8")
     runner = Runner()
@@ -298,7 +300,14 @@ def test_evaluation_close_keeps_previous_artifact_without_later_cases(tmp_path, 
         assert source.gi_frame is None
     assert runner.calls == calls
     assert len(calls) == min(max((cut - 1) // 2, 0), 3)
-    assert path.read_text(encoding="utf-8") == "previous"
+    if cut < 8:
+        assert path.read_text(encoding="utf-8") == "previous"
+    else:
+        assert json.loads(path.read_text(encoding="utf-8"))["summary"] == {
+            "total": 3,
+            "succeeded": 3,
+            "failed": 0,
+        }
 
 
 def test_graph_evaluation_atomic_replace_failure_does_not_replay_cases(
@@ -318,12 +327,43 @@ def test_graph_evaluation_atomic_replace_failure_does_not_replay_cases(
         commands.handle_evaluation_stream(None, request(1), runner),
         results_path=path,
     )
-    assert [next(events)["event"] for _ in range(4)][-1] == "complete"
+    assert [next(events)["event"] for _ in range(3)] == [
+        "run_start",
+        "case_start",
+        "case_success",
+    ]
     assert calls == []
     with pytest.raises(OSError, match="replace failed"):
         next(events)
     assert list(events) == []
     assert runner.calls == ["0"] and calls == [True]
+    assert path.read_text(encoding="utf-8") == "previous"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_interrupt_during_evaluation_persistence_closes_source_without_terminal(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "results.json"
+    path.write_text("previous", encoding="utf-8")
+    runner = Runner()
+    source = commands.handle_evaluation_stream(None, request(1), runner)
+    events = cli_main._persisted_evaluation_stream(source, results_path=path)
+
+    def interrupt(*_args):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(os, "replace", interrupt)
+    assert [next(events)["event"] for _ in range(3)] == [
+        "run_start",
+        "case_start",
+        "case_success",
+    ]
+    with pytest.raises(KeyboardInterrupt):
+        next(events)
+    assert source.gi_frame is None
+    assert list(events) == []
+    assert runner.calls == ["0"]
     assert path.read_text(encoding="utf-8") == "previous"
     assert list(tmp_path.iterdir()) == [path]
 

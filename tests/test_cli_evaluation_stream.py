@@ -210,9 +210,7 @@ def test_validation_and_backend_transport_failures_preserve_last_artifact(
     assert evaluation_results_path.read_text(encoding="utf-8") == previous
 
 
-def test_persists_only_after_terminal_event_is_successfully_consumed(
-    tmp_path, evaluation_results_path
-):
+def test_persists_before_terminal_event_is_yielded(tmp_path, evaluation_results_path):
     previous = '{"schema":"last-valid"}\n'
     evaluation_results_path.write_text(previous, encoding="utf-8")
 
@@ -241,13 +239,10 @@ def test_persists_only_after_terminal_event_is_successfully_consumed(
         ),
         results_path=evaluation_results_path,
     )
-    terminal = None
-    while terminal is None or terminal["event"] != "complete":
-        terminal = next(events)
-    assert evaluation_results_path.read_text(encoding="utf-8") == previous
-
-    with pytest.raises(StopIteration):
-        next(events)
+    for name in ("run_start", "case_start", "case_failure"):
+        assert next(events)["event"] == name
+        assert evaluation_results_path.read_text(encoding="utf-8") == previous
+    assert next(events)["event"] == "complete"
     assert json.loads(evaluation_results_path.read_text(encoding="utf-8"))[
         "summary"
     ] == {
@@ -255,6 +250,8 @@ def test_persists_only_after_terminal_event_is_successfully_consumed(
         "succeeded": 0,
         "total": 1,
     }
+    with pytest.raises(StopIteration):
+        next(events)
 
 
 def test_sanitizes_path_and_credential_shaped_case_errors(tmp_path):
@@ -422,3 +419,104 @@ def test_cli_main_sanitizes_evaluation_transport_exception(monkeypatch, tmp_path
         "error": "Evaluation transport failed. Check backend logs and retry.",
     }
     assert "secret" not in output.getvalue()
+
+
+@pytest.mark.parametrize("failure", [None, "serialize", "fsync", "replace"])
+def test_cli_persistence_has_one_terminal_after_unchanged_progress(
+    monkeypatch, tmp_path, evaluation_results_path, failure
+):
+    from src import evaluation_results
+
+    class FakeRunner:
+        def run(self, payload, strategy):
+            return [
+                {
+                    "case_index": 1,
+                    "input": payload[0],
+                    "retrieval_strategy": strategy,
+                    "retrieved_chunks": [],
+                    "generated_answer": None,
+                    "judge_scores": None,
+                    "error": {"stage": "judge", "message": "failed"},
+                }
+            ]
+
+    request = {
+        "command": "evaluate",
+        "stream": True,
+        "retrieval_type": "hybrid",
+        "test_cases": [{"question": "q", "grading_notes": "g", "sources": []}],
+    }
+    cfg = config(tmp_path)
+    expected = list(handle_evaluation_stream(cfg, request, FakeRunner()))
+    previous = '{"schema":"last-valid"}\n'
+    evaluation_results_path.write_text(previous, encoding="utf-8")
+    monkeypatch.setattr(
+        evaluation_results, "DEFAULT_EVALUATION_RESULTS_PATH", evaluation_results_path
+    )
+    monkeypatch.setattr(cli_main.CLIConfig, "from_env", lambda: cfg)
+    monkeypatch.setattr(cli_main, "load_dotenv_if_present", lambda: None)
+    monkeypatch.setattr(
+        "src.cli.commands.build_evaluation_runner", lambda _cfg: FakeRunner()
+    )
+    closed, writes = [], []
+
+    def source(config, request):
+        try:
+            yield from handle_evaluation_stream(config, request)
+        finally:
+            closed.append(True)
+
+    persist = evaluation_results.persist_evaluation_results
+
+    def record_write(*args, **kwargs):
+        writes.append(True)
+        return persist(*args, **kwargs)
+
+    def fail(*_args):
+        raise OSError("private persistence detail /private/evaluation")
+
+    monkeypatch.setattr(cli_main, "handle_evaluation_stream", source)
+    monkeypatch.setattr(evaluation_results, "persist_evaluation_results", record_write)
+    if failure == "serialize":
+        monkeypatch.setattr(evaluation_results, "serialize_evaluation_results", fail)
+    elif failure:
+        monkeypatch.setattr(evaluation_results.os, failure, fail)
+    monkeypatch.setattr(cli_main.sys, "stdin", io.StringIO(json.dumps(request)))
+    output = io.StringIO()
+    monkeypatch.setattr(cli_main.sys, "stdout", output)
+    emit = cli_main._emit
+
+    def assert_persisted_before_emit(event):
+        if failure is None and event.get("event") == "complete":
+            artifact = json.loads(evaluation_results_path.read_text(encoding="utf-8"))
+            assert artifact["summary"] == {"total": 1, "succeeded": 0, "failed": 1}
+            assert artifact["results"] == [expected[2]["result"]]
+            assert writes == [True]
+        emit(event)
+
+    monkeypatch.setattr(cli_main, "_emit", assert_persisted_before_emit)
+    assert cli_main.main() == (1 if failure else 0)
+    frames = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert frames[:-1] == expected[:-1]
+    terminal = (
+        {
+            "ok": False,
+            "error": "Evaluation transport failed. Check backend logs and retry.",
+        }
+        if failure
+        else expected[-1]
+    )
+    assert frames[-1] == terminal
+    assert (
+        sum(
+            frame.get("event") == "complete" or frame.get("ok") is False
+            for frame in frames
+        )
+        == 1
+    )
+    assert writes == closed == [True]
+    assert "private persistence detail" not in output.getvalue()
+    if failure:
+        assert evaluation_results_path.read_text(encoding="utf-8") == previous
+    assert list(tmp_path.iterdir()) == [evaluation_results_path]
