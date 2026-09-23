@@ -107,9 +107,11 @@ test('broker assembles PDF and adapts ordered chat/index events only at terminal
   const pdf = await broker.run(1, { token: 'p', method: 'readPdf', args: { paper_id: 'paper' } }, send);
   assert.deepEqual(pdf.data.bytes, [37, 80, 68, 70]);
   assert.equal(events.length, 0);
-  assert.equal((await broker.run(1, { token: 'c', method: 'chatStream', args: { session_id: 's', message: '?' } }, send)).ok, true);
+  assert.equal((await broker.run(1, { token: 'c', method: 'chatStream', args: { session_id: 's', turn_id: 'turn', message: '?' } }, send)).ok, true);
   assert.deepEqual(events.map((event) => event.event), ['delta', 'delta', 'done']);
-  assert.equal(events.at(-1).chatMode, 'rag');
+  assert.equal(events.at(-1).chatMode, 'native');
+  assert.equal(events.at(-1).turnId, 'turn');
+  assert.equal(events.at(-1).exchangeId, 1);
   events.length = 0;
   await broker.run(1, { token: 'i', method: 'indexPapersStream', args: {} }, send);
   assert.equal(events[0].paperId, 'p');
@@ -119,12 +121,13 @@ test('broker assembles PDF and adapts ordered chat/index events only at terminal
 });
 
 test('broker discards partial PDFs and bounds an unacknowledged renderer stream', async (t) => {
-  for (const [scenario, method, args] of [['pdf-gap', 'readPdf', { paper_id: 'p' }], ['flood', 'chatStream', { session_id: 's', message: '?' }]]) {
+  for (const [scenario, method, args] of [['pdf-gap', 'readPdf', { paper_id: 'p' }], ['flood', 'chatStream', { session_id: 's', turn_id: 'turn', message: '?' }]]) {
     const broker = new Broker(backend(t, scenario));
     let count = 0;
     const result = await broker.run(1, { token: 'x', method, args }, () => count++);
     assert.equal(result.ok, false);
     assert.ok(count <= 32);
+    if (scenario === 'flood') assert.ok(count > 0, 'valid Chat request reaches stream backpressure');
     assert.equal(result.data, undefined);
     assert.equal(broker.requests.size, 0);
   }

@@ -100,7 +100,7 @@ test('duplicate tokens cannot remove existing work and cancellation is owner-sco
   let cancelled = 0;
   const broker = new Broker({ request() { return { done: new Promise((_resolve, fail) => { reject = fail; }),
     cancel() { cancelled++; reject(new Error('private')); } }; } });
-  const payload = { token: 'x', method: 'chatStream', args: { session_id: 's', message: 'q' } };
+  const payload = { token: 'x', method: 'chatStream', args: { session_id: 's', turn_id: 'turn', message: 'q' } };
   const first = broker.run(1, payload, () => {});
   assert.equal((await broker.run(1, payload, () => {})).ok, false);
   assert.equal(broker.requests.size, 1);

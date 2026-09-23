@@ -103,3 +103,45 @@ fn canonical_aliases_cannot_overlap_data_and_read_only_roots() {
     std::os::unix::fs::symlink(&data, &alias).unwrap();
     assert!(PaperBrowsingConfig::new(&data, &resources, &alias).is_err());
 }
+
+#[tokio::test]
+async fn native_chat_opt_in_without_provider_config_keeps_canonical_reads_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let resources = temp.path().join("resources");
+    let papers = resources.join("papers");
+    let data = temp.path().join("data");
+    fs::create_dir_all(&papers).unwrap();
+    let env = HashMap::from([
+        ("CAPSTONE_APP_DATA_ROOT", data.to_str().unwrap().to_owned()),
+        (
+            "CAPSTONE_RESOURCES_DIR",
+            resources.to_str().unwrap().to_owned(),
+        ),
+        ("CAPSTONE_PAPERS_DIR", papers.to_str().unwrap().to_owned()),
+        ("CAPSTONE_NATIVE_CHAT", "1".into()),
+    ]);
+    let registry =
+        research_backend::composition::native_registry(|key| env.get(key).cloned()).await;
+    let health = registry.health();
+    assert_eq!(health["chat_mode"], "unavailable");
+    assert_eq!(health["search_enabled"], false);
+    for command in ["list_sessions", "get_messages"] {
+        assert!(
+            health["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["command"] == command && c["available"] == true)
+        );
+    }
+    for command in ["chat", "chat_stream", "search"] {
+        assert!(
+            health["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["command"] == command && c["available"] == false)
+        );
+    }
+    assert!(!health.to_string().contains(temp.path().to_str().unwrap()));
+}

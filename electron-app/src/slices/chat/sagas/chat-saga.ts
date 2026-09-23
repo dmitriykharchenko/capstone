@@ -108,13 +108,14 @@ function createChatStreamChannel(
   sessionId: string,
   message: string,
   chatStream: ChatStreamService,
+  turnId: string,
 ): EventChannel<ChatStreamEvent> {
   return eventChannel<ChatStreamEvent>((emit) => {
     let terminalEventSeen = false;
     const request = chatStream(sessionId, message, (event) => {
       terminalEventSeen ||= event.event === "done" || event.event === "error";
       emit(event);
-    });
+    }, turnId);
     request
       .catch((error: unknown) => {
         if (!terminalEventSeen) {
@@ -148,9 +149,10 @@ export function* streamChatTurn(
     return;
   }
   const sessionId = (yield* select((state) => state.chat.sessionId)) as string;
-  yield* put(appendMessage({ role: "user", content: text }));
+  const turnId = crypto.randomUUID();
+  yield* put(appendMessage({ role: "user", content: text, turn_id: turnId }));
   yield* put(chatStarted());
-  const channel = createChatStreamChannel(sessionId, text, chatStream);
+  const channel = createChatStreamChannel(sessionId, text, chatStream, turnId);
   // `take` on a channel terminates this loop once the channel emits END
   // (dispatched after the streaming invoke settles).
   try {
@@ -185,7 +187,11 @@ export function* streamChatTurn(
       } else if (event.event === "delta") {
         yield* put(chatChunk(event.delta));
       } else if (event.event === "done") {
-        yield* put(chatSucceeded(event.reply, event.chatMode, event.sources));
+        yield* put(chatSucceeded(event.reply, event.chatMode, event.sources, {
+          turn_id: event.turnId, exchange_id: event.exchangeId,
+          history_index_status: event.historyIndexStatus,
+          history_index_status_observed_at: event.historyIndexStatusObservedAt,
+        }));
         yield* put(loadSessions());
         break;
       } else if (event.event === "error") {

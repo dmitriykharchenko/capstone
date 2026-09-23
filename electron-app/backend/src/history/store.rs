@@ -22,6 +22,7 @@ pub enum HistoryError {
     Storage,
     Cancelled,
     NotFound,
+    Conflict,
 }
 pub type HistoryResult<T> = Result<T, HistoryError>;
 impl fmt::Display for HistoryError {
@@ -135,6 +136,19 @@ impl SqliteHistory {
         check_cancel(cancellation)?;
         self.prepare_root()?;
         if self.path.exists() {
+            let db = Connection::open_with_flags(&self.path, OpenFlags::new().with_read_write())?;
+            if scalar(&db, "PRAGMA application_id")? == APP_ID
+                && scalar(&db, "PRAGMA user_version")? == 1
+            {
+                db.execute("PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; BEGIN IMMEDIATE")?;
+                validate_data(&db)?;
+                db.execute(SCHEMA)?;
+                db.execute("PRAGMA user_version=2")?;
+                validate_data(&db)?;
+                let _seal = seal(cancellation)?;
+                db.execute("COMMIT")?;
+            }
+            drop(db);
             validate_data(&self.connection()?)?;
             return Ok(());
         }
@@ -182,15 +196,7 @@ impl SqliteHistory {
         nonempty(assistant)?;
         validate_sources(sources)?;
         self.write(cancellation, |db| {
-            execute(db, "INSERT INTO exchanges(session_id) VALUES(?)", &[session_id.into()])?;
-            let id = scalar(db, "SELECT last_insert_rowid()")?;
-            for (role, content) in [("user", user), ("assistant", assistant)] { execute(db, "INSERT INTO messages(session_id,role,content,exchange_id) VALUES(?,?,?,?)", &[session_id.into(), role.into(), content.into(), id.into()])?; }
-            for s in sources {
-                execute(db, "INSERT INTO exchange_sources(exchange_id,rank,paper_id,chunk_index,filename,title,page,score,snippet) VALUES(?,?,?,?,?,?,?,?,?)", &[
-                    id.into(), i64::from(s.rank).into(), s.paper_id.clone().into(), i64::from(s.chunk_index).into(), s.filename.clone().into(), s.title.clone().into(), i64::from(s.page).into(), s.score.into(), s.snippet.clone().into()
-                ])?;
-            }
-            Ok(id)
+            insert_exchange(db, session_id, user, assistant, sources)
         })
     }
     pub(super) fn write<T>(
@@ -311,6 +317,46 @@ impl SqliteHistory {
 
 pub(super) fn check_cancel(c: &Cancellation) -> HistoryResult<()> {
     c.check().map_err(|_| HistoryError::Cancelled)
+}
+
+pub(super) fn insert_exchange(
+    db: &Connection,
+    session: &str,
+    user: &str,
+    assistant: &str,
+    sources: &[SourceRecord],
+) -> HistoryResult<i64> {
+    execute(
+        db,
+        "INSERT INTO exchanges(session_id) VALUES(?)",
+        &[session.into()],
+    )?;
+    let id = scalar(db, "SELECT last_insert_rowid()")?;
+    for (role, content) in [("user", user), ("assistant", assistant)] {
+        execute(
+            db,
+            "INSERT INTO messages(session_id,role,content,exchange_id) VALUES(?,?,?,?)",
+            &[session.into(), role.into(), content.into(), id.into()],
+        )?;
+    }
+    for s in sources {
+        execute(
+            db,
+            "INSERT INTO exchange_sources(exchange_id,rank,paper_id,chunk_index,filename,title,page,score,snippet) VALUES(?,?,?,?,?,?,?,?,?)",
+            &[
+                id.into(),
+                i64::from(s.rank).into(),
+                s.paper_id.clone().into(),
+                i64::from(s.chunk_index).into(),
+                s.filename.clone().into(),
+                s.title.clone().into(),
+                i64::from(s.page).into(),
+                s.score.into(),
+                s.snippet.clone().into(),
+            ],
+        )?;
+    }
+    Ok(id)
 }
 pub(super) fn seal(c: &Cancellation) -> HistoryResult<crate::runtime::CommitPermit> {
     c.begin_commit().map_err(|e| match e {

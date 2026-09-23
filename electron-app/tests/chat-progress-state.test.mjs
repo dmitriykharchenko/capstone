@@ -30,6 +30,18 @@ const source = {
   snippet: "Evidence",
 };
 
+test('saved reply with index failure is successful and retains route IDs after hydration', () => {
+  let state = chatReducer(undefined, actions.appendMessage({ role: 'user', content: 'question', turn_id: 't' }));
+  state = chatReducer(state, actions.chatStarted());
+  const metadata = { turn_id: 't', exchange_id: 42, history_index_status: 'failed',
+    history_index_status_observed_at: { reset_epoch: 0, retrieval_revision: 2 } };
+  state = chatReducer(state, actions.chatSucceeded('saved answer', 'native', [source], metadata));
+  assert.equal(state.error, null); assert.equal(state.pending, false);
+  assert.equal(state.messages[0].exchange_id, 42); assert.equal(state.messages[1].history_index_status, 'failed');
+  state = chatReducer(state, actions.setMessages(state.messages));
+  assert.equal(state.messages[1].content, 'saved answer'); assert.deepEqual(state.messages[1].sources, [source]);
+});
+
 test("chat progress follows planner order through subanswers and final stream", () => {
   let state = chatReducer(undefined, actions.chatStarted());
   state = chatReducer(

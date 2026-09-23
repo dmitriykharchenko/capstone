@@ -16,6 +16,9 @@ use crate::{
     runtime::{Cancellation, Finalization, OperationGroup, ResetStep},
 };
 use std::future::Future;
+#[path = "exchange_coordinated.rs"]
+mod exchanges;
+pub use exchanges::HistoryIndexObservation;
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -81,11 +84,13 @@ pub struct CoordinatedIndex {
     retrieval: VectorStore,
     graph: CozoGraphStore,
     papers: NativePaperRepository,
+    history: Option<crate::history::SqliteHistory>,
 }
 #[derive(Clone, Copy)]
 enum Lane<'a> {
     Startup,
     Request(&'a OperationGroup),
+    Derived(&'a OperationGroup),
     Compensation(&'a OperationGroup),
     Reset(&'a Finalization, ResetStep),
 }
@@ -97,6 +102,11 @@ impl Lane<'_> {
         Fut: Future<Output = IndexResult<T>> + Send + 'static,
     {
         match self {
+            Self::Derived(g) => g
+                .run_derived(move |c| async move { work(c).await.map_err(Into::into) })
+                .await
+                .map_err(IndexError::from)?
+                .map_err(Into::into),
             Self::Startup => work(Cancellation::default()).await,
             Self::Request(g) => g
                 .run_mutation("index-transition", |c| async move {
@@ -170,10 +180,22 @@ impl CoordinatedIndex {
             retrieval,
             graph,
             papers,
+            history: None,
         })
     }
     pub fn gate(&self) -> &DerivedStoreGate {
         &self.gate
+    }
+    pub(crate) fn poison_derived(&self) {
+        self.gate.poison();
+    }
+    /// Caller holds the shared read gate for the entire derived operation.
+    pub(crate) async fn verify_read(&self) -> IndexResult<()> {
+        let result = self.verify_ready().await;
+        if result.is_err() {
+            self.gate.poison();
+        }
+        result
     }
     pub(super) fn papers(&self) -> NativePaperRepository {
         self.papers.clone()
@@ -311,6 +333,7 @@ impl CoordinatedIndex {
         {
             self.resolve(op, Lane::Startup, false).await?;
         }
+        self.recover_exchange_intents().await?;
         self.verify_ready().await?;
         guard.ready();
         Ok(())
@@ -383,6 +406,7 @@ impl CoordinatedIndex {
             j.validate_summary(graph.authors, graph.topics, graph.edges)
         })
         .await?;
+        self.verify_exchanges(&meta, status.exchange_count).await?;
         Ok(())
     }
     pub async fn published_paper(&self, paper: String) -> IndexResult<Option<PublishedPaper>> {
@@ -543,6 +567,7 @@ impl CoordinatedIndex {
         self.journal(lane, move |j, _| j.validate_pending(&check))
             .await?;
         match &op.kind {
+            Kind::Exchange(_) => self.resolve_exchange(op, lane).await,
             Kind::Reset { .. } => self.resolve_reset(op, lane).await,
             Kind::Paper(p) => {
                 let (desired, _) = p.desired.validate()?;

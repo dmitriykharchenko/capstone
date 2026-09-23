@@ -1,4 +1,6 @@
 use super::*;
+#[path = "exchange_tests.rs"]
+mod exchange_tests;
 use crate::retrieval::recovery_fixtures as fixtures;
 use crate::{graph as g, indexing::Readiness, retrieval as r};
 

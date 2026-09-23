@@ -21,6 +21,9 @@ use std::{
     thread::JoinHandle,
 };
 use tokio::sync::oneshot;
+#[cfg(test)]
+#[path = "chat_tests.rs"]
+mod chat_tests;
 
 /// A hard per-request preparation bound, independent of a handler's lower limit.
 const MAX_PREPARATIONS: usize = 32;
@@ -32,6 +35,7 @@ thread_local! {
 enum Phase {
     Open,
     StopRequested,
+    Authoritative,
     Finalizing,
     FinalSealed,
 }
@@ -40,6 +44,8 @@ enum Phase {
 enum Kind {
     Preparation,
     Mutation,
+    Authoritative,
+    Derived,
     Compensation,
     Reset(ResetStep),
 }
@@ -87,7 +93,11 @@ impl CancellationLink {
             return self.shared.stop(&mut state);
         }
         // Cleanup/finalization cannot be cancelled a second time.
-        if matches!(self.kind, Kind::Compensation | Kind::Reset(_)) {
+        if matches!(
+            self.kind,
+            Kind::Compensation | Kind::Reset(_) | Kind::Derived
+        ) || state.phase == Phase::Authoritative
+        {
             return false;
         }
         matches!(
@@ -97,7 +107,7 @@ impl CancellationLink {
     }
 
     pub(super) fn begin_commit(&self, token: &Arc<AtomicU8>) -> BackendResult<CommitPermit> {
-        let state = lock(&self.shared.state);
+        let mut state = lock(&self.shared.state);
         if self.kind == Kind::Preparation {
             return Err(if state.phase == Phase::StopRequested {
                 ErrorCode::Cancelled
@@ -118,7 +128,7 @@ impl CancellationLink {
         }
         // The child CAS and parent stop/admission share this lock. Stop cannot
         // win in the gap between reading the parent and sealing the child.
-        token
+        let _permit = token
             .compare_exchange(CANCELLABLE, COMMITTING, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| CommitPermit { _private: () })
             .map_err(|s| {
@@ -127,19 +137,30 @@ impl CancellationLink {
                 } else {
                     ErrorCode::Internal
                 }
-            })
+            })?;
+        if self.kind == Kind::Authoritative {
+            state.phase = Phase::Authoritative;
+            self.shared.parent.store(COMMITTING, Ordering::Release);
+        }
+        Ok(CommitPermit { _private: () })
     }
 }
 
 impl Shared {
     fn stop(&self, state: &mut State) -> bool {
-        if matches!(state.phase, Phase::Finalizing | Phase::FinalSealed) {
+        if matches!(
+            state.phase,
+            Phase::Authoritative | Phase::Finalizing | Phase::FinalSealed
+        ) {
             return false;
         }
         state.phase = Phase::StopRequested;
         self.parent.store(CANCELLED, Ordering::Release);
         for worker in state.workers.values() {
-            if matches!(worker.kind, Kind::Mutation | Kind::Preparation) {
+            if matches!(
+                worker.kind,
+                Kind::Mutation | Kind::Preparation | Kind::Authoritative
+            ) {
                 let _ = worker.token.compare_exchange(
                     CANCELLABLE,
                     CANCELLED,
@@ -299,6 +320,32 @@ impl OperationGroup {
         self.run(label, Kind::Mutation, work).await
     }
 
+    /// The child's commit seal races parent cancellation atomically and refuses
+    /// all later stop requests. Callers must verify durable evidence before success.
+    pub async fn run_authoritative_mutation<T, F, Fut>(&self, work: F) -> BackendResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(Cancellation) -> Fut + Send + 'static,
+        Fut: Future<Output = BackendResult<T>> + Send + 'static,
+    {
+        self.run("canonical-chat", Kind::Authoritative, work).await
+    }
+
+    /// One joined post-canonical child. Ordinary derived failures are data for
+    /// the canonical-evidence supervisor; abandoned work/panics remain fatal.
+    /// This cannot be used before the authoritative seal or for another Chat commit.
+    pub async fn run_derived<T, F, Fut>(&self, work: F) -> BackendResult<BackendResult<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(Cancellation) -> Fut + Send + 'static,
+        Fut: Future<Output = BackendResult<T>> + Send + 'static,
+    {
+        self.run("chat-derived", Kind::Derived, |c| async move {
+            Ok(work(c).await)
+        })
+        .await
+    }
+
     /// Only after stop/error; trusted local durable-artifact repair, not a general
     /// uncancellable execution API. Errors remain sticky even if the caller ignores them.
     pub async fn run_compensation<T, F, Fut>(
@@ -337,7 +384,7 @@ impl OperationGroup {
                 return Err(ErrorCode::Internal);
             }
             match kind {
-                Kind::Preparation | Kind::Mutation => {
+                Kind::Preparation | Kind::Mutation | Kind::Authoritative => {
                     if let Some(code) = state.failure {
                         return Err(code);
                     }
@@ -349,6 +396,9 @@ impl OperationGroup {
                     }
                 }
                 Kind::Compensation if state.phase != Phase::StopRequested => {
+                    return Err(ErrorCode::Internal);
+                }
+                Kind::Derived if state.phase != Phase::Authoritative || state.failure.is_some() => {
                     return Err(ErrorCode::Internal);
                 }
                 Kind::Reset(step)
@@ -451,7 +501,7 @@ impl OperationGroup {
         };
         if state.closed
             || state.abandoned
-            || state.phase != expected
+            || (state.phase != expected && (reset || state.phase != Phase::Authoritative))
             || !state.workers.is_empty()
             || (reset && state.reset_next != RESET_STEPS.len())
         {
@@ -506,12 +556,21 @@ impl OperationGroup {
         }
         let state = lock(&self.0.state);
         if state.abandoned {
-            return Err(ErrorCode::Internal);
+            return Err(if state.phase == Phase::Authoritative {
+                ErrorCode::OutcomeUnknown
+            } else {
+                ErrorCode::Internal
+            });
         }
         if let Some(code) = state.failure {
-            return Err(code);
+            return Err(if state.phase == Phase::Authoritative {
+                ErrorCode::OutcomeUnknown
+            } else {
+                code
+            });
         }
         match result {
+            Err(_) if state.phase == Phase::Authoritative => Err(ErrorCode::OutcomeUnknown),
             Ok(_) if state.phase != Phase::FinalSealed => Err(ErrorCode::Internal),
             Err(ErrorCode::Cancelled) if state.phase != Phase::StopRequested => {
                 Err(ErrorCode::Internal)

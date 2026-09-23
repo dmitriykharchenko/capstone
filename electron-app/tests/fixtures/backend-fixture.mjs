@@ -33,7 +33,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   } else if (command === 'chat_stream') {
     const count = scenario === 'flood' ? 40 : 2;
     for (let i = 0; i < count; i++) event('delta', { delta: 'answer' });
-    data = { session_id: params.session_id, reply: 'answer', chat_mode: 'rag', indexed: true, sources: [] };
+    data = { session_id: params.session_id, turn_id: params.turn_id, exchange_id: 1, reply: 'answer', chat_mode: 'native', indexed: true, sources: [],
+      history_index_status: 'indexed', history_index_status_observed_at: { reset_epoch: 0, retrieval_revision: 1 }, warning: null };
   } else if (command === 'index_papers_stream') {
     event('started', { completed: 0, total: 1, paper_id: 'p', filename: 'paper.pdf' });
     event('progress', { completed: 1, total: 1, paper_id: 'p', filename: 'paper.pdf', status: 'indexed', chunk_count: 1, error: null });

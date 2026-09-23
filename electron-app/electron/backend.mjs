@@ -6,6 +6,7 @@ const MESSAGES = {
   unavailable: 'This feature is not integrated in this build yet.',
   busy: 'The backend is busy. Please retry after current work finishes.',
   cancelled: 'Request cancelled.',
+  outcome_unknown: 'Chat outcome is unknown. Check saved history before explicitly retrying; no turn was replayed.',
   invalid_params: 'Invalid command parameters.',
   transport: 'The backend connection closed. The operation outcome is unknown; check its state before retrying. No operation was replayed.',
   protocol: 'The backend returned an invalid response. The operation outcome is unknown; check its state before retrying.',

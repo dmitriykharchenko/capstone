@@ -10,10 +10,12 @@ use serde_json::Value;
 mod migration;
 mod schema;
 mod store;
+mod turns;
 pub use migration::ImportReport;
 pub use store::{
     ExchangeRecord, HistoryError, HistoryResult, PaperStatusRecord, SessionRecord, SqliteHistory,
 };
+pub use turns::{Admission, CommittedTurn, ExchangeIntent, TurnRequest};
 
 pub trait HistoryStore: Send + Sync {
     fn sessions(&self) -> BackendFuture<Value>;

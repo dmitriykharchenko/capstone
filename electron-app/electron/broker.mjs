@@ -40,6 +40,9 @@ export class Broker {
       this.requests.set(key, state);
       registered = true;
       const data = await job.done;
+      if (command === 'chat' || command === 'chat_stream') {
+        requireValid(data?.session_id === payload.args.session_id && data?.turn_id === payload.args.turn_id);
+      }
       if (pdf) return { ok: true, data: pdf.result(data) };
       if (STREAMS.has(command)) {
         const event = terminalEvent(command, data);

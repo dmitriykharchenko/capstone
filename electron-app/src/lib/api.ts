@@ -88,7 +88,13 @@ export interface ChatMessage {
   content: string;
   exchange_id?: number;
   sources?: ChatSource[];
+  turn_id?: string | null;
+  history_index_status?: HistoryIndexStatus;
+  history_index_status_observed_at?: HistoryIndexObservation | null;
 }
+
+export type HistoryIndexStatus = 'indexed' | 'pending' | 'failed' | 'blocked' | 'rebuild_required';
+export interface HistoryIndexObservation { reset_epoch: number; retrieval_revision: number }
 
 export interface ChatSource {
   rank: number;
@@ -129,10 +135,15 @@ export interface HealthInfo {
 
 export interface ChatResult {
   session_id: string;
+  turn_id: string;
+  exchange_id: number;
   reply: string;
   chat_mode: string;
   indexed: boolean;
   sources: ChatSource[];
+  history_index_status: HistoryIndexStatus;
+  history_index_status_observed_at: HistoryIndexObservation | null;
+  warning: string | null;
 }
 
 export interface ChatSubquery {
@@ -172,6 +183,12 @@ export type ChatStreamEvent =
   | { event: "delta"; delta: string }
   | {
       event: "done";
+      sessionId: string;
+      turnId: string;
+      exchangeId: number;
+      historyIndexStatus: HistoryIndexStatus;
+      historyIndexStatusObservedAt: HistoryIndexObservation | null;
+      warning: string | null;
       reply: string;
       chatMode: string;
       indexed: boolean;
@@ -219,8 +236,8 @@ export interface RendererApi {
   getPaper(paperId: string): CancellablePromise<PaperInfo>;
   readPdf(paperId: string): CancellablePromise<PdfData>;
   health(): CancellablePromise<HealthInfo>;
-  chat(sessionId: string, message: string): CancellablePromise<ChatResult>;
-  chatStream(sessionId: string, message: string, onEvent: (event: ChatStreamEvent) => void): CancellablePromise<void>;
+  chat(sessionId: string, message: string, turnId?: string): CancellablePromise<ChatResult>;
+  chatStream(sessionId: string, message: string, onEvent: (event: ChatStreamEvent) => void, turnId?: string): CancellablePromise<void>;
   listSessions(): CancellablePromise<{ sessions: SessionInfo[] }>;
   getMessages(sessionId: string): CancellablePromise<{ session_id: string; messages: ChatMessage[] }>;
   search(query: string, limit?: number, sessionId?: string): CancellablePromise<{ enabled: boolean; matches: SearchMatch[]; reason?: string }>;
@@ -253,8 +270,8 @@ export const api: RendererApi = {
   getPaper: (id) => request("getPaper", id),
   readPdf: (id) => request("readPdf", id),
   health: () => request("health"),
-  chat: (id, message) => request("chat", id, message),
-  chatStream: (id, message, onEvent) => request("chatStream", id, message, onEvent),
+  chat: (id, message, turnId) => request("chat", id, message, turnId),
+  chatStream: (id, message, onEvent, turnId) => request("chatStream", id, message, onEvent, turnId),
   listSessions: () => request("listSessions"),
   getMessages: (id) => request("getMessages", id),
   search: (query, limit, id) => request("search", query, limit, id),

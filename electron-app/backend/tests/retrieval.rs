@@ -678,6 +678,21 @@ async fn canonical_history_labeling_idempotency_session_filter_hydration_and_lim
         )
         .await
         .unwrap_err(),
+        E::CanonicalMissing
+    );
+    db.execute("ALTER TABLE messages RENAME TO unreadable_messages")
+        .unwrap();
+    assert_eq!(
+        svc.search_history_typed(
+            HistorySearchRequest {
+                query: "q".into(),
+                session_id: Some("beta".into()),
+                limit: 1
+            },
+            token()
+        )
+        .await
+        .unwrap_err(),
         E::History
     );
     assert!(

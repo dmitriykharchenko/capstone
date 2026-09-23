@@ -89,7 +89,7 @@ impl Registry {
         json!({
             "ok": true, "protocol_version": VERSION, "backend": "rust",
             "stage": if self.handlers.contains_key("index_papers") { "native_indexing" } else if self.handlers.contains_key("list_papers") { "paper_browsing" } else { "foundation" },
-            "chat_mode": "unavailable", "search_enabled": self.handlers.contains_key("search"),
+            "chat_mode": if self.handlers.contains_key("chat") { "native" } else { "unavailable" }, "search_enabled": self.handlers.contains_key("search"),
             "limits": {"frame_bytes": MAX_FRAME_BYTES, "active_requests": MAX_ACTIVE_REQUESTS,
                 "session_requests": MAX_SESSION_REQUESTS},
             "commands": commands,

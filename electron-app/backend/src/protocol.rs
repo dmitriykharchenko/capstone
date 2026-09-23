@@ -71,6 +71,7 @@ pub enum ErrorCode {
     Internal,
     ResponseTooLarge,
     Cancelled,
+    OutcomeUnknown,
 }
 
 impl ErrorCode {
@@ -89,6 +90,9 @@ impl ErrorCode {
             Self::Internal => "Backend operation failed.",
             Self::ResponseTooLarge => "Output frame exceeds the byte limit; use bounded chunks.",
             Self::Cancelled => "Request cancelled.",
+            Self::OutcomeUnknown => {
+                "Chat outcome is unknown; reconcile this turn before starting a new one."
+            }
         }
     }
 }

@@ -147,7 +147,7 @@ test('main creates one isolated window/backend and validates every privileged ha
 test('reload, renderer crash and destruction detach streams but retain authoritative results', async () => {
   const h = await host();
   for (const type of ['reload', 'render-process-gone', 'destroyed']) {
-    const result = h.handlers.get('research:run')(h.event(), { token: type, method: 'chatStream', args: { session_id: 's', message: '?' } });
+    const result = h.handlers.get('research:run')(h.event(), { token: type, method: 'chatStream', args: { session_id: 's', turn_id: type, message: '?' } });
     const job = h.jobs.at(-1);
     let settled = false;
     void result.then(() => { settled = true; });
@@ -157,7 +157,8 @@ test('reload, renderer crash and destruction detach streams but retain authorita
     await Promise.resolve();
     assert.equal(settled, false);
     for (let i = 0; i < 40; i++) job.options.onEvent('delta', { delta: 'late' });
-    job.resolve({ session_id: 's', reply: 'committed', chat_mode: 'rag', indexed: true, sources: [] });
+    job.resolve({ session_id: 's', turn_id: type, exchange_id: 1, reply: 'committed', chat_mode: 'native', indexed: true, sources: [],
+      history_index_status: 'indexed', history_index_status_observed_at: { reset_epoch: 0, retrieval_revision: 1 }, warning: null });
     assert.equal((await result).ok, true);
   }
   assert.equal(h.jobs.length, 3);

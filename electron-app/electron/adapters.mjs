@@ -79,7 +79,10 @@ export function parseEvent(command, name, value) {
 export function terminalEvent(command, value) {
   if (command === 'chat_stream') {
     const result = chatResult(value);
-    return { event: 'done', reply: result.reply, chatMode: result.chat_mode, indexed: result.indexed, sources: result.sources };
+    return { event: 'done', reply: result.reply, chatMode: result.chat_mode, indexed: result.indexed, sources: result.sources,
+      sessionId: result.session_id, turnId: result.turn_id, exchangeId: result.exchange_id,
+      historyIndexStatus: result.history_index_status, historyIndexStatusObservedAt: result.history_index_status_observed_at,
+      warning: result.warning };
   }
   if (command === 'index_papers_stream') {
     const result = indexResult(value);

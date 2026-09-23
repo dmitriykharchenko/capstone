@@ -25,6 +25,56 @@ fn source(rank: u32) -> SourceRecord {
 }
 
 #[test]
+fn native_v1_upgrade_and_turn_insert_failure_leave_canonical_history_intact() {
+    use research_backend::history::TurnRequest;
+    let temp = tempfile::tempdir().unwrap();
+    let h = store(temp.path());
+    h.append_exchange_sync(
+        "old",
+        "question",
+        "answer",
+        &[source(1)],
+        &Cancellation::default(),
+    )
+    .unwrap();
+    let db = sqlite::open(h.database_path()).unwrap();
+    db.execute(
+        "DROP TABLE exchange_index_intents; DROP TABLE chat_turn_requests; PRAGMA user_version=1",
+    )
+    .unwrap();
+    drop(db);
+    h.initialize(&Cancellation::default()).unwrap();
+    assert_eq!(h.get_messages("old").unwrap()[1].sources.len(), 1);
+    let r = TurnRequest {
+        turn_id: "turn".into(),
+        session_id: "s".into(),
+        message: "question".into(),
+    };
+    h.admit_turn(&r, &Cancellation::default()).unwrap();
+    let db = sqlite::open(h.database_path()).unwrap();
+    db.execute("CREATE TRIGGER fail_intent BEFORE INSERT ON exchange_index_intents BEGIN SELECT RAISE(ABORT,'synthetic fault'); END").unwrap();
+    assert!(
+        h.append_turn(&r, "reply", &[source(1)], &Cancellation::default())
+            .is_err()
+    );
+    assert!(h.get_messages("s").unwrap().is_empty());
+    assert!(h.list_exchange_index_intents(0, 256).unwrap().is_empty());
+    db.execute("DROP TRIGGER fail_intent").unwrap();
+    let cancelled = Cancellation::default();
+    cancelled.cancel();
+    assert!(h.append_turn(&r, "reply", &[], &cancelled).is_err());
+    assert!(h.get_turn_outcome(&r).unwrap().is_none());
+    h.append_turn(&r, "reply", &[source(1)], &Cancellation::default())
+        .unwrap();
+    let outcome = h.get_turn_outcome(&r).unwrap().unwrap();
+    assert_eq!(outcome.exchange.assistant_message.sources.len(), 1);
+    assert!(
+        h.append_turn(&r, "different", &[], &Cancellation::default())
+            .is_err()
+    );
+}
+
+#[test]
 fn exchanges_messages_sessions_and_statuses_survive_reopen() {
     let temp = tempfile::tempdir().unwrap();
     let s = store(temp.path());

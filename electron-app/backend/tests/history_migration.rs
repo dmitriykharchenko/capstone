@@ -50,7 +50,7 @@ fn import_preserves_ids_sources_statuses_sequences_and_is_idempotent_after_new_w
         ),
         (2, 1, 1, 1)
     );
-    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.schema_version, 2);
     let records = s.get_messages("session").unwrap();
     assert_eq!(records[0].exchange_id, Some(7));
     assert_eq!(records[1].sources[0].snippet, "Evidence");

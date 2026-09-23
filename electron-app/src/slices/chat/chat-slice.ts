@@ -40,7 +40,7 @@ export const setMessages = createAction<[messages: ChatMessage[]]>("chat/setMess
 // message, later deltas extend it.
 export const chatChunk = createAction<[delta: string]>("chat/chunk");
 export const chatSucceeded = createAction<
-  [reply: string, chatMode: string, sources: ChatSource[]]
+  [reply: string, chatMode: string, sources: ChatSource[], metadata?: Partial<ChatMessage>]
 >("chat/succeeded");
 export const chatFailed = createAction<[error: string]>("chat/failed");
 export const chatHydrationFailed = createAction<[error: string]>("chat/hydrationFailed");
@@ -280,10 +280,12 @@ export const chatReducer: StoreReducerFunction<ChatState> = createReducer<ChatSt
   })
   .with(
     chatSucceeded,
-    (state: ChatState, action: StoreAction<[string, string, ChatSource[]]>) => {
+    (state: ChatState, action: StoreAction<[string, string, ChatSource[], Partial<ChatMessage>?]>) => {
       if (!state.pending) return state;
-      const [reply, chatMode, sources] = action.payload;
-      const messages = [...state.messages, { role: "assistant", content: reply, sources }];
+      const [reply, chatMode, sources, metadata] = action.payload;
+      const prior = state.messages.map((message, index) => index === state.messages.length - 1 && message.role === 'user'
+        ? { ...message, ...metadata } : message);
+      const messages = [...prior, { ...metadata, role: "assistant", content: reply, sources }];
       return {
         ...state,
         pending: false,

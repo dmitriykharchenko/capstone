@@ -122,7 +122,7 @@ impl Cancellation {
             })
     }
 
-    fn is_committing(&self) -> bool {
+    pub(crate) fn is_committing(&self) -> bool {
         self.state.load(Ordering::Acquire) == COMMITTING
     }
 }

@@ -209,7 +209,7 @@ impl NativeRetriever {
             if let Some(session) = session_id {
                 return history
                     .get_exchange(exchange_id, &session)
-                    .map_err(|_| RetrievalError::History);
+                    .map_err(history_error);
             }
             // Frozen HistoryStore has no ID-only lookup. Use public canonical
             // methods rather than bypassing its schema/path/source validation.
@@ -224,7 +224,7 @@ impl NativeRetriever {
                     Err(_) => return Err(RetrievalError::History),
                 }
             }
-            Err(RetrievalError::History)
+            Err(RetrievalError::CanonicalMissing)
         })
         .await?;
         let context = format!(
@@ -280,13 +280,20 @@ impl NativeRetriever {
                 results.push(
                     history
                         .get_exchange(record.exchange_id, &record.session_id)
-                        .map_err(|_| RetrievalError::History)?,
+                        .map_err(history_error)?,
                 );
             }
             check(&c)?;
             Ok(results)
         })
         .await
+    }
+}
+fn history_error(error: HistoryError) -> RetrievalError {
+    if error == HistoryError::NotFound {
+        RetrievalError::CanonicalMissing
+    } else {
+        RetrievalError::History
     }
 }
 impl Retriever for NativeRetriever {

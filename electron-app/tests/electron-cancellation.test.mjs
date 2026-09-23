@@ -10,7 +10,8 @@ import { Broker } from '../electron/broker.mjs';
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const reset = { ok: true, reset: { vector: true, bm25: true, statuses: true, graph: true },
   preserved: { pdfs: true, history: true } };
-const chat = { session_id: 's', reply: 'committed', chat_mode: 'rag', indexed: true, sources: [] };
+const chat = { session_id: 's', turn_id: 'turn', exchange_id: 1, reply: 'committed', chat_mode: 'native', indexed: true, sources: [],
+  history_index_status: 'indexed', history_index_status_observed_at: { reset_epoch: 0, retrieval_revision: 1 }, warning: null };
 const preload = await readFile(new URL('../electron/preload.cjs', import.meta.url), 'utf8');
 
 // Real framing, backend, broker and preload; only the child and Electron IPC are
@@ -148,7 +149,7 @@ for (const dispose of ['cancel', 'unload', 'owner', 'callback']) {
   test(`${dispose} detaches obsolete progress without losing a refused-cancel terminal`, async (t) => {
     const h = host(t);
     let events = 0;
-    const request = h.api.chatStream('s', '?', () => { events++; if (dispose === 'callback') throw new Error('view gone'); });
+    const request = h.api.chatStream('s', '?', () => { events++; if (dispose === 'callback') throw new Error('view gone'); }, 'turn');
     const state = observe(request.done);
     await flush();
     const child = h.children[0], { id } = child.frames[0];
@@ -196,7 +197,7 @@ test('cancelled preload requests still count toward admission until real termina
 test('progress backpressure or terminal delivery failure cannot replace a real committed result', async (t) => {
   const h = host(t);
   const events = [];
-  const outcome = h.broker.run(1, { token: 'full', method: 'chatStream', args: { session_id: 's', message: '?' } },
+  const outcome = h.broker.run(1, { token: 'full', method: 'chatStream', args: { session_id: 's', turn_id: 'turn', message: '?' } },
     (_id, event) => { events.push(event); if (event.event === 'done') throw new Error('view gone'); });
   await flush();
   const child = h.children[0], { id } = child.frames[0];

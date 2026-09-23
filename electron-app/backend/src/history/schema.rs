@@ -2,7 +2,7 @@ use super::{HistoryError, HistoryResult};
 use sqlite::{Connection, State, Value};
 
 pub(super) const APP_ID: i64 = 0x43505354;
-pub(super) const VERSION: i64 = 1;
+pub(super) const VERSION: i64 = 2;
 pub(super) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS exchanges (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, exchange_id INTEGER REFERENCES exchanges(id) ON DELETE CASCADE);
@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS paper_index_status (paper_id TEXT PRIMARY KEY, filena
 CREATE TABLE IF NOT EXISTS app_history_import (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id,id);
 CREATE INDEX IF NOT EXISTS idx_messages_exchange_id ON messages(exchange_id,id);
+CREATE TABLE IF NOT EXISTS chat_turn_requests (turn_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, request_fingerprint TEXT NOT NULL, exchange_id INTEGER UNIQUE REFERENCES exchanges(id));
+CREATE TABLE IF NOT EXISTS exchange_index_intents (exchange_id INTEGER PRIMARY KEY REFERENCES exchanges(id), payload TEXT NOT NULL);
 ";
 
 pub(super) fn query(
@@ -89,6 +91,8 @@ pub(super) fn check_schema(db: &Connection, legacy: bool) -> HistoryResult<()> {
                 "exchange_sources",
                 "paper_index_status",
                 "app_history_import",
+                "chat_turn_requests",
+                "exchange_index_intents",
             ]
             .contains(&name.as_str())
         {
@@ -127,9 +131,24 @@ pub(super) fn check_schema(db: &Connection, legacy: bool) -> HistoryResult<()> {
             ],
         ),
         ("app_history_import", vec!["id", "fingerprint"]),
+        (
+            "chat_turn_requests",
+            vec![
+                "turn_id",
+                "session_id",
+                "request_fingerprint",
+                "exchange_id",
+            ],
+        ),
+        ("exchange_index_intents", vec!["exchange_id", "payload"]),
     ] {
         let rows = query(db, &format!("PRAGMA table_info({table})"), &[])?;
-        if rows.is_empty() && legacy && table != "messages" {
+        if rows.is_empty()
+            && ((legacy && table != "messages")
+                || (scalar(db, "PRAGMA application_id")? == APP_ID
+                    && scalar(db, "PRAGMA user_version")? == 1
+                    && matches!(table, "chat_turn_requests" | "exchange_index_intents")))
+        {
             continue;
         }
         let names = rows

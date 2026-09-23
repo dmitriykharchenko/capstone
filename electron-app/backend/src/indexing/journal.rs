@@ -19,13 +19,18 @@ use std::{
 
 const MAX_RECORD: usize = 272 * 1024 * 1024;
 const MAX_VERSION: usize = 132 * 1024 * 1024;
+#[path = "exchange_journal.rs"]
+mod exchanges;
+pub(super) use exchanges::ExchangeEntry;
 const SCHEMA: &str = "
 CREATE TABLE index_meta(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
 CREATE TABLE operations(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
 CREATE TABLE active_papers(paper_id TEXT PRIMARY KEY, version_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL);
 CREATE TABLE global_labels(node_id TEXT PRIMARY KEY, payload TEXT NOT NULL);
 CREATE TABLE paper_node_memberships(paper_id TEXT NOT NULL, version_id TEXT NOT NULL, node_id TEXT NOT NULL, PRIMARY KEY(node_id,paper_id));
-PRAGMA application_id=1230523953; PRAGMA user_version=1;";
+CREATE TABLE exchange_entries(exchange_id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE exchange_scan(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
+PRAGMA application_id=1230523953; PRAGMA user_version=2;";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -98,6 +103,7 @@ impl PaperOp {
 #[serde(deny_unknown_fields)]
 pub(super) enum Kind {
     Paper(Box<PaperOp>),
+    Exchange(Box<ExchangeEntry>),
     Reset { next: Fence },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -127,6 +133,17 @@ impl Operation {
             return Err(IndexError::InvalidJournal);
         }
         match &self.kind {
+            Kind::Exchange(e) => {
+                e.validate()?;
+                if e.epoch != self.base.epoch
+                    || e.artifact.is_none()
+                    || e.complete
+                    || !matches!(self.phase, Phase::Prepared | Phase::Complete)
+                {
+                    return Err(IndexError::InvalidJournal);
+                }
+                e.artifact.as_ref().unwrap().restore(&self.base.identity)?;
+            }
             Kind::Paper(p) => {
                 p.transition.validate()?;
                 let (r, g) = p.desired.validate()?;
@@ -335,24 +352,28 @@ impl Journal {
             hook: None,
         };
         let db = this.connection(false)?;
-        if scalar(&db, "PRAGMA application_id")? != 1230523953
-            || scalar(&db, "PRAGMA user_version")? != 1
-        {
+        let version = scalar(&db, "PRAGMA user_version")?;
+        if scalar(&db, "PRAGMA application_id")? != 1230523953 || ![1, 2].contains(&version) {
             return Err(IndexError::InvalidJournal);
         }
         let tables = rows(
             &db,
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
             &[],
-            7,
+            9,
         )?;
         let expected = [
             "active_papers",
+            "exchange_entries",
+            "exchange_scan",
             "global_labels",
             "index_meta",
             "operations",
             "paper_node_memberships",
-        ];
+        ]
+        .into_iter()
+        .filter(|n| version == 2 || !matches!(*n, "exchange_entries" | "exchange_scan"))
+        .collect::<Vec<_>>();
         if tables.len() != expected.len()
             || tables
                 .iter()
@@ -365,6 +386,7 @@ impl Journal {
             .split(';')
             .map(str::trim)
             .filter(|s| s.starts_with("CREATE TABLE"))
+            .filter(|s| version == 2 || !s.starts_with("CREATE TABLE exchange_"))
         {
             let name = definition
                 .split_whitespace()
@@ -390,6 +412,17 @@ impl Journal {
         )? != 0
         {
             return Err(IndexError::InvalidJournal);
+        }
+        if version == 1 {
+            load_meta(&db)?;
+            load_op(&db)?;
+        }
+        drop(db);
+        if version == 1 {
+            this.write(c, |db| {
+                db.execute("CREATE TABLE exchange_entries(exchange_id INTEGER PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE exchange_scan(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL); PRAGMA user_version=2")?;
+                Ok(())
+            })?;
         }
         Ok(this)
     }
@@ -536,6 +569,13 @@ impl Journal {
             check_base(db,&op)?;
             let mut meta = op.base.clone(); meta.fence = fence.clone(); meta.revision = revision;
             match &op.kind {
+                Kind::Exchange(e) => {
+                    if !publish || fence != op.base.fence || revision != op.base.revision.checked_add(1).ok_or(IndexError::InvalidJournal)? {
+                        return Err(IndexError::InvalidJournal);
+                    }
+                    let mut entry = *e.clone(); entry.complete = true;
+                    exchanges::save_entry(db, &entry)?;
+                }
                 Kind::Paper(p) => {
                     if publish {
                         if fence != p.transition.forward { return Err(IndexError::InvalidJournal); }
@@ -554,7 +594,7 @@ impl Journal {
                 Kind::Reset { next } => {
                     if publish {
                         if op.phase == Phase::ResetPrepared || &fence != next { return Err(IndexError::InvalidJournal); }
-                        db.execute("DELETE FROM active_papers; DELETE FROM paper_node_memberships; DELETE FROM global_labels")?;
+                        db.execute("DELETE FROM active_papers; DELETE FROM paper_node_memberships; DELETE FROM global_labels; DELETE FROM exchange_entries; DELETE FROM exchange_scan")?;
                         meta.epoch = meta.epoch.checked_add(1).ok_or(IndexError::InvalidJournal)?;
                     } else if op.phase != Phase::ResetPrepared || fence != op.base.fence || revision != op.base.revision { return Err(IndexError::InvalidJournal); }
                 }
@@ -591,6 +631,23 @@ impl Journal {
                 return Err(IndexError::InvalidJournal);
             }
             match &op.kind {
+                Kind::Exchange(e) => {
+                    let mut expected = *e.clone();
+                    expected.complete = true;
+                    if op.phase != Phase::Complete
+                        || meta.fence != op.base.fence
+                        || meta.epoch != op.base.epoch
+                        || meta.revision
+                            != op
+                                .base
+                                .revision
+                                .checked_add(1)
+                                .ok_or(IndexError::InvalidJournal)?
+                        || exchanges::entry(&db, e.intent.exchange_id)? != Some(expected)
+                    {
+                        return Err(IndexError::InvalidJournal);
+                    }
+                }
                 Kind::Paper(p) => {
                     let published = op.phase == Phase::Complete;
                     let expected = if published {

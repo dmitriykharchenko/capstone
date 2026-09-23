@@ -15,6 +15,7 @@ pub enum RetrievalError {
     Storage,
     Cancelled,
     History,
+    CanonicalMissing,
     Provider,
     Conflict,
     UnsupportedArtifact,

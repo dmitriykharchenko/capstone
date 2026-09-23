@@ -29,7 +29,7 @@ export const paperId = (v) => {
 const limit = (v) => { positive(v); requireValid(v <= 100); return v; };
 export const testCase = object({ question: nonempty, grading_notes: nonempty, sources: array(nonempty, 1000) });
 const cases = (v) => { const result = array(testCase, 1000)(v); requireValid(result.length > 0); return result; };
-const chatArgs = object({ session_id: identifier, message: nonempty });
+const chatArgs = object({ session_id: identifier, turn_id: identifier, message: nonempty });
 
 // Renderer methods are a closed allowlist. There is no raw command/path/env API.
 export const methods = Object.freeze({
@@ -53,7 +53,19 @@ export const source = object({ rank: positive, paper_id: nonempty, chunk_index: 
   filename: nonempty, title: text, page: uint, score: number, snippet: text });
 export const sources = array(source, 35);
 export const paper = object({ id: paperId, filename: nonempty, title: text, size_bytes: uint });
-export const chatResult = object({ session_id: identifier, reply: text, chat_mode: nonempty, indexed: bool, sources });
+export const historyIndexStatus = oneOf('indexed', 'pending', 'failed', 'blocked', 'rebuild_required');
+const observation = nullable(object({ reset_epoch: uint, retrieval_revision: uint }));
+const savedWarning = oneOf('Reply saved in history. History search indexing is incomplete; no reply was rolled back. Reindex requires an explicit action.');
+export const chatResult = (value) => {
+  const result = object({ session_id: identifier, turn_id: identifier, exchange_id: positive,
+    reply: nonempty, chat_mode: oneOf('native'), indexed: bool, sources,
+    history_index_status: historyIndexStatus, history_index_status_observed_at: observation,
+    warning: nullable(savedWarning) })(value);
+  requireValid(result.indexed === (result.history_index_status === 'indexed'));
+  requireValid(result.indexed === (result.warning === null));
+  requireValid((result.history_index_status === 'blocked') === (result.history_index_status_observed_at === null));
+  return result;
+};
 export const progress = { completed: uint, total: uint };
 export const indexResult = object({ ...progress, indexed: uint, empty: uint, failed: uint, skipped: uint });
 export const score = (v) => { number(v); requireValid(v >= 0 && v <= 5); return v; };
@@ -113,7 +125,8 @@ const responses = {
   list_papers: array(paper), get_paper: paper, chat: chatResult,
   list_sessions: object({ sessions: array(object({ session_id: identifier, title: text, message_count: uint, exchange_count: uint })) }),
   get_messages: object({ session_id: identifier, messages: array(object({ role: oneOf('user', 'assistant', 'system'),
-    content: text, exchange_id: optional(uint), sources: optional(sources) })) }),
+    content: text, exchange_id: optional(uint), sources: optional(sources), turn_id: optional(nullable(identifier)),
+    history_index_status: optional(historyIndexStatus), history_index_status_observed_at: optional(observation) })) }),
   search: object({ enabled: bool, reason: optional(text), matches: array(object({ exchange_id: uint,
     session_id: identifier, user_message: text, assistant_message: text })) }),
   search_papers: object({ enabled: bool, reason: optional(text), matches: array(object({ paper_id: paperId,

@@ -129,6 +129,12 @@
           >
             <span class="font-mono text-[0.7rem] font-medium uppercase opacity-70">{m.role}</span>
             <p class="m-0 whitespace-pre-wrap text-sm">{m.content}</p>
+            {#if m.role === "assistant" && m.history_index_status && m.history_index_status !== "indexed"}
+              <p class="mt-2 text-xs text-muted-foreground" role="status">
+                Reply saved. History search indexing is {m.history_index_status.replaceAll("_", " ")};
+                the reply was not rolled back. Reindexing requires an explicit action.
+              </p>
+            {/if}
             {#if m.role === "assistant" && m.sources?.length}
               <section
                 class="mt-2 w-full border-t border-border/70 pt-2"

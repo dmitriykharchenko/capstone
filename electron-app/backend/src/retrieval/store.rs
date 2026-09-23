@@ -158,6 +158,29 @@ impl VectorStore {
     pub fn status(&self, c: &Cancellation) -> RetrievalResult<IndexStatus> {
         Ok(self.snapshot(c)?.status)
     }
+    pub fn exchange_matches(
+        &self,
+        artifact: &super::PreparedExchangeArtifact,
+        c: &Cancellation,
+    ) -> RetrievalResult<bool> {
+        let prepared = artifact.restore(&self.identity)?;
+        let db = self.connection(false)?;
+        db.execute("BEGIN")?;
+        let rows = query(
+            &db,
+            "SELECT session_id,payload FROM exchanges WHERE exchange_id=? AND length(CAST(payload AS BLOB))<=3000000",
+            &[artifact.exchange_id().into()],
+            c,
+        )?;
+        match rows.first() {
+            None => Ok(false),
+            Some(row) => {
+                let r: ExchangeVector = decode(&row[1])?;
+                r.validate(&self.identity)?;
+                Ok(text(&row[0])? == r.session_id && r == prepared.record)
+            }
+        }
+    }
     pub fn read_paper(
         &self,
         paper_id: &str,

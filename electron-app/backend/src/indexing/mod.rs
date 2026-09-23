@@ -5,7 +5,9 @@ mod journal;
 mod service;
 mod worker;
 pub use commands::install_commands;
-pub use coordinated::{CoordinatedIndex, PreparedPublication, PublishedPaper};
+pub use coordinated::{
+    CoordinatedIndex, HistoryIndexObservation, PreparedPublication, PublishedPaper,
+};
 pub use gate::{DerivedStoreGate, Readiness};
 pub use service::NativeIndexer;
 

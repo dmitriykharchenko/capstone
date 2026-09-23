@@ -48,9 +48,35 @@ pub async fn native_registry(env: impl Fn(&str) -> Option<String>) -> Registry {
         retrieval::EmbeddingIdentity,
     };
     let mut registry = browsing_registry(&env);
-    if env("CAPSTONE_NATIVE_INDEXING").as_deref() != Some("1") {
+    let chat_enabled = env("CAPSTONE_NATIVE_CHAT").as_deref() == Some("1");
+    if env("CAPSTONE_NATIVE_INDEXING").as_deref() != Some("1") && !chat_enabled {
         return registry;
     }
+    let history = if chat_enabled {
+        let configured = || {
+            let root = PathBuf::from(env("CAPSTONE_APP_DATA_ROOT")?);
+            let resources = PathBuf::from(env("CAPSTONE_RESOURCES_DIR")?);
+            let config = AppConfig::from_lookup(&root, &resources, &env).ok()?;
+            crate::history::SqliteHistory::new(&root, &config.paths().history_database).ok()
+        };
+        if let Some(h) = configured() {
+            let initialize = h.clone();
+            if tokio::task::spawn_blocking(move || {
+                initialize.initialize(&crate::runtime::Cancellation::default())
+            })
+            .await
+            .is_ok_and(|r| r.is_ok())
+            {
+                Some(h)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let configured = || {
         let root = PathBuf::from(env("CAPSTONE_APP_DATA_ROOT")?);
         let resources = PathBuf::from(env("CAPSTONE_RESOURCES_DIR")?);
@@ -97,25 +123,65 @@ pub async fn native_registry(env: impl Fn(&str) -> Option<String>) -> Registry {
         model.max_tokens = settings.chat_max_tokens;
         model.policy.timeout = settings.request_timeout;
         let embeddings = HttpEmbeddingClient::new(embedding).ok()?;
-        let metadata = PaperMetadataExtractor::from_http(HttpModelClient::new(model).ok()?);
-        Some((config, identity, embeddings, metadata))
+        let model = HttpModelClient::new(model).ok()?;
+        let metadata = PaperMetadataExtractor::from_http(model.clone());
+        Some((config, identity, embeddings, metadata, model))
     };
-    let Some((config, identity, embeddings, metadata)) = configured() else {
+    let Some((config, identity, embeddings, metadata, model)) = configured() else {
         install_commands(&mut registry, Err("unavailable"));
+        if let Some(h) = history {
+            crate::chat::install_commands(&mut registry, h, None);
+        }
         return registry;
     };
     let result = async {
-        let index = CoordinatedIndex::open(config.paths(), identity).await?;
+        let mut index = CoordinatedIndex::open(config.paths(), identity).await?;
+        if let Some(h) = &history {
+            index = index.with_history(h.clone());
+        }
         index.recover().await?;
-        NativeIndexer::new(
+        let embeddings = Arc::new(embeddings);
+        let chat = if let Some(h) = &history {
+            let retriever = index.retriever(embeddings.clone());
+            let pipeline = crate::rag::AdaptiveRag::from_config(
+                Arc::new(model),
+                Arc::new(retriever.clone()),
+                &config,
+            )
+            .map_err(|_| IndexError::Storage)?;
+            Some(crate::chat::NativeChat::new(
+                h.clone(),
+                index.clone(),
+                retriever,
+                Arc::new(pipeline),
+            ))
+        } else {
+            None
+        };
+        let indexer = NativeIndexer::new(
             index,
-            Arc::new(embeddings),
+            embeddings,
             Arc::new(metadata),
             config.providers.index_max_workers,
         )
-        .map_err(IndexError::from)
+        .map_err(IndexError::from)?;
+        Ok::<_, IndexError>((indexer, chat))
     }
     .await;
+    let result = match result {
+        Ok((indexer, chat)) => {
+            if let Some(h) = history {
+                crate::chat::install_commands(&mut registry, h, chat);
+            }
+            Ok(indexer)
+        }
+        Err(e) => {
+            if let Some(h) = history {
+                crate::chat::install_commands(&mut registry, h, None);
+            }
+            Err(e)
+        }
+    };
     install_commands(
         &mut registry,
         result.map_err(|error| {
