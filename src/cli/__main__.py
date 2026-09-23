@@ -118,25 +118,30 @@ def _persisted_evaluation_stream(
 
     input_cases = []
     results = []
-    for event in events:
-        event_type = event.get("event")
-        if event_type == "case_start":
-            input_cases.append(event["input"])
-        elif event_type in {"case_success", "case_failure"}:
-            results.append(event["result"])
-        yield event
-        if event_type == "complete":
-            persist_evaluation_results(
-                DEFAULT_EVALUATION_RESULTS_PATH
-                if results_path is None
-                else results_path,
-                input_cases=input_cases,
-                retrieval_strategy=event["retrieval_type"],
-                results=results,
-                aggregate_scores=event["aggregate_scores"],
-                succeeded=event["succeeded"],
-                failed=event["failed"],
-            )
+    try:
+        for event in events:
+            event_type = event.get("event")
+            if event_type == "case_start":
+                input_cases.append(event["input"])
+            elif event_type in {"case_success", "case_failure"}:
+                results.append(event["result"])
+            yield event
+            if event_type == "complete":
+                persist_evaluation_results(
+                    DEFAULT_EVALUATION_RESULTS_PATH
+                    if results_path is None
+                    else results_path,
+                    input_cases=input_cases,
+                    retrieval_strategy=event["retrieval_type"],
+                    results=results,
+                    aggregate_scores=event["aggregate_scores"],
+                    succeeded=event["succeeded"],
+                    failed=event["failed"],
+                )
+    finally:
+        close = getattr(events, "close", None)
+        if close is not None:
+            close()
 
 
 def _emit(payload: dict[str, Any]) -> None:
