@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import queue
 import re
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from numbers import Real
 from pathlib import Path
 from typing import Any, Iterator, Literal
 
@@ -24,12 +26,21 @@ from .chunking import (
     split_into_paragraphs,
     split_oversized_chunk,
 )
-from .embeddings import EmbeddingBackend, EmbeddingConfig, create_embeddings
+from .embeddings import (
+    EmbeddingBackend,
+    EmbeddingConfig,
+    EmbeddingError,
+    create_embeddings,
+)
 from .paper_metadata import PaperMetadata, PaperMetadataExtractor
 
 DEFAULT_PAPERS_DIRECTORY = Path("ResearchPapers")
 DEFAULT_CHROMA_DIRECTORY = Path("data/chroma")
 DEFAULT_MAX_WORKERS = 4
+DEFAULT_MAX_EMBEDDING_BATCH_INPUTS = 64
+# Conservative margin below the provider's 300,000-token aggregate limit,
+# without assuming a fixed characters-per-token ratio or adding a tokenizer.
+DEFAULT_MAX_EMBEDDING_BATCH_BYTES = 240_000
 PAPER_METADATA_VERSION = 1
 _SAFE_PAPER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -151,7 +162,11 @@ def _paper_id(path: Path) -> str:
 
 
 class PaperIndexer:
-    """Extract, chunk, embed, and replace papers in a Chroma collection."""
+    """Extract, chunk, embed, and replace papers in a Chroma collection.
+
+    Batch limits must be positive integers, and the byte budget must accommodate
+    ``max_chunk_bytes`` so every bounded chunk fits without changing chunking.
+    """
 
     def __init__(
         self,
@@ -172,6 +187,8 @@ class PaperIndexer:
         graph_store: Any | None = None,
         max_chunk_bytes: int = DEFAULT_MAX_CHUNK_BYTES,
         max_workers: int = DEFAULT_MAX_WORKERS,
+        max_embedding_batch_inputs: int = DEFAULT_MAX_EMBEDDING_BATCH_INPUTS,
+        max_embedding_batch_bytes: int = DEFAULT_MAX_EMBEDDING_BATCH_BYTES,
     ) -> None:
         if not isinstance(papers_directory, (str, Path)):
             raise TypeError("papers_directory must be a string or Path")
@@ -196,6 +213,18 @@ class PaperIndexer:
             raise TypeError("max_workers must be an integer")
         if max_workers < 1:
             raise ValueError("max_workers must be at least 1")
+        for name, value in (
+            ("max_embedding_batch_inputs", max_embedding_batch_inputs),
+            ("max_embedding_batch_bytes", max_embedding_batch_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value < 1:
+                raise ValueError(f"{name} must be positive")
+        if max_embedding_batch_bytes < max_chunk_bytes:
+            raise ValueError(
+                "max_embedding_batch_bytes must be at least max_chunk_bytes"
+            )
         self.papers_directory = Path(papers_directory)
         self.collection = (
             collection
@@ -218,30 +247,73 @@ class PaperIndexer:
         self._graph_store = graph_store
         self._max_chunk_bytes = max_chunk_bytes
         self._max_workers = max_workers
+        self._max_embedding_batch_inputs = max_embedding_batch_inputs
+        self._max_embedding_batch_bytes = max_embedding_batch_bytes
         # Serializes coordinated graph/Chroma mutations while extraction,
         # metadata generation, and embedding remain parallel per paper.
         self._write_lock = threading.Lock()
 
     def _embed_chunks(self, chunks: Sequence[str]) -> list[list[float]]:
-        """Embed all of a paper's chunks, batching into one request by default.
+        """Embed bounded batches in order, finishing before any store mutation.
 
         An injected single-text ``embedder`` keeps the per-chunk path (used by
         existing callers and tests); an injected ``batch_embedder`` or the
-        default backend embeds every chunk in a single request.
+        default backend is bounded by input count and aggregate UTF-8 bytes.
         """
 
-        if self._batch_embedder is not None:
-            return [list(vector) for vector in self._batch_embedder(chunks)]
-        if self._embedder is not None:
+        if self._batch_embedder is None and self._embedder is not None:
             return [list(self._embedder(chunk)) for chunk in chunks]
-        return [
-            list(vector)
-            for vector in create_embeddings(
-                list(chunks),
-                config=self._embedding_config,
-                backend=self._embedding_backend,
+
+        embeddings: list[list[float]] = []
+        for batch in self._embedding_batches(chunks):
+            vectors = (
+                self._batch_embedder(batch)
+                if self._batch_embedder is not None
+                else create_embeddings(
+                    batch,
+                    config=self._embedding_config,
+                    backend=self._embedding_backend,
+                )
             )
-        ]
+            materialized = [list(vector) for vector in vectors]
+            if len(materialized) != len(batch):
+                raise EmbeddingError(
+                    "Embedding backend returned a different number of vectors than texts "
+                    f"(got {len(materialized)}, expected {len(batch)})"
+                )
+            for vector in materialized:
+                if not vector or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, Real)
+                    or not math.isfinite(value)
+                    for value in vector
+                ):
+                    raise EmbeddingError("Embedding backend returned an invalid vector")
+                if embeddings and len(vector) != len(embeddings[0]):
+                    raise EmbeddingError(
+                        "All embeddings must have the same vector dimension"
+                    )
+                embeddings.append(vector)
+        return embeddings
+
+    def _embedding_batches(self, chunks: Sequence[str]) -> Iterator[list[str]]:
+        """Greedily partition already-bounded chunks without changing their text."""
+
+        batch: list[str] = []
+        batch_bytes = 0
+        for chunk in chunks:
+            chunk_bytes = len(chunk.encode("utf-8"))
+            if batch and (
+                len(batch) >= self._max_embedding_batch_inputs
+                or batch_bytes + chunk_bytes > self._max_embedding_batch_bytes
+            ):
+                yield batch
+                batch = []
+                batch_bytes = 0
+            batch.append(chunk)
+            batch_bytes += chunk_bytes
+        if batch:
+            yield batch
 
     def _resolve_pdf(self, pdf_path: str | Path) -> Path:
         if not isinstance(pdf_path, (str, Path)):
@@ -516,6 +588,8 @@ def index_papers_directory(
 
 __all__ = [
     "DEFAULT_CHROMA_DIRECTORY",
+    "DEFAULT_MAX_EMBEDDING_BATCH_BYTES",
+    "DEFAULT_MAX_EMBEDDING_BATCH_INPUTS",
     "DEFAULT_MAX_WORKERS",
     "DEFAULT_PAPERS_DIRECTORY",
     "ExtractedPage",
