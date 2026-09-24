@@ -320,9 +320,18 @@ class OrchestrationRuntime:
         for agent_id in tuple(self.active):
             self._close_active(agent_id)
 
+    def _retire_fenced(self, snapshot: Checkpoint):
+        # Durable slots may already be reusable after a lost acknowledgement.
+        # Retire their physical owners before any reconciliation or admission.
+        for agent_id, active in tuple(self.active.items()):
+            if self._fenced(active.agent, snapshot):
+                self._close_active(agent_id)
+
     def _dispatch(self, agent: AgentState, snapshot: Checkpoint):
         if self._fenced(agent, self.load()):
             return
+        if agent.agent_id in self.active or len(self.active) >= self.limits.concurrency:
+            raise RuntimeError("Retire owned attempts before dispatch")
         if agent.kind is AgentKind.QUESTION:
             question = next(
                 q for q in snapshot.questions if q.question_id == agent.question_id
@@ -362,21 +371,39 @@ class OrchestrationRuntime:
             for a in old.agents
         ):
             return old
+        if isinstance(signal, Reconcile):
+            self._retire_fenced(old)
         candidate = transition(old, signal, self.limits)
         if candidate == old:
+            self._retire_notified(signal, old)
             return old
         try:
             result = self._commit(candidate, type(signal).__name__)
-        except TransitionConflictError:
-            return self.load()
+        except BaseException as error:
+            # A raised commit may still be durable. A failed reload leaves the
+            # handle owned; the next reconciliation must fence it before reuse.
+            result = self.load()
+            self._retire_notified(signal, result)
+            if not isinstance(error, TransitionConflictError):
+                raise
+        self._retire_notified(signal, result)
+        return result
+
+    def _retire_notified(self, signal: Signal, snapshot: Checkpoint):
         if isinstance(signal, AgentCompleted):
             active = self.active.get(signal.agent_id)
-            if active is not None and active.agent.attempt == signal.attempt:
-                # Retire this acknowledged attempt before reconciliation can reuse
-                # its slot or replace its handle with a retry. Stale hints cannot
-                # close a newer attempt, and rejected commits keep their ownership.
+            if (
+                active is not None
+                and active.agent.attempt == signal.attempt
+                and any(
+                    a.agent_id == signal.agent_id
+                    and a.attempt == signal.attempt
+                    and a.kind is not AgentKind.FINALIZER
+                    and a.status in (WorkStatus.COMPLETED, WorkStatus.FAILED)
+                    for a in snapshot.agents
+                )
+            ):
                 self._close_active(signal.agent_id)
-        return result
 
     def _failure(self, agent: AgentState):
         if self._fenced(agent, self.load()):
@@ -578,6 +605,7 @@ class OrchestrationRuntime:
                         agent,
                     )
             old = self.load()
+            self._retire_fenced(old)
             candidate = transition(old, Reconcile(), self.limits)
             new = old
             if candidate != old:

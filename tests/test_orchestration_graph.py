@@ -3,7 +3,7 @@
 import json
 import sqlite3
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from itertools import permutations
 
 import pytest
@@ -787,6 +787,323 @@ def test_rejected_notification_commit_keeps_owned_attempt(
     h.hold.clear()
     h.done()
     assert_one_terminal(h)
+
+
+def owned_notification(harness, owned_execution, failed, close_error=None):
+    h = harness(count=8)
+    executor = owned_execution(h, close_error)
+    h.hold = {f"Question {i}" for i in range(8)}
+    h.until(
+        lambda s: (
+            len(s.questions) == 8
+            and len(h.runtime.active) == 4
+            and all(
+                a.agent.kind is AgentKind.QUESTION for a in h.runtime.active.values()
+            )
+        )
+    )
+    active = next(iter(h.runtime.active.values()))
+    agent = active.agent
+    if not failed:
+        dispatch = next(
+            d for d in executor.calls.values() if d.scope.agent_id == agent.agent_id
+        )
+        dispatch.tools.answer_question(
+            agent.question_id, "Durable answer", (), call_id="lost-ack-answer"
+        )
+    return h, executor, active, AgentCompleted(agent.agent_id, agent.attempt, failed)
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("close_error", [None, "iterator", "join"])
+@pytest.mark.parametrize(
+    "action", ["duplicate", "step", "timeout", "discard", "cancel", "close"]
+)
+def test_ambiguous_notification_owns_resources_until_durable_retirement(
+    harness, owned_execution, monkeypatch, committed, failed, close_error, action
+):
+    h, executor, active, signal = owned_notification(
+        harness, owned_execution, failed, close_error
+    )
+    original = tuple(h.runtime.active.values())
+    before = h.runtime.load()
+    commit = h.store.commit
+
+    def uncertain_commit(*args, **kwargs):
+        if committed:
+            commit(*args, **kwargs)
+        raise RuntimeError("Synthetic commit acknowledgement failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(h.store, "commit", uncertain_commit)
+        with pytest.raises(RuntimeError, match="acknowledgement"):
+            h.runtime.notify(signal)
+    durable = h.runtime.load()
+    if committed:
+        expected = transition(before, signal, h.limits)
+        assert durable.agents == expected.agents
+        assert durable.questions == expected.questions
+        assert active.agent.agent_id not in h.runtime.active
+    else:
+        assert durable == before
+        assert h.runtime.active[active.agent.agent_id] is active
+    assert active.handle.closed == active.handle.joined == int(committed)
+    executor.assert_owned()
+
+    if action in ("duplicate", "step"):
+        if action == "duplicate" or not committed:
+            snapshot = h.runtime.notify(signal)
+            assert h.runtime.notify(signal) == snapshot
+        count = len(executor.handles)
+        h.until(lambda s: len(executor.handles) > count)
+        assert active.handle.closed == active.handle.joined == 1
+        if failed:
+            replacement = h.runtime.active[active.agent.agent_id]
+            assert replacement.agent.attempt == active.agent.attempt + 1
+            assert replacement.handle is not active.handle
+        snapshot = h.runtime.load()
+        for hint in (signal, AgentCompleted(signal.agent_id, signal.attempt + 2)):
+            assert h.runtime.notify(hint) == snapshot
+            executor.assert_owned()
+        h.hold.clear()
+        h.done()
+        assert_one_terminal(h)
+    elif action == "timeout":
+        h.time += 11
+        h.until(lambda s: all(a.handle.closed for a in original))
+        h.hold.clear()
+        h.done()
+        assert_one_terminal(h)
+    elif action == "discard":
+        discarded = h.runtime.discard()
+        assert h.runtime.discard() == discarded
+        assert h.runtime.notify(signal) == discarded
+        assert_one_terminal(h, "discarded")
+        assert h.publisher.writes == 0
+    else:
+        if action == "cancel":
+
+            def cancel(*args):
+                raise KeyboardInterrupt("Synthetic cancellation")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(h.publisher, "lookup", cancel)
+                with pytest.raises(RuntimeError, match="resume explicitly"):
+                    h.runtime.step()
+        h.runtime.close()
+        h.runtime.close()
+        assert h.runtime.load().run.status is RunStatus.INTERRUPTED
+        assert h.publisher.writes == 0
+    executor.assert_owned()
+    assert not h.runtime.active
+    assert executor.peak == 4
+    assert all(a.handle.closed == a.handle.joined == 1 for a in original)
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("recovery", ["duplicate", "step", "reconcile", "close"])
+def test_ambiguous_notification_reload_failure_retains_ownership(
+    harness, owned_execution, monkeypatch, committed, failed, recovery
+):
+    h, executor, active, signal = owned_notification(harness, owned_execution, failed)
+    commit = h.store.commit
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("Synthetic reload unavailable")
+
+    with monkeypatch.context() as patch:
+
+        def uncertain_commit(*args, **kwargs):
+            if committed:
+                commit(*args, **kwargs)
+            patch.setattr(h.store, "load", unavailable)
+            raise RuntimeError("Synthetic commit acknowledgement failure")
+
+        patch.setattr(h.store, "commit", uncertain_commit)
+        with pytest.raises(RuntimeError, match="reload unavailable"):
+            h.runtime.notify(signal)
+    assert h.runtime.active[active.agent.agent_id] is active
+    assert active.handle.closed == 0
+    executor.assert_owned()
+    if recovery == "duplicate":
+        snapshot = h.runtime.notify(signal)
+        assert h.runtime.notify(signal) == snapshot
+        assert active.handle.closed == 1
+    elif recovery == "reconcile":
+        h.runtime.notify(Reconcile())
+        assert active.handle.closed == int(committed)
+    elif recovery == "step":
+        h.runtime.step()
+        assert active.handle.closed == int(committed)
+        if committed:
+            count = len(executor.handles)
+            h.until(
+                lambda s: len(executor.handles) > count or len(h.runtime.active) == 4
+            )
+    executor.assert_owned()
+    h.runtime.close()
+    h.runtime.close()
+    executor.assert_owned()
+    assert not h.runtime.active
+    assert active.handle.closed == active.handle.joined == 1
+    assert executor.peak == 4
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize(
+    "error", [RuntimeError, TransitionConflictError, KeyboardInterrupt]
+)
+def test_ambiguous_intake_notification_resolves_errors_and_cancellation(
+    harness, owned_execution, monkeypatch, committed, failed, error
+):
+    h = harness(count=0)
+    executor = owned_execution(h)
+    h.until(lambda s: bool(h.runtime.active))
+    active = next(iter(h.runtime.active.values()))
+    signal = AgentCompleted(active.agent.agent_id, active.agent.attempt, failed)
+    commit = h.store.commit
+
+    def uncertain_commit(*args, **kwargs):
+        if committed:
+            commit(*args, **kwargs)
+        raise error("Synthetic acknowledgement failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(h.store, "commit", uncertain_commit)
+        if error is TransitionConflictError:
+            assert h.runtime.notify(signal) == h.runtime.load()
+        else:
+            with pytest.raises(error, match="acknowledgement"):
+                h.runtime.notify(signal)
+    assert active.handle.closed == active.handle.joined == int(committed)
+    executor.assert_owned()
+    snapshot = h.runtime.notify(signal)
+    assert h.runtime.notify(signal) == snapshot
+    h.done()
+    executor.assert_owned()
+    assert active.handle.closed == active.handle.joined == 1
+    assert_one_terminal(h, "failed" if failed else "done")
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+def test_ambiguous_retry_notification_never_retires_a_mismatched_attempt(
+    harness, owned_execution, monkeypatch, committed, failed
+):
+    h, executor, original, stale = owned_notification(harness, owned_execution, True)
+    h.runtime.notify(stale)
+    count = len(executor.handles)
+    h.until(lambda s: len(executor.handles) > count)
+    active = h.runtime.active[stale.agent_id]
+    assert active.agent.attempt == stale.attempt + 1
+    if not failed:
+        dispatch = next(
+            d
+            for d in executor.calls.values()
+            if d.scope.agent_id == stale.agent_id
+            and d.scope.attempt == active.agent.attempt
+        )
+        dispatch.tools.answer_question(
+            active.agent.question_id, "Retry answer", (), call_id="retry-answer"
+        )
+    signal = AgentCompleted(stale.agent_id, active.agent.attempt, failed)
+    commit = h.store.commit
+
+    def uncertain_commit(*args, **kwargs):
+        if committed:
+            commit(*args, **kwargs)
+        raise RuntimeError("Synthetic acknowledgement failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(h.store, "commit", uncertain_commit)
+        for hint in (stale, AgentCompleted(signal.agent_id, signal.attempt + 1)):
+            assert h.runtime.notify(hint) == h.runtime.load()
+            assert active.handle.closed == 0
+        with pytest.raises(RuntimeError, match="acknowledgement"):
+            h.runtime.notify(signal)
+    assert active.handle.closed == active.handle.joined == int(committed)
+    assert original.handle.closed == original.handle.joined == 1
+    executor.assert_owned()
+    snapshot = h.runtime.notify(signal)
+    assert h.runtime.notify(stale) == h.runtime.notify(signal) == snapshot
+    h.hold.clear()
+    h.done()
+    executor.assert_owned()
+    assert active.handle.closed == active.handle.joined == 1
+    assert_one_terminal(h)
+
+
+def test_ambiguous_notification_reload_fences_newer_durable_attempt(
+    harness, owned_execution, monkeypatch
+):
+    h, executor, active, signal = owned_notification(harness, owned_execution, True)
+    commit = h.store.commit
+
+    def uncertain_commit(*args, **kwargs):
+        snapshot = commit(*args, **kwargs)
+        commit(
+            transition(snapshot, Reconcile(), h.limits), operation_id="advanced-retry"
+        )
+        raise RuntimeError("Synthetic acknowledgement failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(h.store, "commit", uncertain_commit)
+        with pytest.raises(RuntimeError, match="acknowledgement"):
+            h.runtime.notify(signal)
+    durable = h.runtime.load()
+    newer = next(a for a in durable.agents if a.agent_id == signal.agent_id)
+    assert newer.attempt == active.agent.attempt + 1
+    assert newer.status is WorkStatus.QUEUED
+    assert active.handle.closed == 0
+    assert h.runtime.notify(signal) == durable
+    assert active.handle.closed == 0
+    executor.assert_owned()
+    h.runtime.step()
+    replacement = h.runtime.active[signal.agent_id]
+    assert replacement.agent == replace(newer, status=WorkStatus.RUNNING)
+    assert active.handle.closed == active.handle.joined == 1
+    assert replacement.handle.closed == 0
+    assert h.runtime.notify(signal) == h.runtime.load()
+    executor.assert_owned()
+    h.runtime.close()
+    executor.assert_owned()
+    assert replacement.handle.closed == replacement.handle.joined == 1
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_dispatch_cannot_replace_or_admit_over_unretired_owned_attempt(
+    harness, owned_execution, failed
+):
+    h, executor, active, signal = owned_notification(harness, owned_execution, failed)
+    snapshot = h.store.commit(
+        transition(h.runtime.load(), signal, h.limits), operation_id="external-result"
+    )
+    count = len(executor.handles)
+    for index in range(2 if failed else 1):
+        snapshot = h.store.commit(
+            transition(snapshot, Reconcile(), h.limits),
+            operation_id=f"external-reconcile-{index}",
+        )
+    agent = next(
+        a
+        for a in snapshot.agents
+        if a.status is WorkStatus.RUNNING
+        and (a.agent_id not in h.runtime.active or a.attempt > active.agent.attempt)
+    )
+    with pytest.raises(RuntimeError, match="Retire owned attempts"):
+        h.runtime._dispatch(agent, snapshot)
+    assert len(executor.handles) == count
+    assert h.runtime.active[active.agent.agent_id] is active
+    assert active.handle.closed == 0
+    executor.assert_owned()
+    h.runtime.step()
+    assert active.handle.closed == active.handle.joined == 1
+    executor.assert_owned()
+    h.runtime.close()
+    executor.assert_owned()
 
 
 @pytest.mark.parametrize("boundary", range(43))
