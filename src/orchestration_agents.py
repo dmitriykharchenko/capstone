@@ -268,14 +268,16 @@ def run_handler(
     if not set(answer.evidence_ids) <= {e.evidence_id for e in retrieved.evidence}:
         raise ToolError("Handler cited unknown evidence")
     # Validate the entire model response before committing public answer/followups.
+    # The answer receipt is the recovery barrier: no completed answer may lose
+    # follow-ups if its worker stops before acknowledging completion.
+    added, warnings = _add_proposals(
+        tools, answer.followups, parent_id=question.question_id
+    )
     answered = tools.answer_question(
         question.question_id,
         answer.answer,
         answer.evidence_ids,
         call_id="handler-answer",
-    )
-    added, warnings = _add_proposals(
-        tools, answer.followups, parent_id=question.question_id
     )
     if not retrieved.evidence:
         warnings = tuple(sorted({*warnings, "empty_evidence"}))
