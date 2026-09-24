@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import threading
 from dataclasses import asdict
 from itertools import permutations
 
@@ -183,6 +184,111 @@ class Executor:
         return handle
 
 
+class OwnedHandle(Handle):
+    """Nonblocking iterator with a real worker reclaimed by synchronous close."""
+
+    def __init__(self, iterator, close_error):
+        self.iterator_live = False
+        self.joined = 0
+        self.stop = threading.Event()
+        self.close_error = close_error
+        super().__init__(self.work(iterator))
+        next(self.iterator)
+        self.thread = threading.Thread(target=self.stop.wait)
+        self.thread.start()
+
+    def work(self, iterator):
+        self.iterator_live = True
+        try:
+            yield None
+            yield from iterator
+        finally:
+            self.iterator_live = False
+            if self.close_error == "iterator":
+                raise RuntimeError("private iterator close failure")
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            # Even an executor reporting a cleanup error must reclaim its work.
+            self.stop.set()
+            self.joined += 1
+            self.thread.join(timeout=5)
+            assert not self.thread.is_alive()
+            if self.close_error == "join":
+                raise RuntimeError("private join acknowledgement failure")
+
+
+class OwnedExecutor(Executor):
+    def __init__(self, h, close_error):
+        super().__init__(h.work)
+        self.h = h
+        self.close_error = close_error
+        self.peak = 0
+
+    def submit(self, operation_id, dispatch):
+        assert operation_id not in self.calls
+        self.calls[operation_id] = dispatch
+        handle = OwnedHandle(self.factory(dispatch), self.close_error)
+        self.handles.append(handle)
+        live = sum(h.thread.is_alive() for h in self.handles)
+        self.peak = max(self.peak, live)
+        assert live <= self.h.limits.concurrency
+        assert sum(h.iterator_live for h in self.handles) <= self.h.limits.concurrency
+        return handle
+
+    def assert_owned(self):
+        active = {a.handle for a in self.h.runtime.active.values()}
+        assert len(active) <= self.h.limits.concurrency
+        assert {h for h in self.handles if h.thread.is_alive()} == active
+        assert {h for h in self.handles if h.iterator_live} == active
+        for handle in self.handles:
+            assert handle.closed == handle.joined == int(handle not in active)
+
+
+@pytest.fixture
+def owned_execution(monkeypatch):
+    executors = []
+    before = set(threading.enumerate())
+
+    def install(h, close_error=None):
+        executor = OwnedExecutor(h, close_error)
+        executors.append(executor)
+        h.executor = h.runtime.executor = executor
+        step = h.runtime.step
+
+        def checked_step():
+            try:
+                return step()
+            finally:
+                executor.assert_owned()
+
+        monkeypatch.setattr(h.runtime, "step", checked_step)
+        return executor
+
+    yield install
+    try:
+        for executor in executors:
+            try:
+                executor.h.runtime.close()
+                executor.assert_owned()
+            finally:
+                # A failing ownership assertion must never leave test workers alive.
+                for handle in executor.handles:
+                    try:
+                        if not handle.closed:
+                            handle.close()
+                    except Exception:
+                        pass
+                    finally:
+                        handle.stop.set()
+                        handle.thread.join(timeout=5)
+                        assert not handle.thread.is_alive()
+    finally:
+        assert set(threading.enumerate()) == before
+
+
 class Harness:
     def __init__(self, tmp_path, *, count=2, limits=Limits(), followups=False):
         self.store = SQLiteOrchestrationStore(tmp_path / "orchestration.sqlite3")
@@ -275,6 +381,7 @@ class Harness:
             snapshot = self.runtime.load()
             assert len(snapshot.questions) <= 8
             assert sum(a.status is WorkStatus.RUNNING for a in snapshot.agents) <= 4
+            assert len(self.runtime.active) <= self.limits.concurrency
             assert max((q.depth for q in snapshot.questions), default=0) <= 2
             for q in snapshot.questions:
                 assert sum(a.question_id == q.question_id for a in snapshot.agents) <= 1
@@ -395,9 +502,12 @@ def test_completion_permutations_and_concurrency_admission(harness, order):
 
 
 @pytest.mark.parametrize("concurrency", [1, 2, 3, 4])
-def test_lower_concurrency_and_nested_followups(harness, concurrency):
+def test_lower_concurrency_and_nested_followups(harness, owned_execution, concurrency):
     h = harness(count=3, followups=True, limits=Limits(concurrency=concurrency))
+    executor = owned_execution(h)
     final = h.done()
+    executor.assert_owned()
+    assert executor.peak <= concurrency
     assert len(final.questions) == 8
     assert max(q.depth for q in final.questions) == 2
     for event in h.store.events(*ARGS, limit=4096):
@@ -465,6 +575,218 @@ def test_timeouts_close_handles_and_obey_retry_budget(harness):
     final = h.done()
     assert final.questions[0].status is WorkStatus.FAILED
     assert all(handle.closed == 1 for handle in h.executor.handles)
+
+
+def assert_one_terminal(h, kind="done"):
+    snapshot = h.runtime.load()
+    for _ in range(2):
+        assert h.runtime.step() == snapshot
+    assert len(h.sink.of_kind(kind)) == 1
+    assert sum(len(h.sink.of_kind(k)) for k in ("done", "failed", "discarded")) == 1
+    assert (
+        sum(
+            event.kind.value in ("completed", "failed", "discarded")
+            for event in h.store.events(*ARGS, limit=4096)
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("close_error", [None, "iterator", "join"])
+def test_notifications_retire_owned_attempt_before_admission(
+    harness, owned_execution, failed, reverse, close_error
+):
+    h = harness(count=8)
+    executor = owned_execution(h, close_error)
+    h.hold = {f"Question {i}" for i in range(8)}
+    h.until(
+        lambda s: (
+            len(s.questions) == 8
+            and len(h.runtime.active) == 4
+            and all(
+                a.agent.kind is AgentKind.QUESTION for a in h.runtime.active.values()
+            )
+        )
+    )
+    attempts = list(h.runtime.active.values())
+    for active in reversed(attempts) if reverse else attempts:
+        agent = active.agent
+        dispatch = next(
+            d
+            for d in executor.calls.values()
+            if d.scope.agent_id == agent.agent_id and d.scope.attempt == agent.attempt
+        )
+        if not failed:
+            dispatch.tools.answer_question(
+                agent.question_id, "Durable answer", (), call_id="notified-answer"
+            )
+        signal = AgentCompleted(agent.agent_id, agent.attempt, failed)
+        snapshot = h.runtime.notify(signal)
+        assert active.handle.closed == active.handle.joined == 1
+        assert agent.agent_id not in h.runtime.active
+        executor.assert_owned()
+        assert h.runtime.notify(signal) == snapshot
+        assert (
+            h.runtime.notify(AgentCompleted(agent.agent_id, agent.attempt, not failed))
+            == snapshot
+        )
+        count = len(executor.handles)
+        h.until(lambda s: len(executor.handles) > count)
+        if failed:
+            replacement = h.runtime.active[agent.agent_id]
+            assert replacement.agent.attempt == agent.attempt + 1
+            assert replacement.handle is not active.handle
+        snapshot = h.runtime.load()
+        for hint in (
+            signal,
+            AgentCompleted(agent.agent_id, agent.attempt + 2),
+            AgentCompleted("missing", 0),
+        ):
+            assert h.runtime.notify(hint) == snapshot
+            executor.assert_owned()
+    h.hold.clear()
+    assert h.done().run.status is RunStatus.COMPLETED
+    assert_one_terminal(h)
+    assert executor.peak == 4
+    executor.assert_owned()
+    assert not h.runtime.active
+    for active in attempts:
+        snapshot = h.runtime.load()
+        assert (
+            h.runtime.notify(
+                AgentCompleted(active.agent.agent_id, active.agent.attempt)
+            )
+            == snapshot
+        )
+    assert h.publisher.writes == 1
+
+
+@pytest.mark.parametrize("mode", ["timeout", "discard", "close", "cancel", "finalize"])
+@pytest.mark.parametrize("close_error", [None, "iterator", "join"])
+def test_owned_resources_reclaimed_on_every_shutdown_path(
+    harness, owned_execution, mode, close_error
+):
+    h = harness(count=4)
+    executor = owned_execution(h, close_error)
+    h.hold = {f"Question {i}" for i in range(4)}
+    h.until(
+        lambda s: (
+            len(h.runtime.active) == 4
+            and all(
+                a.agent.kind is AgentKind.QUESTION for a in h.runtime.active.values()
+            )
+        )
+    )
+    original = list(h.runtime.active.values())
+    if mode == "timeout":
+        h.time += 11
+        h.until(lambda s: all(a.handle.closed for a in original))
+        assert all(a.handle.joined == 1 for a in original)
+        h.hold.clear()
+        h.done()
+        assert_one_terminal(h)
+    elif mode == "discard":
+        discarded = h.runtime.discard()
+        assert h.runtime.discard() == discarded
+        for active in original:
+            assert (
+                h.runtime.notify(
+                    AgentCompleted(active.agent.agent_id, active.agent.attempt)
+                )
+                == discarded
+            )
+        assert_one_terminal(h, "discarded")
+        assert h.publisher.writes == 0
+    elif mode in ("close", "cancel"):
+        if mode == "cancel":
+
+            def cancel():
+                raise KeyboardInterrupt("private cancellation")
+
+            original[0].handle.poll = cancel
+            with pytest.raises(RuntimeError, match="resume explicitly"):
+                h.runtime.step()
+        else:
+            h.runtime.close()
+            h.runtime.close()
+        assert h.runtime.load().run.status is RunStatus.INTERRUPTED
+        executor.assert_owned()
+        assert not h.runtime.active
+        h.hold.clear()
+        h.restart()
+        h.done()
+        assert_one_terminal(h)
+    else:
+        h.hold.clear()
+        h.until(lambda s: len(h.sink.of_kind("delta")) == 1)
+        finalizer = next(iter(h.runtime.active.values()))
+        assert finalizer.agent.kind is AgentKind.FINALIZER
+        snapshot = h.runtime.load()
+        for failed in (False, True):
+            assert (
+                h.runtime.notify(
+                    AgentCompleted(
+                        finalizer.agent.agent_id, finalizer.agent.attempt, failed
+                    )
+                )
+                == snapshot
+            )
+            executor.assert_owned()
+        h.done()
+        assert finalizer.handle.closed == finalizer.handle.joined == 1
+        assert_one_terminal(h)
+    executor.assert_owned()
+    assert not h.runtime.active
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_intake_notification_retires_owned_handle(harness, owned_execution, failed):
+    h = harness(count=0)
+    executor = owned_execution(h)
+    h.until(lambda s: bool(h.runtime.active))
+    active = next(iter(h.runtime.active.values()))
+    signal = AgentCompleted(active.agent.agent_id, active.agent.attempt, failed)
+    snapshot = h.runtime.notify(signal)
+    executor.assert_owned()
+    assert active.handle.closed == active.handle.joined == 1
+    assert h.runtime.notify(signal) == snapshot
+    h.done()
+    assert_one_terminal(h, "failed" if failed else "done")
+
+
+def test_rejected_notification_commit_keeps_owned_attempt(
+    harness, owned_execution, monkeypatch
+):
+    h = harness(count=1)
+    executor = owned_execution(h)
+    h.hold.add("Question 0")
+    h.until(
+        lambda s: any(
+            a.agent.kind is AgentKind.QUESTION for a in h.runtime.active.values()
+        )
+    )
+    active = next(
+        a for a in h.runtime.active.values() if a.agent.kind is AgentKind.QUESTION
+    )
+    signal = AgentCompleted(active.agent.agent_id, active.agent.attempt, True)
+    snapshot = h.runtime.load()
+
+    def conflict(*args):
+        raise TransitionConflictError("Concurrent notification")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(h.runtime, "_commit", conflict)
+        assert h.runtime.notify(signal) == snapshot
+    executor.assert_owned()
+    assert active.handle.closed == 0
+    h.runtime.notify(signal)
+    assert active.handle.closed == active.handle.joined == 1
+    executor.assert_owned()
+    h.hold.clear()
+    h.done()
+    assert_one_terminal(h)
 
 
 @pytest.mark.parametrize("boundary", range(43))

@@ -369,6 +369,13 @@ class OrchestrationRuntime:
             result = self._commit(candidate, type(signal).__name__)
         except TransitionConflictError:
             return self.load()
+        if isinstance(signal, AgentCompleted):
+            active = self.active.get(signal.agent_id)
+            if active is not None and active.agent.attempt == signal.attempt:
+                # Retire this acknowledged attempt before reconciliation can reuse
+                # its slot or replace its handle with a retry. Stale hints cannot
+                # close a newer attempt, and rejected commits keep their ownership.
+                self._close_active(signal.agent_id)
         return result
 
     def _failure(self, agent: AgentState):
