@@ -6,8 +6,10 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 EVALUATION_RESULTS_SCHEMA = "rag-evaluation-results"
 EVALUATION_RESULTS_SCHEMA_VERSION = 1
@@ -70,10 +72,15 @@ def persist_evaluation_results(
     aggregate_scores: Mapping[str, float | None],
     succeeded: int,
     failed: int,
-) -> None:
-    """Atomically replace ``path`` with one completed evaluation artifact."""
+) -> Path:
+    """Publish a new dated sibling of the filename template; never replace a file."""
 
-    target = Path(path)
+    template = Path(path)
+    now = datetime.now(timezone.utc)
+    timestamp = f"{now.year:04d}" + now.strftime("-%m-%dT%H-%M-%S.%fZ")
+    target = template.with_name(
+        f"{template.stem}_{timestamp}_{uuid4()}{template.suffix}"
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     artifact = evaluation_results_artifact(
         input_cases=input_cases,
@@ -91,7 +98,7 @@ def persist_evaluation_results(
             encoding="utf-8",
             newline="\n",
             dir=target.parent,
-            prefix=f".{target.name}.",
+            prefix=".eval_results.",
             suffix=".tmp",
             delete=False,
         ) as handle:
@@ -99,11 +106,13 @@ def persist_evaluation_results(
             handle.write(contents)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_path, target)
-        temporary_path = None
+        # Linking the complete, synced inode is atomic and fails for *any* existing
+        # destination entry. Unlike replace/rename, a collision cannot erase history.
+        os.link(temporary_path, target, follow_symlinks=False)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+    return target
 
 
 __all__ = [

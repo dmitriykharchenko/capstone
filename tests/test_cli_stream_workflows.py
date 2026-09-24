@@ -300,28 +300,29 @@ def test_evaluation_close_respects_persistence_boundary_without_later_cases(
         assert source.gi_frame is None
     assert runner.calls == calls
     assert len(calls) == min(max((cut - 1) // 2, 0), 3)
-    if cut < 8:
-        assert path.read_text(encoding="utf-8") == "previous"
-    else:
-        assert json.loads(path.read_text(encoding="utf-8"))["summary"] == {
+    assert path.read_text(encoding="utf-8") == "previous"
+    published = list(tmp_path.glob("results_*.json"))
+    assert len(published) == (0 if cut < 8 else 1)
+    if published:
+        assert json.loads(published[0].read_text(encoding="utf-8"))["summary"] == {
             "total": 3,
             "succeeded": 3,
             "failed": 0,
         }
 
 
-def test_graph_evaluation_atomic_replace_failure_does_not_replay_cases(
+def test_graph_evaluation_atomic_publication_failure_does_not_replay_cases(
     tmp_path, monkeypatch
 ):
     path = tmp_path / "results.json"
     path.write_text("previous", encoding="utf-8")
     calls = []
 
-    def fail_replace(*_args):
+    def fail_link(*_args, **_kwargs):
         calls.append(True)
-        raise OSError("replace failed")
+        raise OSError("publication failed")
 
-    monkeypatch.setattr(os, "replace", fail_replace)
+    monkeypatch.setattr(os, "link", fail_link)
     runner = Runner()
     events = cli_main._persisted_evaluation_stream(
         commands.handle_evaluation_stream(None, request(1), runner),
@@ -333,7 +334,7 @@ def test_graph_evaluation_atomic_replace_failure_does_not_replay_cases(
         "case_success",
     ]
     assert calls == []
-    with pytest.raises(OSError, match="replace failed"):
+    with pytest.raises(OSError, match="publication failed"):
         next(events)
     assert list(events) == []
     assert runner.calls == ["0"] and calls == [True]
@@ -350,10 +351,10 @@ def test_interrupt_during_evaluation_persistence_closes_source_without_terminal(
     source = commands.handle_evaluation_stream(None, request(1), runner)
     events = cli_main._persisted_evaluation_stream(source, results_path=path)
 
-    def interrupt(*_args):
+    def interrupt(*_args, **_kwargs):
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(os, "replace", interrupt)
+    monkeypatch.setattr(os, "link", interrupt)
     assert [next(events)["event"] for _ in range(3)] == [
         "run_start",
         "case_start",
@@ -443,10 +444,13 @@ def test_evaluation_persists_once_and_new_run_has_no_checkpoint_replay(
         assert list(events) == []
         assert runner.calls == ["0", "1"]
     assert len(saved) == 2
-    artifact = json.loads(path.read_text(encoding="utf-8"))
-    assert artifact["summary"] == {"total": 2, "succeeded": 2, "failed": 0}
-    assert len(artifact["results"]) == 2
-    assert list(tmp_path.iterdir()) == [path]
+    published = list(tmp_path.glob("results_*.json"))
+    assert len(published) == 2
+    for result in published:
+        artifact = json.loads(result.read_text(encoding="utf-8"))
+        assert artifact["summary"] == {"total": 2, "succeeded": 2, "failed": 0}
+        assert len(artifact["results"]) == 2
+    assert set(tmp_path.iterdir()) == set(published)
 
 
 def test_keyboard_interrupt_during_evaluation_is_not_a_case_failure(tmp_path):

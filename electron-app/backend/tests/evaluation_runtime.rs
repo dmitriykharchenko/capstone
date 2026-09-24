@@ -1,7 +1,7 @@
 mod evaluation_fixtures;
 use evaluation_fixtures::*;
 use research_backend::{
-    evaluations::{NativeEvaluationService, RESULTS_FILENAME},
+    evaluations::{EvaluationArtifact, NativeEvaluationService},
     protocol::MAX_FRAME_BYTES,
     providers::ProviderError,
 };
@@ -16,16 +16,40 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::Notify};
 
-fn unchanged(paths: &research_backend::config::StoragePaths, bytes: &[u8]) {
-    assert_eq!(
-        fs::read(paths.evaluation_results.join(RESULTS_FILENAME)).unwrap(),
-        bytes
-    );
+fn unchanged(
+    paths: &research_backend::config::StoragePaths,
+    prior: &(std::path::PathBuf, Vec<u8>),
+) {
+    assert_eq!(fs::read(&prior.0).unwrap(), prior.1);
     assert_eq!(
         fs::read_dir(&paths.evaluation_results).unwrap().count(),
         1,
         "orphan staging file"
     );
+}
+
+#[tokio::test]
+async fn sequential_completed_runs_are_persisted_before_terminal_and_retain_prior() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = paths(tmp.path());
+    let prior = seed(&paths).await;
+    for question in ["second café", "third"] {
+        let before = artifact_paths(&paths);
+        let (_, _, pipeline, _) = rag::fixtures(&[]);
+        let mut runtime = Runtime::new(
+            NativeEvaluationService::new(pipeline, Arc::new(Judge::default()), &paths).unwrap(),
+        );
+        runtime.request("eval", vec![case(question)]).await;
+        let frames = runtime.terminal("eval").await;
+        assert_eq!(frames.last().unwrap()["type"], "result");
+        let after = artifact_paths(&paths);
+        assert_eq!(after.len(), before.len() + 1);
+        let added = after.iter().find(|p| !before.contains(p)).unwrap();
+        let result = EvaluationArtifact::parse(&fs::read_to_string(added).unwrap()).unwrap();
+        assert_eq!(result.input_cases[0].question, question);
+        assert_eq!(fs::read(&prior.0).unwrap(), prior.1);
+        runtime.finish().await;
+    }
 }
 
 // Actual runtime cancel must tear down the paid-stage future before terminal,

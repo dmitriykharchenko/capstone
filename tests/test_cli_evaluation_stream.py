@@ -17,6 +17,12 @@ def evaluation_results_path(tmp_path):
     return tmp_path / "eval_results.json"
 
 
+def published_artifact(template):
+    paths = list(template.parent.glob(f"{template.stem}_*{template.suffix}"))
+    assert len(paths) == 1
+    return json.loads(paths[0].read_text(encoding="utf-8"))
+
+
 def config(tmp_path):
     return CLIConfig(
         database_path=tmp_path / "history.db",
@@ -111,7 +117,7 @@ def test_streams_ordered_success_failure_and_aggregate_scores(
     assert (done["total"], done["succeeded"], done["failed"]) == (3, 2, 1)
     assert list(done["aggregate_scores"]) == list(JUDGE_CRITERIA)
     assert set(done["aggregate_scores"].values()) == {2.0}
-    artifact = json.loads(evaluation_results_path.read_text(encoding="utf-8"))
+    artifact = published_artifact(evaluation_results_path)
     assert artifact["schema"] == "rag-evaluation-results"
     assert artifact["schema_version"] == 1
     assert artifact["metadata"] == {
@@ -242,10 +248,10 @@ def test_persists_before_terminal_event_is_yielded(tmp_path, evaluation_results_
     for name in ("run_start", "case_start", "case_failure"):
         assert next(events)["event"] == name
         assert evaluation_results_path.read_text(encoding="utf-8") == previous
+        assert list(tmp_path.iterdir()) == [evaluation_results_path]
     assert next(events)["event"] == "complete"
-    assert json.loads(evaluation_results_path.read_text(encoding="utf-8"))[
-        "summary"
-    ] == {
+    assert evaluation_results_path.read_text(encoding="utf-8") == previous
+    assert published_artifact(evaluation_results_path)["summary"] == {
         "failed": 1,
         "succeeded": 0,
         "total": 1,
@@ -421,7 +427,7 @@ def test_cli_main_sanitizes_evaluation_transport_exception(monkeypatch, tmp_path
     assert "secret" not in output.getvalue()
 
 
-@pytest.mark.parametrize("failure", [None, "serialize", "fsync", "replace"])
+@pytest.mark.parametrize("failure", [None, "serialize", "fsync", "link"])
 def test_cli_persistence_has_one_terminal_after_unchanged_progress(
     monkeypatch, tmp_path, evaluation_results_path, failure
 ):
@@ -473,7 +479,7 @@ def test_cli_persistence_has_one_terminal_after_unchanged_progress(
         writes.append(True)
         return persist(*args, **kwargs)
 
-    def fail(*_args):
+    def fail(*_args, **_kwargs):
         raise OSError("private persistence detail /private/evaluation")
 
     monkeypatch.setattr(cli_main, "handle_evaluation_stream", source)
@@ -489,7 +495,7 @@ def test_cli_persistence_has_one_terminal_after_unchanged_progress(
 
     def assert_persisted_before_emit(event):
         if failure is None and event.get("event") == "complete":
-            artifact = json.loads(evaluation_results_path.read_text(encoding="utf-8"))
+            artifact = published_artifact(evaluation_results_path)
             assert artifact["summary"] == {"total": 1, "succeeded": 0, "failed": 1}
             assert artifact["results"] == [expected[2]["result"]]
             assert writes == [True]
@@ -517,6 +523,5 @@ def test_cli_persistence_has_one_terminal_after_unchanged_progress(
     )
     assert writes == closed == [True]
     assert "private persistence detail" not in output.getvalue()
-    if failure:
-        assert evaluation_results_path.read_text(encoding="utf-8") == previous
-    assert list(tmp_path.iterdir()) == [evaluation_results_path]
+    assert evaluation_results_path.read_text(encoding="utf-8") == previous
+    assert len(list(tmp_path.iterdir())) == (1 if failure else 2)

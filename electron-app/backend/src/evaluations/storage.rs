@@ -1,5 +1,5 @@
-//! Fail-closed native artifact publication. Only the fixed evaluation basename
-//! can be written, under a trusted app-owned directory. No arbitrary path API.
+//! Fail-closed, append-only publication with internally generated dated basenames
+//! under a trusted app-owned directory. No arbitrary path API.
 //! macOS/Linux use no-follow descriptor traversal and advisory directory locking.
 //! The app owns this namespace; an actor with the same UID/root can still defeat
 //! advisory locks/rename permissions. Force-kill or lost output => outcome unknown.
@@ -11,11 +11,13 @@ use crate::{
     config::StoragePaths, protocol::ErrorCode, registry::BackendResult, runtime::Cancellation,
 };
 
+/// Legacy artifact name, validated and preserved but never written by this store.
 pub const RESULTS_FILENAME: &str = "eval_results.json";
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native {
     use super::*;
+    use chrono::{DateTime, Datelike, Utc};
     use std::{
         ffi::{CStr, CString},
         fs::{File, Metadata},
@@ -43,6 +45,7 @@ mod native {
         store: ArtifactStore,
         directory: File,
         prior: Option<Identity>,
+        target: CString,
     }
     impl Drop for Lease {
         fn drop(&mut self) {
@@ -126,6 +129,44 @@ mod native {
             })
             .collect()
     }
+    fn result_name(now: DateTime<Utc>, id: uuid::Uuid) -> BackendResult<CString> {
+        if !(1..=9999).contains(&now.year()) {
+            return Err(ErrorCode::InvalidParams);
+        }
+        CString::new(format!(
+            "eval_results_{}_{id}.json",
+            now.format("%Y-%m-%dT%H-%M-%S%.6fZ")
+        ))
+        .map_err(|_| ErrorCode::Internal)
+    }
+    fn rename_new(directory: &File, source: &CStr, target: &CStr) -> BackendResult<()> {
+        // SAFETY: live pinned directory and validated, NUL-terminated components.
+        // Both platforms atomically refuse every existing target, including links.
+        #[cfg(target_os = "macos")]
+        let result = unsafe {
+            libc::renameatx_np(
+                directory.as_raw_fd(),
+                source.as_ptr(),
+                directory.as_raw_fd(),
+                target.as_ptr(),
+                libc::RENAME_EXCL,
+            )
+        };
+        #[cfg(target_os = "linux")]
+        let result = unsafe {
+            libc::renameat2(
+                directory.as_raw_fd(),
+                source.as_ptr(),
+                directory.as_raw_fd(),
+                target.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result != 0 {
+            return Err(ErrorCode::Internal);
+        }
+        Ok(())
+    }
     impl ArtifactStore {
         pub fn from_paths(paths: &StoragePaths) -> BackendResult<Self> {
             let root = components(&paths.data_root)?;
@@ -205,6 +246,10 @@ mod native {
             owned_directory(&self.0.directory)
         }
         pub(in crate::evaluations) fn acquire(&self) -> BackendResult<Lease> {
+            self.acquire_at(Utc::now(), uuid::Uuid::new_v4())
+        }
+        fn acquire_at(&self, now: DateTime<Utc>, id: uuid::Uuid) -> BackendResult<Lease> {
+            let target = result_name(now, id)?;
             self.unchanged()?;
             let dir = directory(&self.0.directory, c".").map_err(io)?;
             // SAFETY: independently opened live descriptor; nonblocking advisory lock.
@@ -221,6 +266,7 @@ mod native {
                 store: self.clone(),
                 directory: dir,
                 prior: None,
+                target,
             };
             lease.prior = read_prior(&lease.directory)?;
             Ok(lease)
@@ -302,6 +348,9 @@ mod native {
             mut at: impl FnMut(Point, &File) -> BackendResult<()>,
         ) -> BackendResult<()> {
             token.check()?;
+            if bytes.len() > MAX_ARTIFACT_BYTES {
+                return Err(ErrorCode::ResponseTooLarge);
+            }
             self.store.unchanged()?;
             let name = CString::new(format!(".eval_results.{}.tmp", uuid::Uuid::new_v4()))
                 .map_err(|_| ErrorCode::Internal)?;
@@ -332,18 +381,7 @@ mod native {
             }
             let _permit = token.begin_commit()?;
             at(Point::Sealed, &staging.file)?;
-            // SAFETY: source and fixed target are relative to the same pinned directory.
-            if unsafe {
-                libc::renameat(
-                    self.directory.as_raw_fd(),
-                    staging.name.as_ptr(),
-                    self.directory.as_raw_fd(),
-                    c"eval_results.json".as_ptr(),
-                )
-            } != 0
-            {
-                return Err(ErrorCode::Internal);
-            }
+            rename_new(&self.directory, &staging.name, &self.target)?;
             staging.renamed = true;
             at(Point::Renamed, &staging.file)?;
             self.directory.sync_all().map_err(io)?;

@@ -6,10 +6,7 @@ pub mod rag;
 use research_backend::{
     config::StoragePaths,
     domain::{EvaluationCase, Message},
-    evaluations::{
-        EvaluationArtifact, EvaluationRequest, JUDGE_CRITERIA, NativeEvaluationService,
-        RESULTS_FILENAME,
-    },
+    evaluations::{EvaluationArtifact, EvaluationRequest, JUDGE_CRITERIA, NativeEvaluationService},
     rag::{ModelFailure, ModelFuture, RagModel},
     registry::{BackendFuture, CommandHandler, Registry},
     runtime::{Cancellation, RequestContext, serve},
@@ -17,7 +14,7 @@ use research_backend::{
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -106,11 +103,25 @@ pub fn paths(root: &Path) -> StoragePaths {
         papers: root.join("papers"),
     }
 }
+pub fn artifact_paths(paths: &StoragePaths) -> Vec<PathBuf> {
+    let mut artifacts = std::fs::read_dir(&paths.evaluation_results)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect::<Vec<_>>();
+    artifacts.sort();
+    assert!(
+        artifacts.iter().all(|p| {
+            let name = p.file_name().unwrap().to_str().unwrap();
+            name.starts_with("eval_results_") && name.ends_with(".json")
+        }),
+        "unexpected file or orphan staging"
+    );
+    artifacts
+}
 pub fn artifact(paths: &StoragePaths) -> EvaluationArtifact {
-    EvaluationArtifact::parse(
-        &std::fs::read_to_string(paths.evaluation_results.join(RESULTS_FILENAME)).unwrap(),
-    )
-    .unwrap()
+    let artifacts = artifact_paths(paths);
+    assert_eq!(artifacts.len(), 1);
+    EvaluationArtifact::parse(&std::fs::read_to_string(&artifacts[0]).unwrap()).unwrap()
 }
 pub struct Handler(pub NativeEvaluationService);
 impl CommandHandler for Handler {
@@ -202,7 +213,7 @@ impl Runtime {
     }
 }
 
-pub async fn seed(paths: &StoragePaths) -> Vec<u8> {
+pub async fn seed(paths: &StoragePaths) -> (PathBuf, Vec<u8>) {
     let (_, _, pipeline, _) = rag::fixtures(&[]);
     let mut runtime = Runtime::new(
         NativeEvaluationService::new(pipeline, Arc::new(Judge::default()), paths).unwrap(),
@@ -215,7 +226,9 @@ pub async fn seed(paths: &StoragePaths) -> Vec<u8> {
         "result"
     );
     runtime.finish().await;
-    std::fs::read(paths.evaluation_results.join(RESULTS_FILENAME)).unwrap()
+    let artifacts = artifact_paths(paths);
+    assert_eq!(artifacts.len(), 1);
+    (artifacts[0].clone(), std::fs::read(&artifacts[0]).unwrap())
 }
 
 pub fn node_validate(frames: &[Value]) {
