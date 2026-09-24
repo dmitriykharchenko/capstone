@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -34,6 +35,7 @@ from src.orchestration_state import (
 )
 from src.orchestration_store import (
     APPLICATION_ID,
+    DATABASE_SCHEMA_VERSION,
     CorruptCheckpointError,
     GraphVersionError,
     OrchestrationStoreError,
@@ -152,7 +154,7 @@ def test_schema_initialization_is_idempotent_and_separate(tmp_path, monkeypatch)
     assert path.read_bytes() == before
     assert path == tmp_path / "data/chat_orchestration.sqlite3"
     assert not (tmp_path / "data/chat_history.sqlite3").exists()
-    assert scalar(path, "PRAGMA user_version") == 1
+    assert scalar(path, "PRAGMA user_version") == DATABASE_SCHEMA_VERSION
     assert scalar(path, "PRAGMA application_id") == APPLICATION_ID
 
 
@@ -182,7 +184,8 @@ def test_history_is_untouched_and_wrong_database_rejected(tmp_path):
     "mutation",
     [
         "PRAGMA user_version = 0",
-        "PRAGMA user_version = 2",
+        "PRAGMA user_version = 3",
+        "PRAGMA user_version = 1",
         "PRAGMA application_id = 0",
         "ALTER TABLE runs ADD COLUMN unexpected TEXT",
         "DROP INDEX runs_session",
@@ -886,3 +889,331 @@ def test_same_operation_concurrent_replay_writes_exactly_once(store):
         )
     assert all(result == results[0] for result in results)
     assert store.load(*ARGS).sequence == 2
+
+
+@pytest.mark.parametrize("reopen", [False, True])
+def test_noop_resume_replays_original_result_after_work_starts(store, reopen):
+    before = queued(store)
+    first = store.resume(*ARGS, operation_id="resume-once")
+    assert first == before
+    started = store.commit(
+        replace(
+            before,
+            agents=(replace(before.agents[0], status=WorkStatus.RUNNING),),
+            questions=(replace(before.questions[0], status=WorkStatus.RUNNING),),
+        ),
+        operation_id="start",
+    )
+    if reopen:
+        store.close()
+        store = SQLiteOrchestrationStore(store.database_path)
+    with store:
+        events = store.events(*ARGS)
+        assert store.resume(*ARGS, operation_id="resume-once") == first
+        assert store.load(*ARGS) == started
+        assert store.events(*ARGS) == events
+        assert store.load(*ARGS).agents[0].attempt == 0
+
+
+@pytest.mark.parametrize(
+    "method", ["interrupt", "fail", "discard", "complete", "attach_exchange", "commit"]
+)
+def test_noop_operation_id_rejects_cross_action_reuse_after_restart(store, method):
+    before = store.resume(*ARGS, operation_id="once")
+    store.close()
+    with SQLiteOrchestrationStore(store.database_path) as reopened:
+        kwargs = {"operation_id": "once"}
+        if method == "attach_exchange":
+            kwargs["exchange_id"] = 42
+        with pytest.raises(TransitionConflictError, match="different input"):
+            if method == "commit":
+                reopened.commit(before, **kwargs)
+            else:
+                getattr(reopened, method)(*ARGS, **kwargs)
+        assert reopened.load(*ARGS) == before
+
+
+@pytest.mark.parametrize("method", ["complete", "attach_exchange", "discard"])
+def test_terminal_noop_receipts_keep_original_result_and_request(store, method):
+    kwargs = {"exchange_id": 42} if method == "attach_exchange" else {}
+    original = getattr(store, method)(*ARGS, operation_id="first", **kwargs)
+    assert getattr(store, method)(*ARGS, operation_id="noop", **kwargs) == original
+    if method == "complete":
+        latest = store.attach_exchange(*ARGS, 42, operation_id="later")
+    elif method == "attach_exchange":
+        latest = store.complete(*ARGS, operation_id="later")
+    else:
+        latest = original
+    store.close()
+    with SQLiteOrchestrationStore(store.database_path) as reopened:
+        assert (
+            getattr(reopened, method)(*ARGS, operation_id="noop", **kwargs) == original
+        )
+        with pytest.raises(TransitionConflictError, match="different input"):
+            reopened.interrupt(*ARGS, operation_id="noop")
+        if method in ("complete", "attach_exchange"):
+            with pytest.raises(TransitionConflictError, match="different input"):
+                getattr(reopened, method)(*ARGS, operation_id="noop", exchange_id=43)
+        assert reopened.load(*ARGS) == latest
+        assert len(reopened.events(*ARGS)) == latest.sequence
+
+
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_concurrent_noop_and_transition_share_operation_namespace(store, conflicting):
+    original = store.load(*ARGS)
+    barrier = Barrier(8)
+
+    def writer(index):
+        barrier.wait(timeout=10)
+        try:
+            if conflicting and index % 2:
+                return "commit", store.commit(original, operation_id="once")
+            return "resume", store.resume(*ARGS, operation_id="once")
+        except TransitionConflictError:
+            return "conflict", None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(writer, range(8)))
+    winners = [(action, result) for action, result in results if result is not None]
+    assert len(winners) == (4 if conflicting else 8)
+    assert all(winner == winners[0] for winner in winners)
+    assert store.load(*ARGS) == winners[0][1]
+    assert scalar(store.database_path, "SELECT count(*) FROM noop_receipts") == (
+        1 if winners[0][0] == "resume" else 0
+    )
+    assert len(store.events(*ARGS)) == (1 if winners[0][0] == "resume" else 2)
+
+
+def test_process_noop_replay_preserves_intervening_transition(store, tmp_path):
+    original = queued(store)
+    expected = hashlib.sha256(encode(original).encode()).hexdigest()
+    script = """
+import hashlib, sys
+from src.orchestration_store import SQLiteOrchestrationStore
+from src.orchestration_state import encode
+with SQLiteOrchestrationStore(sys.argv[1]) as store:
+    result = store.resume('run', 'session', 'graph-v1', operation_id='process-noop')
+    assert hashlib.sha256(encode(result).encode()).hexdigest() == sys.argv[2]
+"""
+    for stage in range(2):
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(
+                pool.map(
+                    lambda _: child(tmp_path, script, store.database_path, expected),
+                    range(4),
+                )
+            )
+        assert all(result.returncode == 0 for result in results)
+        if stage == 0:
+            latest = store.interrupt(*ARGS, operation_id="intervening")
+    assert store.load(*ARGS) == latest
+    assert scalar(store.database_path, "SELECT count(*) FROM noop_receipts") == 1
+
+
+@pytest.mark.parametrize("crash_point", ["insert", "before-commit", "after-commit"])
+def test_noop_receipt_crash_reserves_only_committed_operations(
+    store, tmp_path, crash_point
+):
+    original = queued(store)
+    script = """
+import os, sqlite3, sys
+from src.orchestration_store import SQLiteOrchestrationStore
+store = SQLiteOrchestrationStore(sys.argv[1])
+original = sqlite3.connect
+class CrashConnection(sqlite3.Connection):
+    def execute(self, sql, parameters=()):
+        result = super().execute(sql, parameters)
+        if sql.startswith('INSERT INTO noop_receipts') and sys.argv[2] == 'insert':
+            os._exit(71)
+        return result
+    def commit(self):
+        if sys.argv[2] == 'before-commit':
+            os._exit(71)
+        super().commit()
+        os._exit(72)
+sqlite3.connect = lambda *args, **kwargs: original(*args, **kwargs, factory=CrashConnection)
+store.resume('run', 'session', 'graph-v1', operation_id='crash-noop')
+"""
+    result = child(tmp_path, script, store.database_path, crash_point)
+    committed = crash_point == "after-commit"
+    assert result.returncode == (72 if committed else 71), result.stderr
+    store.close()
+    with SQLiteOrchestrationStore(store.database_path) as reopened:
+        assert reopened.load(*ARGS) == original
+        assert scalar(store.database_path, "SELECT count(*) FROM noop_receipts") == int(
+            committed
+        )
+        latest = reopened.interrupt(*ARGS, operation_id="intervening")
+        if committed:
+            assert reopened.resume(*ARGS, operation_id="crash-noop") == original
+            assert reopened.load(*ARGS) == latest
+            with pytest.raises(TransitionConflictError, match="different input"):
+                reopened.discard(*ARGS, operation_id="crash-noop")
+        else:
+            # Nothing was acknowledged; this ID was never durably reserved.
+            result = reopened.discard(*ARGS, operation_id="crash-noop")
+            assert result.run.status is RunStatus.DISCARDED
+        assert scalar(store.database_path, "PRAGMA integrity_check") == "ok"
+
+
+@pytest.mark.parametrize("failure", ["insert", "commit"])
+def test_noop_write_failure_never_acknowledges_success(store, monkeypatch, failure):
+    original = store.load(*ARGS)
+    connect = sqlite3.connect
+
+    class FailingConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            result = super().execute(sql, parameters)
+            if failure == "insert" and sql.startswith("INSERT INTO noop_receipts"):
+                raise sqlite3.OperationalError("Injected receipt failure")
+            return result
+
+        def commit(self):
+            raise sqlite3.OperationalError("Injected commit failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            sqlite3,
+            "connect",
+            lambda *a, **kw: connect(*a, **kw, factory=FailingConnection),
+        )
+        with pytest.raises(OrchestrationStoreError, match="operation failed"):
+            store.resume(*ARGS, operation_id="failed-noop")
+    assert store.load(*ARGS) == original
+    assert scalar(store.database_path, "SELECT count(*) FROM noop_receipts") == 0
+    assert store.resume(*ARGS, operation_id="failed-noop") == original
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "UPDATE noop_receipts SET receipt_hash = 'invalid'",
+        "UPDATE noop_receipts SET request_hash = 'invalid'",
+        "UPDATE noop_receipts SET sequence = 1",
+        "UPDATE checkpoints SET payload_hash = 'invalid' WHERE sequence = 2",
+        "UPDATE noop_receipts SET operation_id = 'queue'",
+    ],
+)
+def test_noop_receipt_corruption_fails_closed(store, mutation):
+    queued(store)
+    store.resume(*ARGS, operation_id="noop")
+    latest = store.interrupt(*ARGS, operation_id="later")
+    execute(store.database_path, mutation)
+    with pytest.raises(CorruptCheckpointError):
+        store.resume(
+            *ARGS, operation_id="queue" if "operation_id" in mutation else "noop"
+        )
+    assert store.load(*ARGS) == latest
+
+
+def test_noop_receipt_limit_rejects_new_ids_but_retains_replay(store, monkeypatch):
+    import src.orchestration_store as module
+
+    monkeypatch.setattr(module, "MAX_EVENTS", 2)
+    before = store.load(*ARGS)
+    assert store.resume(*ARGS, operation_id="first") == before
+    assert store.resume(*ARGS, operation_id="second") == before
+    with pytest.raises(TransitionConflictError, match="receipt limit"):
+        store.resume(*ARGS, operation_id="third")
+    assert store.resume(*ARGS, operation_id="first") == before
+    assert store.load(*ARGS) == before
+    assert scalar(store.database_path, "SELECT count(*) FROM noop_receipts") == 2
+
+
+def test_exact_v1_upgrade_preserves_journal_and_enables_noop_receipts(store):
+    original = queued(store)
+    events = store.events(*ARGS)
+    execute(store.database_path, "DROP TABLE noop_receipts")
+    execute(store.database_path, "PRAGMA user_version = 1")
+    store.close()
+
+    def open_store(_):
+        with SQLiteOrchestrationStore(store.database_path) as upgraded:
+            assert upgraded.load(*ARGS) == original
+            assert upgraded.events(*ARGS) == events
+            assert upgraded.resume(*ARGS, operation_id="upgraded-noop") == original
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(open_store, range(4)))
+    assert scalar(store.database_path, "PRAGMA user_version") == DATABASE_SCHEMA_VERSION
+    assert scalar(store.database_path, "SELECT count(*) FROM noop_receipts") == 1
+    with SQLiteOrchestrationStore(store.database_path) as upgraded:
+        latest = upgraded.interrupt(*ARGS, operation_id="later")
+        assert upgraded.resume(*ARGS, operation_id="upgraded-noop") == original
+        assert upgraded.load(*ARGS) == latest
+
+
+def test_v1_upgrade_rolls_back_on_receipt_schema_error(store, monkeypatch):
+    import src.orchestration_store as module
+
+    execute(store.database_path, "DROP TABLE noop_receipts")
+    execute(store.database_path, "PRAGMA user_version = 1")
+    store.close()
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "_SCHEMA", module._SCHEMA[:-1] + ("INVALID SQL",))
+        with pytest.raises(OrchestrationStoreError):
+            SQLiteOrchestrationStore(store.database_path)
+    assert scalar(store.database_path, "PRAGMA user_version") == 1
+    assert (
+        scalar(
+            store.database_path,
+            "SELECT count(*) FROM sqlite_master WHERE name = 'noop_receipts'",
+        )
+        == 0
+    )
+    with SQLiteOrchestrationStore(store.database_path) as upgraded:
+        assert upgraded.resume(*ARGS, operation_id="noop").sequence == 1
+
+
+@pytest.mark.parametrize(
+    "crash_point", ["CREATE TABLE", "PRAGMA user_version", "commit"]
+)
+def test_v1_upgrade_crash_is_atomic(store, tmp_path, crash_point):
+    original = queued(store)
+    execute(store.database_path, "DROP TABLE noop_receipts")
+    execute(store.database_path, "PRAGMA user_version = 1")
+    store.close()
+    script = """
+import os, sqlite3, sys
+from src.orchestration_store import SQLiteOrchestrationStore
+original = sqlite3.connect
+class CrashConnection(sqlite3.Connection):
+    def execute(self, sql, parameters=()):
+        result = super().execute(sql, parameters)
+        if sql.startswith(sys.argv[2] + (' =' if sys.argv[2].startswith('PRAGMA') else '')):
+            os._exit(71)
+        return result
+    def commit(self):
+        super().commit()
+        if sys.argv[2] == 'commit':
+            os._exit(72)
+sqlite3.connect = lambda *args, **kwargs: original(*args, **kwargs, factory=CrashConnection)
+SQLiteOrchestrationStore(sys.argv[1])
+"""
+    result = child(tmp_path, script, store.database_path, crash_point)
+    committed = crash_point == "commit"
+    assert result.returncode == (72 if committed else 71), result.stderr
+    assert scalar(store.database_path, "PRAGMA user_version") == (
+        DATABASE_SCHEMA_VERSION if committed else 1
+    )
+    assert scalar(
+        store.database_path,
+        "SELECT count(*) FROM sqlite_master WHERE name = 'noop_receipts'",
+    ) == int(committed)
+    with SQLiteOrchestrationStore(store.database_path) as upgraded:
+        assert upgraded.load(*ARGS) == original
+        assert upgraded.resume(*ARGS, operation_id="noop") == original
+
+
+def test_noop_receipts_are_scoped_to_run_session_and_graph(store):
+    original = store.resume(*ARGS, operation_id="once")
+    second = store.create_run("other-session", "graph-v1", run_id="other")
+    assert (
+        store.resume("other", "other-session", "graph-v1", operation_id="once")
+        == second
+    )
+    with pytest.raises(RunNotFoundError):
+        store.resume("run", "other-session", "graph-v1", operation_id="once")
+    with pytest.raises(GraphVersionError):
+        store.resume("run", "session", "graph-v2", operation_id="once")
+    assert store.resume(*ARGS, operation_id="once") == original

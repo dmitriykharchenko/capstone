@@ -19,7 +19,6 @@ from .orchestration_state import (
     MAX_CHECKPOINT_BYTES,
     MAX_EVENT_BYTES,
     MAX_EVENTS,
-    SCHEMA_VERSION,
     TERMINAL_RUNS,
     TERMINAL_WORK,
     Checkpoint,
@@ -39,6 +38,7 @@ from .orchestration_state import (
 
 DEFAULT_DATABASE_PATH = Path("data/chat_orchestration.sqlite3")
 APPLICATION_ID = 0x4F524348
+DATABASE_SCHEMA_VERSION = 2  # Checkpoint/event serialization remains version 1.
 _SCHEMA = (
     """CREATE TABLE runs (
         run_id TEXT PRIMARY KEY NOT NULL,
@@ -67,6 +67,15 @@ _SCHEMA = (
         payload_hash TEXT NOT NULL,
         PRIMARY KEY (run_id, sequence),
         FOREIGN KEY (run_id, sequence) REFERENCES events(run_id, sequence)
+    )""",
+    """CREATE TABLE noop_receipts (
+        run_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 1),
+        request_hash TEXT NOT NULL,
+        receipt_hash TEXT NOT NULL,
+        PRIMARY KEY (run_id, operation_id),
+        FOREIGN KEY (run_id, sequence) REFERENCES checkpoints(run_id, sequence)
     )""",
 )
 
@@ -99,6 +108,10 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _receipt_hash(run_id: str, operation_id: str, sequence: int, request_hash: str):
+    return _digest(f"{run_id}\n{operation_id}\n{sequence}\n{request_hash}")
+
+
 def _normalized(sql: str) -> str:
     return " ".join(sql.split())
 
@@ -114,13 +127,15 @@ def _layout(connection: sqlite3.Connection) -> set[str]:
 
 
 class SQLiteOrchestrationStore:
-    """Application-owned schema v1, initialized only in an empty database.
+    """Application-owned schema v2; only the exact v1 layout is upgraded on open.
 
     ``commit`` accepts a replacement snapshot at its *current* sequence. It
     atomically compares that revision, validates the transition, increments the
     sequence, and writes an event/checkpoint pair. A stable operation_id must be
     retained across retries. Replaying identical input returns the original
-    checkpoint; reusing the key for different input fails. No work executes here.
+    checkpoint; reusing the key for different input fails. Successful lifecycle
+    no-ops reserve their IDs without advancing the event/checkpoint sequence.
+    No work executes here.
     """
 
     def __init__(self, database_path: str | Path = DEFAULT_DATABASE_PATH) -> None:
@@ -166,10 +181,18 @@ class SQLiteOrchestrationStore:
             if initialize and not layout and version == 0 and application == 0:
                 for statement in _SCHEMA:
                     connection.execute(statement)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
                 connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             elif (
-                version != SCHEMA_VERSION
+                initialize
+                and version == 1
+                and application == APPLICATION_ID
+                and layout == {_normalized(sql) for sql in _SCHEMA[:-1]}
+            ):
+                connection.execute(_SCHEMA[-1])
+                connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
+            elif (
+                version != DATABASE_SCHEMA_VERSION
                 or application != APPLICATION_ID
                 or layout != {_normalized(sql) for sql in _SCHEMA}
             ):
@@ -332,12 +355,34 @@ class SQLiteOrchestrationStore:
         self, connection, current: Checkpoint, operation_id: str, request_hash: str
     ):
         identifier(operation_id)
-        row = connection.execute(
-            "SELECT sequence, request_hash FROM events WHERE run_id = ? AND operation_id = ?",
-            (current.run.run_id, operation_id),
-        ).fetchone()
-        if row is None:
+        rows = connection.execute(
+            "SELECT sequence, request_hash, NULL AS receipt_hash FROM events WHERE run_id = ? AND operation_id = ? "
+            "UNION ALL SELECT sequence, request_hash, receipt_hash FROM noop_receipts WHERE run_id = ? AND operation_id = ?",
+            (current.run.run_id, operation_id) * 2,
+        ).fetchall()
+        if not rows:
             return None
+        if len(rows) != 1:
+            raise CorruptCheckpointError("Conflicting operation receipts")
+        row = rows[0]
+        if (
+            type(row["sequence"]) is not int
+            or not 1 <= row["sequence"] <= current.sequence
+            or type(row["request_hash"]) is not str
+            or len(row["request_hash"]) != 64
+            or any(c not in "0123456789abcdef" for c in row["request_hash"])
+            or (
+                row["receipt_hash"] is not None
+                and row["receipt_hash"]
+                != _receipt_hash(
+                    current.run.run_id,
+                    operation_id,
+                    row["sequence"],
+                    row["request_hash"],
+                )
+            )
+        ):
+            raise CorruptCheckpointError("Invalid operation receipt")
         event = self._payload(connection, "events", current.run.run_id, row["sequence"])
         if event.session_id != current.run.session_id:
             raise CorruptCheckpointError("Inconsistent replay event")
@@ -353,6 +398,29 @@ class SQLiteOrchestrationStore:
             or snapshot.run.graph_version != current.run.graph_version
         ):
             raise CorruptCheckpointError("Inconsistent replay checkpoint")
+        return snapshot
+
+    def _reserve_noop(self, connection, snapshot, operation_id, request_hash):
+        # Called under the same write transaction as _replay. Acknowledgement
+        # occurs only after _transaction commits this bounded receipt.
+        count = connection.execute(
+            "SELECT count(*) FROM noop_receipts WHERE run_id = ?",
+            (snapshot.run.run_id,),
+        ).fetchone()[0]
+        if count >= MAX_EVENTS:
+            raise TransitionConflictError("No-op operation receipt limit reached")
+        connection.execute(
+            "INSERT INTO noop_receipts VALUES (?, ?, ?, ?, ?)",
+            (
+                snapshot.run.run_id,
+                operation_id,
+                snapshot.sequence,
+                request_hash,
+                _receipt_hash(
+                    snapshot.run.run_id, operation_id, snapshot.sequence, request_hash
+                ),
+            ),
+        )
         return snapshot
 
     def _write(
@@ -502,15 +570,15 @@ class SQLiteOrchestrationStore:
                 return replay
             run = old.run
             if kind is EventKind.DISCARDED and run.status is RunStatus.DISCARDED:
-                return old
+                return self._reserve_noop(connection, old, operation_id, request_hash)
             if kind is EventKind.EXCHANGE_ATTACHED and run.exchange_id == exchange_id:
-                return old
+                return self._reserve_noop(connection, old, operation_id, request_hash)
             if (
                 kind is EventKind.COMPLETED
                 and run.status is RunStatus.COMPLETED
                 and exchange_id in (None, run.exchange_id)
             ):
-                return old
+                return self._reserve_noop(connection, old, operation_id, request_hash)
             if run.status in TERMINAL_RUNS and not (
                 kind is EventKind.EXCHANGE_ATTACHED
                 and run.status is RunStatus.COMPLETED
@@ -546,7 +614,9 @@ class SQLiteOrchestrationStore:
                     and questions == old.questions
                     and run.status is RunStatus.RUNNING
                 ):
-                    return old
+                    return self._reserve_noop(
+                        connection, old, operation_id, request_hash
+                    )
                 candidate = replace(
                     old,
                     agents=agents,
