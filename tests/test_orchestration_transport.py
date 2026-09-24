@@ -91,6 +91,52 @@ def test_fresh_stream_validated_and_canonical(config):
     assert replay[-1]["exchange_id"] == events[-1]["exchange_id"]
 
 
+@pytest.mark.parametrize("failures", [1, 2])
+@pytest.mark.parametrize(
+    "boundary", [None, "question_failed", "agent_retried", "question_answered"]
+)
+def test_question_retry_resume_and_completed_replay(config, failures, boundary):
+    class FailingModel(Model):
+        remaining = failures
+
+        def invoke(self, messages):
+            if messages[0].content.startswith("QUESTION-HANDLER:") and self.remaining:
+                self.remaining -= 1
+                raise RuntimeError("Synthetic handler failure")
+            return super().invoke(messages)
+
+    executor = Executor(FailingModel())
+    iterator = stream(config, REQUEST, executor=executor)
+    first = []
+    try:
+        for event in iterator:
+            first.append(event)
+            if event["event"] == boundary:
+                break
+    finally:
+        iterator.close()
+    validator = StreamValidator("session", "run", "turn")
+    for event in first:
+        validator.accept(loads(json.dumps(event)))
+    assert any(e["event"] == "question_failed" for e in first)
+    resumed = collect(
+        config, dict(REQUEST, command="orchestration_resume"), executor=executor
+    )
+    assert resumed[-1]["event"] == "done", resumed
+    validator = StreamValidator("session", "run", "turn")
+    for event in resumed:
+        validator.accept(loads(json.dumps(event)))
+    replay = collect(config)
+    assert [e["event"] for e in replay] == ["snapshot", "done"]
+    assert (
+        replay[0]["snapshot"]["exchange_id"]
+        == replay[-1]["exchange_id"]
+        == resumed[-1]["exchange_id"]
+    )
+    with SQLiteHistoryStore(config.database_path) as history:
+        assert len(history.get_messages("session")) == 2
+
+
 def test_close_resume_and_trace(config):
     events = stream(config, REQUEST, executor=Executor())
     first = next(events)

@@ -144,6 +144,34 @@ pub fn validate_event(value: &Value) -> Checked<()> {
 
 // Value's default deserializer silently accepts duplicate keys. Reject them at
 // every nesting level before the allowlist validator sees the payload.
+fn integer_fields() -> &'static HashSet<String> {
+    static FIELDS: OnceLock<HashSet<String>> = OnceLock::new();
+    FIELDS.get_or_init(|| {
+        std::iter::once(schema()["envelope"].as_object().unwrap())
+            .chain(
+                schema()["events"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .filter_map(Value::as_object),
+            )
+            .chain(
+                schema()["types"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .filter_map(|r| r["fields"].as_object()),
+            )
+            .flat_map(|fields| fields.iter())
+            .filter(|(_, name)| {
+                schema()["types"][name.as_str().unwrap()]["kind"] == "int"
+                    || *name == "optional_exchange"
+            })
+            .map(|(key, _)| key.clone())
+            .collect()
+    })
+}
+
 struct Unique(Value);
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -188,6 +216,14 @@ impl<'de> Deserialize<'de> for Unique {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Unique, A::Error> {
                 let mut fields = Map::new();
                 while let Some((key, Unique(value))) = map.next_entry::<String, Unique>()? {
+                    // serde_json retains -0, fractions and exponents as floats;
+                    // only unsigned decimal tokens produce a bounded integer.
+                    if integer_fields().contains(&key)
+                        && !value.is_null()
+                        && value.as_u64().is_none()
+                    {
+                        return Err(de::Error::custom(ERROR));
+                    }
                     if fields.insert(key, value).is_some() {
                         return Err(de::Error::custom(ERROR));
                     }
@@ -213,6 +249,22 @@ fn array<'a>(v: &'a Value, key: &str) -> &'a Vec<Value> {
 }
 fn terminal_work(v: &Value) -> bool {
     matches!(v.as_str(), Some("completed" | "failed" | "cancelled"))
+}
+
+fn question_transition(old: &Value, new: &Value) -> bool {
+    matches!(
+        (old.as_str(), new.as_str()),
+        (Some("queued"), Some("running" | "cancelled"))
+            | (
+                Some("running"),
+                Some("waiting" | "completed" | "failed" | "cancelled")
+            )
+            | (
+                Some("waiting"),
+                Some("running" | "completed" | "failed" | "cancelled")
+            )
+            | (Some("failed"), Some("queued"))
+    )
 }
 
 fn ranked(items: &[Value]) -> Checked<()> {
@@ -308,12 +360,20 @@ fn snapshot(state: &Value) -> Checked<()> {
             return Err(ERROR);
         }
     }
-    if state["status"] == "completed"
-        && (state["exchange_id"].is_null()
-            || array(state, "questions")
+    if state["status"] == "completed" && state["exchange_id"].is_null() {
+        return Err(ERROR);
+    }
+    if !state["exchange_id"].is_null()
+        && (!matches!(
+            state["status"].as_str(),
+            Some("running" | "interrupted" | "completed")
+        ) || array(state, "questions")
+            .iter()
+            .chain(agents)
+            .any(|x| !terminal_work(&x["status"]))
+            || !agents
                 .iter()
-                .chain(agents)
-                .any(|x| !terminal_work(&x["status"])))
+                .any(|a| a["kind"] == "finalizer" && a["status"] == "completed"))
     {
         return Err(ERROR);
     }
@@ -327,6 +387,7 @@ pub struct Validator {
     state: Option<Value>,
     started: HashMap<String, Value>,
     completed: HashSet<String>,
+    question_retries: HashMap<String, String>,
     count: usize,
     final_text: String,
 }
@@ -343,6 +404,7 @@ impl Validator {
             state: None,
             started: HashMap::new(),
             completed: HashSet::new(),
+            question_retries: HashMap::new(),
             count: 0,
             final_text: String::new(),
         })
@@ -390,6 +452,14 @@ impl Validator {
     fn transition(&mut self, event: &Value) -> Checked<()> {
         let kind = event["event"].as_str().unwrap();
         let state = self.state.as_mut().ok_or(ERROR)?;
+        if kind != "done"
+            && (matches!(
+                state["status"].as_str(),
+                Some("completed" | "failed" | "discarded")
+            ) || !state["exchange_id"].is_null())
+        {
+            return Err(ERROR);
+        }
         if kind.starts_with("question_") || kind.starts_with("agent_") {
             let question = kind.starts_with("question_");
             let (name, key, field) = if question {
@@ -398,7 +468,7 @@ impl Validator {
                 ("agents", "agent_id", "agent")
             };
             let item = &event[field];
-            let items = state[name].as_array_mut().unwrap();
+            let items = array(state, name);
             let old = items.iter().find(|i| i[key] == item[key]);
             if question {
                 if (kind == "question_added") != old.is_none() {
@@ -408,7 +478,10 @@ impl Validator {
                     if ["text", "parent_id", "depth"]
                         .iter()
                         .any(|k| old[k] != item[k])
-                        || matches!(old["status"].as_str(), Some("completed" | "cancelled"))
+                        || !question_transition(&old["status"], &item["status"])
+                        || self
+                            .question_retries
+                            .contains_key(item["question_id"].as_str().unwrap())
                     {
                         return Err(ERROR);
                     }
@@ -431,6 +504,32 @@ impl Validator {
                             ))
                 }) {
                     return Err(ERROR);
+                }
+                let handlers: Vec<_> = array(state, "agents")
+                    .iter()
+                    .filter(|a| a["kind"] == "question" && a["question_id"] == item["question_id"])
+                    .collect();
+                if matches!(kind, "question_answered" | "question_failed")
+                    && !handlers.iter().any(|a| a["status"] == "running")
+                {
+                    return Err(ERROR);
+                }
+                if old.is_some_and(|o| o["status"] == "failed") {
+                    let eligible: Vec<_> = handlers
+                        .iter()
+                        .filter(|a| {
+                            a["status"] == "failed"
+                                && a["retry_count"].as_u64().unwrap()
+                                    < schema()["types"]["retry"]["max"].as_u64().unwrap()
+                        })
+                        .collect();
+                    if eligible.len() != 1 {
+                        return Err(ERROR);
+                    }
+                    self.question_retries.insert(
+                        item["question_id"].as_str().unwrap().into(),
+                        eligible[0]["agent_id"].as_str().unwrap().into(),
+                    );
                 }
             } else {
                 if kind == "agent_started"
@@ -470,7 +569,33 @@ impl Validator {
                         return Err(ERROR);
                     }
                 }
+                if item["kind"] == "question" && matches!(kind, "agent_started" | "agent_retried") {
+                    let question = array(state, "questions")
+                        .iter()
+                        .find(|q| q["question_id"] == item["question_id"])
+                        .ok_or(ERROR)?;
+                    let expected = if kind == "agent_started" {
+                        "running"
+                    } else {
+                        "queued"
+                    };
+                    if question["status"] != expected {
+                        return Err(ERROR);
+                    }
+                    let id = item["question_id"].as_str().unwrap();
+                    if kind == "agent_retried" {
+                        if self.question_retries.get(id).map(String::as_str)
+                            != item["agent_id"].as_str()
+                        {
+                            return Err(ERROR);
+                        }
+                        self.question_retries.remove(id);
+                    } else if self.question_retries.contains_key(id) {
+                        return Err(ERROR);
+                    }
+                }
             }
+            let items = state[name].as_array_mut().unwrap();
             items.retain(|i| i[key] != item[key]);
             items.push(item.clone());
         } else if kind.starts_with("tool_") {
@@ -536,6 +661,12 @@ impl Validator {
             validate_type(&json!(self.final_text), "reply")?;
         } else if kind == "done" {
             if !self.started.is_empty()
+                || !self.question_retries.is_empty()
+                || !matches!(
+                    state["status"].as_str(),
+                    Some("running" | "interrupted" | "completed")
+                )
+                || (!state["exchange_id"].is_null() && state["exchange_id"] != event["exchange_id"])
                 || (!self.final_text.is_empty() && event["reply"] != self.final_text)
                 || array(state, "questions")
                     .iter()
@@ -569,6 +700,8 @@ impl Validator {
                     return Err(ERROR);
                 }
             }
+            state["exchange_id"] = event["exchange_id"].clone();
+            state["status"] = json!("completed");
         }
         snapshot(state)
     }
@@ -589,6 +722,166 @@ pub fn golden() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cases() -> Value {
+        serde_json::from_str(include_str!(
+            "../../../tests/fixtures/orchestration-wire-cases.json"
+        ))
+        .unwrap()
+    }
+
+    fn update(value: &mut Value, changes: &Value) {
+        if let Some(fields) = changes["set"].as_object() {
+            for (pointer, replacement) in fields {
+                *value.pointer_mut(pointer).unwrap() = replacement.clone();
+            }
+        }
+        if let Some(keys) = changes["remove"].as_array() {
+            for key in keys {
+                value.as_object_mut().unwrap().remove(key.as_str().unwrap());
+            }
+        }
+    }
+
+    fn stream_case(case: &Value) -> Vec<Value> {
+        let base = golden();
+        let mut events = base[..case["prefix"].as_u64().unwrap_or(0) as usize].to_vec();
+        if let Some(setup) = case.get("snapshot") {
+            let after = setup["after"].as_u64().unwrap() as usize;
+            let mut validator = Validator::new("session", "run", "turn").unwrap();
+            for event in &base[..after] {
+                validator.accept(event).unwrap();
+            }
+            let mut state = validator.state.unwrap();
+            update(&mut state, setup);
+            let checkpoint = base[after - 1]["sequence"].as_u64().unwrap() / 1024;
+            state["checkpoint_sequence"] = json!(checkpoint);
+            let mut event = base[0].clone();
+            event["snapshot"] = state;
+            event["sequence"] = json!(checkpoint * 1024 + 900);
+            events = vec![event];
+        }
+        for step in array(case, "steps") {
+            let index = step
+                .as_u64()
+                .unwrap_or_else(|| step["base"].as_u64().unwrap());
+            let mut event = base[index as usize].clone();
+            if step.is_object() {
+                update(&mut event, step);
+            }
+            event["sequence"] = json!(events.last().unwrap()["sequence"].as_u64().unwrap() + 1);
+            events.push(event);
+        }
+        events
+    }
+
+    fn accepts(events: &[Value]) -> bool {
+        let mut validator = Validator::new("session", "run", "turn").unwrap();
+        for event in events {
+            if let Err(error) = parse(&event.to_string()).and_then(|e| validator.accept(&e)) {
+                assert_eq!(error, ERROR);
+                if !validator.terminal {
+                    validator.accept(&validator.error()).unwrap();
+                    assert!(validator.terminal);
+                }
+                return false;
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn shared_integer_lexing() {
+        let corpus = cases();
+        let bindings = array(&corpus, "integer_fields");
+        assert_eq!(
+            bindings
+                .iter()
+                .map(|b| b[0].as_str().unwrap().to_owned())
+                .collect::<HashSet<_>>(),
+            *integer_fields()
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .map(|b| b[1].as_str().unwrap())
+                .collect::<HashSet<_>>(),
+            schema()["types"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(_, r)| r["kind"] == "int")
+                .map(|(n, _)| n.as_str())
+                .collect()
+        );
+        for binding in bindings {
+            let key = binding[0].as_str().unwrap();
+            let name = binding[1].as_str().unwrap();
+            let rule = &schema()["types"][name];
+            let min = rule["min"].as_u64().unwrap();
+            let max = rule["max"].as_u64().unwrap();
+            let mut lexical = array(&corpus, "lexical").clone();
+            lexical.extend([min, max, max + 1].map(|n| json!({"raw":n.to_string(),"integer":n})));
+            for case in &lexical {
+                let expected = case["integer"]
+                    .as_u64()
+                    .is_some_and(|n| min <= n && n <= max);
+                for encoded in [
+                    json!(key).to_string(),
+                    format!("\"\\u{:04x}{}\"", key.as_bytes()[0], &key[1..]),
+                ] {
+                    let raw = format!(
+                        "{{\"nested\":[{{{encoded}:{}}}]}}",
+                        case["raw"].as_str().unwrap()
+                    );
+                    let result =
+                        parse(&raw).and_then(|v| validate_type(&v["nested"][0][key], name));
+                    assert_eq!(result.is_ok(), expected, "{key}/{name}: {raw}");
+                    if !expected {
+                        assert_eq!(result, Err(ERROR));
+                    }
+                }
+            }
+        }
+        for raw in ["-0", "-1", "0.5", "1e2"] {
+            assert!(parse(&format!("{{\"score\":{raw}}}"))
+                .and_then(|v| validate_type(&v["score"], "score"))
+                .is_ok());
+        }
+    }
+
+    #[test]
+    fn shared_stream_cases_and_question_permutations() {
+        let corpus = cases();
+        for case in array(&corpus, "streams") {
+            assert_eq!(
+                accepts(&stream_case(case)),
+                case["valid"].as_bool().unwrap(),
+                "{}",
+                case["name"]
+            );
+        }
+        let table = corpus["question_transitions"].as_object().unwrap();
+        for (old, allowed) in table {
+            for new in table.keys() {
+                assert_eq!(
+                    question_transition(&json!(old), &json!(new)),
+                    allowed.as_array().unwrap().contains(&json!(new))
+                );
+            }
+        }
+        for a in [6, 7, 10] {
+            for b in [6, 7, 10] {
+                for c in [6, 7, 10] {
+                    if a == b || b == c || a == c {
+                        continue;
+                    }
+                    let case = json!({"prefix":6,"steps":[a,b,c]});
+                    assert_eq!(accepts(&stream_case(&case)), [a, b, c] == [6, 7, 10]);
+                }
+            }
+        }
+    }
 
     #[test]
     fn shared_type_boundary_corpus() {

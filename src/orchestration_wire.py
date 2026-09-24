@@ -13,6 +13,23 @@ from pathlib import Path
 
 SCHEMA = json.loads(Path(__file__).with_suffix(".json").read_text())
 ERROR = SCHEMA["error_message"]
+INTEGER_FIELDS = {
+    key
+    for fields in [SCHEMA["envelope"], *SCHEMA["events"].values()]
+    + [rule["fields"] for rule in SCHEMA["types"].values() if rule["kind"] == "object"]
+    for key, name in fields.items()
+    if SCHEMA["types"][name]["kind"] == "int" or name == "optional_exchange"
+}
+
+# Question changes precede the associated tool/agent changes in a checkpoint.
+QUESTION_TRANSITIONS = {
+    "queued": {"running", "cancelled"},
+    "running": {"waiting", "completed", "failed", "cancelled"},
+    "waiting": {"running", "completed", "failed", "cancelled"},
+    "failed": {"queued"},
+    "completed": set(),
+    "cancelled": set(),
+}
 
 
 def safe_text(value: str) -> bool:
@@ -97,13 +114,32 @@ def loads(line: str):
         for key, value in items:
             if key in result:
                 raise ValueError(ERROR)
+            if (
+                key in INTEGER_FIELDS
+                and value is not None
+                and (type(value) is not int or value < 0)
+            ):
+                raise ValueError(ERROR)
             result[key] = value
         return result
+
+    def integer(token):
+        # Preserve signed zero as non-integral, as serde_json does. Scores may
+        # use it, but bounded integer fields must retain unsigned decimal lexing.
+        return float(token) if token == "-0" else int(token)
+
+    def invalid_constant(_):
+        raise ValueError(ERROR)
 
     try:
         if len(line.encode("utf-8")) > SCHEMA["max_bytes"]:
             raise ValueError(ERROR)
-        return json.loads(line, object_pairs_hook=pairs)
+        return json.loads(
+            line,
+            object_pairs_hook=pairs,
+            parse_int=integer,
+            parse_constant=invalid_constant,
+        )
     except (ValueError, TypeError, RecursionError, UnicodeError):
         raise ValueError(ERROR) from None
 
@@ -143,6 +179,7 @@ class StreamValidator:
         self.snapshot = None
         self.started_tools = {}
         self.completed_tools = set()
+        self.question_retries = {}
         self.count = 0
         self.final_text = ""
 
@@ -213,11 +250,17 @@ class StreamValidator:
                 or (t["question_id"] is not None and t["question_id"] not in questions)
             ):
                 raise ValueError(ERROR)
-        if state["status"] == "completed" and (
-            state["exchange_id"] is None
+        if state["status"] == "completed" and state["exchange_id"] is None:
+            raise ValueError(ERROR)
+        if state["exchange_id"] is not None and (
+            state["status"] not in ("running", "interrupted", "completed")
             or any(
                 x["status"] not in ("completed", "failed", "cancelled")
                 for x in state["questions"] + state["agents"]
+            )
+            or not any(
+                a["kind"] == "finalizer" and a["status"] == "completed"
+                for a in state["agents"]
             )
         ):
             raise ValueError(ERROR)
@@ -241,6 +284,11 @@ class StreamValidator:
 
     def _transition(self, event):
         kind, state = event["event"], self.snapshot
+        if kind != "done" and (
+            state["status"] in ("completed", "failed", "discarded")
+            or state["exchange_id"] is not None
+        ):
+            raise ValueError(ERROR)
         if kind.startswith("question_"):
             item = event["question"]
             old = next(
@@ -257,7 +305,8 @@ class StreamValidator:
                 old["text"] != item["text"]
                 or old["parent_id"] != item["parent_id"]
                 or old["depth"] != item["depth"]
-                or old["status"] in ("completed", "cancelled")
+                or item["status"] not in QUESTION_TRANSITIONS[old["status"]]
+                or item["question_id"] in self.question_retries
             ):
                 raise ValueError(ERROR)
             expected = {
@@ -276,6 +325,25 @@ class StreamValidator:
                 )
             ):
                 raise ValueError(ERROR)
+            handlers = [
+                a
+                for a in state["agents"]
+                if a["kind"] == "question" and a["question_id"] == item["question_id"]
+            ]
+            if kind in ("question_answered", "question_failed") and not any(
+                a["status"] == "running" for a in handlers
+            ):
+                raise ValueError(ERROR)
+            if old and old["status"] == "failed":
+                eligible = [
+                    a
+                    for a in handlers
+                    if a["status"] == "failed"
+                    and a["retry_count"] < SCHEMA["types"]["retry"]["max"]
+                ]
+                if len(eligible) != 1:
+                    raise ValueError(ERROR)
+                self.question_retries[item["question_id"]] = eligible[0]["agent_id"]
             state["questions"] = [q for q in state["questions"] if q != old] + [item]
         elif kind.startswith("agent_"):
             item = event["agent"]
@@ -314,6 +382,30 @@ class StreamValidator:
                 )
             ):
                 raise ValueError(ERROR)
+            if item["kind"] == "question" and kind in (
+                "agent_started",
+                "agent_retried",
+            ):
+                question = next(
+                    (
+                        q
+                        for q in state["questions"]
+                        if q["question_id"] == item["question_id"]
+                    ),
+                    None,
+                )
+                expected = "running" if kind == "agent_started" else "queued"
+                if question is None or question["status"] != expected:
+                    raise ValueError(ERROR)
+                if kind == "agent_retried":
+                    if (
+                        self.question_retries.get(item["question_id"])
+                        != item["agent_id"]
+                    ):
+                        raise ValueError(ERROR)
+                    del self.question_retries[item["question_id"]]
+                elif item["question_id"] in self.question_retries:
+                    raise ValueError(ERROR)
             state["agents"] = [a for a in state["agents"] if a != old] + [item]
         elif kind.startswith("tool_"):
             tool = event["tool"]
@@ -370,6 +462,12 @@ class StreamValidator:
         elif kind == "done":
             if (
                 self.started_tools
+                or self.question_retries
+                or state["status"] not in ("running", "interrupted", "completed")
+                or (
+                    state["exchange_id"] is not None
+                    and state["exchange_id"] != event["exchange_id"]
+                )
                 or (self.final_text and self.final_text != event["reply"])
                 or any(
                     q["status"] not in ("completed", "failed", "cancelled")
@@ -394,5 +492,7 @@ class StreamValidator:
                 for s in event["sources"]
             ):
                 raise ValueError(ERROR)
+            state["exchange_id"] = event["exchange_id"]
+            state["status"] = "completed"
         validate_type(state, "snapshot")
         self._snapshot()
