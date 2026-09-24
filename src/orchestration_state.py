@@ -195,7 +195,7 @@ class AgentState:
 @dataclass(frozen=True)
 class EvidenceState:
     evidence_id: str
-    question_id: str
+    question_id: str | None
     paper_id: str
     chunk_index: int
     snippet: str
@@ -203,8 +203,10 @@ class EvidenceState:
     page: int | None = None
 
     def __post_init__(self) -> None:
-        for value in (self.evidence_id, self.question_id, self.paper_id):
+        for value in (self.evidence_id, self.paper_id):
             identifier(value)
+        if self.question_id is not None:
+            identifier(self.question_id)
         integer(self.chunk_index, 0, 2**31 - 1)
         if self.page is not None:
             integer(self.page, 1, 2**31 - 1)
@@ -291,12 +293,25 @@ class Checkpoint:
         for question in questions.values():
             if not set(question.evidence_ids) <= evidence.keys():
                 raise StateValidationError("Unknown question evidence")
+            if any(evidence[i].question_id is None for i in question.evidence_ids):
+                raise StateValidationError("Question evidence requires a question")
         for agent in agents.values():
             if agent.question_id is not None and agent.question_id not in questions:
                 raise StateValidationError("Unknown agent question")
         for item in evidence.values():
-            if item.question_id not in questions:
+            if item.question_id is not None and item.question_id not in questions:
                 raise StateValidationError("Unknown evidence question")
+            if item.question_id is None and not any(
+                t.tool_name is ToolName.RETRIEVE_CONTEXT
+                and t.question_id is None
+                and item.evidence_id in t.evidence_ids
+                and t.agent_id in agents
+                and agents[t.agent_id].kind is AgentKind.INTAKE
+                for t in tools.values()
+            ):
+                raise StateValidationError(
+                    "Unassigned evidence requires intake receipt"
+                )
         for tool in tools.values():
             if (
                 tool.agent_id not in agents
@@ -305,6 +320,12 @@ class Checkpoint:
                 or not set(tool.evidence_ids) <= evidence.keys()
             ):
                 raise StateValidationError("Unknown tool result reference")
+            if any(evidence[i].question_id is None for i in tool.evidence_ids) and (
+                agents[tool.agent_id].kind is not AgentKind.INTAKE
+                or tool.tool_name is not ToolName.RETRIEVE_CONTEXT
+                or tool.question_id is not None
+            ):
+                raise StateValidationError("Unassigned evidence is intake-only")
         if sum(a.status is WorkStatus.RUNNING for a in agents.values()) > 4:
             raise StateValidationError("Too many running agents")
         if self.run.status is RunStatus.COMPLETED and (

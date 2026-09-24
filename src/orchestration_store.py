@@ -21,6 +21,7 @@ from .orchestration_state import (
     MAX_EVENTS,
     TERMINAL_RUNS,
     TERMINAL_WORK,
+    AgentKind,
     Checkpoint,
     ErrorCode,
     EventKind,
@@ -812,12 +813,15 @@ def _validate_transition(old: Checkpoint, new: Checkpoint) -> None:
                     raise TransitionConflictError("New work must be queued")
                 continue
             previous = before[index]
-            if (
-                any(
-                    getattr(previous, field) != getattr(item, field)
-                    for field in immutable
+            if any(
+                getattr(previous, field) != getattr(item, field) for field in immutable
+            ) or (
+                item.status not in _WORK_TRANSITIONS[previous.status]
+                and not (
+                    name == "questions"
+                    and previous.status is WorkStatus.QUEUED
+                    and item.status is WorkStatus.COMPLETED
                 )
-                or item.status not in _WORK_TRANSITIONS[previous.status]
             ):
                 raise TransitionConflictError("Invalid work transition")
             retry = (
@@ -892,3 +896,10 @@ def _validate_transition(old: Checkpoint, new: Checkpoint) -> None:
             or not new_evidence <= set(tool.evidence_ids)
         ):
             raise TransitionConflictError("Evidence effect does not match its receipt")
+        if any(
+            e.evidence_id in new_evidence and e.question_id is None
+            for e in new.evidence
+        ) and (agent.kind is not AgentKind.INTAKE or tool.question_id is not None):
+            raise TransitionConflictError(
+                "Unassigned evidence requires intake retrieval"
+            )
