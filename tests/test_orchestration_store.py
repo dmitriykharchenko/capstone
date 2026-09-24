@@ -184,7 +184,7 @@ def test_history_is_untouched_and_wrong_database_rejected(tmp_path):
     "mutation",
     [
         "PRAGMA user_version = 0",
-        "PRAGMA user_version = 3",
+        "PRAGMA user_version = 4",
         "PRAGMA user_version = 1",
         "PRAGMA application_id = 0",
         "ALTER TABLE runs ADD COLUMN unexpected TEXT",
@@ -1123,6 +1123,8 @@ def test_noop_receipt_limit_rejects_new_ids_but_retains_replay(store, monkeypatc
 def test_exact_v1_upgrade_preserves_journal_and_enables_noop_receipts(store):
     original = queued(store)
     events = store.events(*ARGS)
+    execute(store.database_path, "DROP TABLE source_display")
+    execute(store.database_path, "DROP TABLE adapter_requests")
     execute(store.database_path, "DROP TABLE noop_receipts")
     execute(store.database_path, "PRAGMA user_version = 1")
     store.close()
@@ -1146,6 +1148,8 @@ def test_exact_v1_upgrade_preserves_journal_and_enables_noop_receipts(store):
 def test_v1_upgrade_rolls_back_on_receipt_schema_error(store, monkeypatch):
     import src.orchestration_store as module
 
+    execute(store.database_path, "DROP TABLE source_display")
+    execute(store.database_path, "DROP TABLE adapter_requests")
     execute(store.database_path, "DROP TABLE noop_receipts")
     execute(store.database_path, "PRAGMA user_version = 1")
     store.close()
@@ -1170,6 +1174,8 @@ def test_v1_upgrade_rolls_back_on_receipt_schema_error(store, monkeypatch):
 )
 def test_v1_upgrade_crash_is_atomic(store, tmp_path, crash_point):
     original = queued(store)
+    execute(store.database_path, "DROP TABLE source_display")
+    execute(store.database_path, "DROP TABLE adapter_requests")
     execute(store.database_path, "DROP TABLE noop_receipts")
     execute(store.database_path, "PRAGMA user_version = 1")
     store.close()

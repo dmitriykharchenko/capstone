@@ -59,6 +59,19 @@ def main() -> int:
         _emit({"ok": False, "error": "request must be a JSON object"})
         return 1
     config = CLIConfig.from_env()
+    from .orchestration import STREAM_COMMANDS, READ_COMMANDS, control, emit_stream
+
+    if request.get("command") in STREAM_COMMANDS:
+        return emit_stream(config, request, _emit)
+    if request.get("command") in READ_COMMANDS:
+        try:
+            _emit(control(config, request))
+            return 0
+        except Exception:
+            from ..orchestration_wire import ERROR
+
+            _emit({"ok": False, "error": ERROR})
+            return 1
     if request.get("command") == "chat" and request.get("stream"):
         return _run_stream(
             stream_command("chat", request, lambda: handle_chat_stream(config, request))

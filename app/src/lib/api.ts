@@ -3,6 +3,8 @@
 // while chat/sessions/messages/search/health are proxied to the Python CLI.
 
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { orchestrationApi } from "./orchestration-api";
+export type { OrchestrationEvent, SnapshotEvent, TurnIdentity } from "./orchestration-api";
 import {
   parseGraphNeighborhoodPayload,
   type GraphNeighborhoodResponse,
@@ -178,6 +180,7 @@ export type IndexStreamEvent =
   | { event: "error"; message: string };
 
 export const api = {
+  ...orchestrationApi,
   listPapers: () => invoke<PaperInfo[]>("list_papers"),
   getPaper: (paperId: string) => invoke<PaperInfo>("get_paper", { paperId }),
   readPdf: (paperId: string) => invoke<PdfData>("read_pdf", { paperId }),

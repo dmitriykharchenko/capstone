@@ -9,6 +9,9 @@ mod bridge;
 mod error;
 mod evaluation;
 mod graph;
+mod orchestration;
+mod orchestration_bridge;
+mod orchestration_wire;
 mod papers;
 
 use error::CommandError;
@@ -702,6 +705,11 @@ pub fn run() {
             health,
             chat,
             chat_stream,
+            orchestration::orchestration_start,
+            orchestration::orchestration_resume,
+            orchestration::orchestration_pending,
+            orchestration::orchestration_discard,
+            orchestration::orchestration_trace,
             list_sessions,
             get_messages,
             search,

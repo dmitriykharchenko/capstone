@@ -39,7 +39,7 @@ from .orchestration_state import (
 
 DEFAULT_DATABASE_PATH = Path("data/chat_orchestration.sqlite3")
 APPLICATION_ID = 0x4F524348
-DATABASE_SCHEMA_VERSION = 2  # Checkpoint/event serialization remains version 1.
+DATABASE_SCHEMA_VERSION = 3  # Checkpoint/event serialization remains version 1.
 _SCHEMA = (
     """CREATE TABLE runs (
         run_id TEXT PRIMARY KEY NOT NULL,
@@ -77,6 +77,20 @@ _SCHEMA = (
         receipt_hash TEXT NOT NULL,
         PRIMARY KEY (run_id, operation_id),
         FOREIGN KEY (run_id, sequence) REFERENCES checkpoints(run_id, sequence)
+    )""",
+    """CREATE TABLE adapter_requests (
+        run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(run_id),
+        turn_id TEXT UNIQUE NOT NULL,
+        payload TEXT NOT NULL,
+        payload_hash TEXT NOT NULL
+    )""",
+    """CREATE TABLE source_display (
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        paper_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        title TEXT NOT NULL,
+        PRIMARY KEY (run_id, paper_id, chunk_index)
     )""",
 )
 
@@ -128,7 +142,7 @@ def _layout(connection: sqlite3.Connection) -> set[str]:
 
 
 class SQLiteOrchestrationStore:
-    """Application-owned schema v2; only the exact v1 layout is upgraded on open.
+    """Application-owned schema v3; only exact prior layouts are upgraded on open.
 
     ``commit`` accepts a replacement snapshot at its *current* sequence. It
     atomically compares that revision, validates the transition, increments the
@@ -186,11 +200,13 @@ class SQLiteOrchestrationStore:
                 connection.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             elif (
                 initialize
-                and version == 1
+                and version in (1, 2)
                 and application == APPLICATION_ID
-                and layout == {_normalized(sql) for sql in _SCHEMA[:-1]}
+                and layout
+                == {_normalized(sql) for sql in _SCHEMA[: 4 if version == 1 else 5]}
             ):
-                connection.execute(_SCHEMA[-1])
+                for statement in _SCHEMA[4 if version == 1 else 5 :]:
+                    connection.execute(statement)
                 connection.execute(f"PRAGMA user_version = {DATABASE_SCHEMA_VERSION}")
             elif (
                 version != DATABASE_SCHEMA_VERSION
@@ -500,7 +516,12 @@ class SQLiteOrchestrationStore:
         return snapshot
 
     def create_run(
-        self, session_id: str, graph_version: str, *, run_id: str | None = None
+        self,
+        session_id: str,
+        graph_version: str,
+        *,
+        run_id: str | None = None,
+        request=None,
     ) -> Checkpoint:
         snapshot = Checkpoint(
             RunState(
@@ -511,6 +532,12 @@ class SQLiteOrchestrationStore:
             0,
         )
         request_hash = _digest(encode(snapshot))
+        if request is not None:
+            from .orchestration_request import RunRequest
+
+            if type(request) is not RunRequest:
+                raise StateValidationError("Invalid adapter request")
+            payload = request.encode()
         with self._transaction(write=True) as connection:
             if connection.execute(
                 "SELECT 1 FROM runs WHERE run_id = ?", (snapshot.run.run_id,)
@@ -521,10 +548,107 @@ class SQLiteOrchestrationStore:
                 replay = self._replay(connection, current, "create", request_hash)
                 if replay is None:
                     raise CorruptCheckpointError("Missing run creation receipt")
+                if request is not None:
+                    row = connection.execute(
+                        "SELECT payload, payload_hash FROM adapter_requests WHERE run_id = ?",
+                        (snapshot.run.run_id,),
+                    ).fetchone()
+                    if row is None or row[0] != payload or row[1] != _digest(payload):
+                        raise TransitionConflictError("Incompatible adapter request")
                 return replay
-            return self._write(
+            if (
+                request is not None
+                and connection.execute(
+                    "SELECT 1 FROM runs WHERE session_id = ? AND status IN ('running', 'interrupted')",
+                    (session_id,),
+                ).fetchone()
+            ):
+                raise TransitionConflictError("Session already has a pending run")
+            result = self._write(
                 connection, snapshot, "create", request_hash, EventKind.CREATED
             )
+            if request is not None:
+                connection.execute(
+                    "INSERT INTO adapter_requests VALUES (?, ?, ?, ?)",
+                    (snapshot.run.run_id, request.turn_id, payload, _digest(payload)),
+                )
+            return result
+
+    def request(self, run_id: str, session_id: str, graph_version: str):
+        from .orchestration_request import RunRequest
+
+        with self._transaction() as connection:
+            self._load(connection, run_id, session_id, graph_version)
+            row = connection.execute(
+                "SELECT CASE WHEN length(CAST(payload AS BLOB)) <= 4096 THEN payload END, "
+                "payload_hash FROM adapter_requests WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None or row[0] is None or _digest(row[0]) != row[1]:
+                raise CorruptCheckpointError("Missing or invalid adapter request")
+            return RunRequest.decode(row[0])
+
+    def remember_sources(self, run_id, session_id, graph_version, sources):
+        """Persist display metadata only, bounded and immutable per source key."""
+        from .orchestration_wire import validate_type
+
+        if type(sources) is not list or len(sources) > 5:
+            raise StateValidationError("Invalid display metadata")
+        for source in sources:
+            if type(source) is not dict or set(source) != {
+                "paper_id",
+                "chunk_index",
+                "filename",
+                "title",
+            }:
+                raise StateValidationError("Invalid display metadata")
+            for key, name in (
+                ("paper_id", "id"),
+                ("chunk_index", "chunk"),
+                ("filename", "label"),
+                ("title", "label"),
+            ):
+                validate_type(source[key], name)
+        with self._transaction(write=True) as connection:
+            snapshot = self._load(connection, run_id, session_id, graph_version)
+            if snapshot.run.status is not RunStatus.RUNNING:
+                raise TransitionConflictError("Inactive run")
+            for source in sources:
+                connection.execute(
+                    "INSERT OR IGNORE INTO source_display VALUES (?, ?, ?, ?, ?)",
+                    (
+                        run_id,
+                        source["paper_id"],
+                        source["chunk_index"],
+                        source["filename"],
+                        source["title"],
+                    ),
+                )
+            if (
+                connection.execute(
+                    "SELECT count(*) FROM source_display WHERE run_id = ?", (run_id,)
+                ).fetchone()[0]
+                > 256
+            ):
+                raise StateValidationError("Display metadata budget exceeded")
+
+    def source_display(self, run_id, session_id, graph_version):
+        from .orchestration_wire import validate_type
+
+        with self._transaction() as connection:
+            self._load(connection, run_id, session_id, graph_version)
+            rows = connection.execute(
+                "SELECT paper_id, chunk_index, filename, title FROM source_display WHERE run_id = ? LIMIT 257",
+                (run_id,),
+            ).fetchall()
+        if len(rows) > 256:
+            raise CorruptCheckpointError("Display metadata budget exceeded")
+        result = {}
+        for row in rows:
+            for value, name in zip(row, ("id", "chunk", "label", "label")):
+                validate_type(value, name)
+            result[(row[0], row[1])] = (row[2], row[3])
+        return result
 
     def commit(self, snapshot: Checkpoint, *, operation_id: str) -> Checkpoint:
         """Commit typed work changes and at most one tool receipt atomically.
