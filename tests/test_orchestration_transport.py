@@ -267,7 +267,31 @@ def golden():
 
 
 def test_golden_ndjson(config):
-    events = collect(config)
+    calls = []
+
+    class Retriever:
+        def retrieve_chunks(self, query, n_results):
+            calls.append((query, n_results))
+            return []
+
+    events = collect(config, retriever=Retriever())
+    assert calls == [(REQUEST["message"], 5)] * 2
+    retrieved = [
+        e
+        for e in events
+        if e["event"] == "tool_completed"
+        and e["tool"]["tool_name"] == "retrieve_context"
+    ]
+    assert len(retrieved) == 2
+    assert retrieved[0]["tool"]["agent_id"] == "intake"
+    assert retrieved[0]["tool"]["question_id"] is None
+    assert retrieved[1]["tool"]["agent_id"].startswith("handler-")
+    assert retrieved[0]["tool"]["tool_call_id"] != retrieved[1]["tool"]["tool_call_id"]
+    assert retrieved[0]["sequence"] < next(
+        e["sequence"] for e in events if e["event"] == "question_added"
+    )
+    assert collect(config, retriever=Retriever())[-1]["event"] == "done"
+    assert len(calls) == 2
     for event in events:
         for key in ("question", "agent", "tool"):
             item = event.get(key)
@@ -278,11 +302,26 @@ def test_golden_ndjson(config):
             if str(item.get("agent_id", "")).startswith("handler-"):
                 item["agent_id"] = "handler"
             if "tool_call_id" in item:
-                item["tool_call_id"] = item["tool_name"]
-    assert events == golden()
+                item["tool_call_id"] = (
+                    "intake_retrieve_context"
+                    if item["agent_id"] == "intake"
+                    and item["tool_name"] == "retrieve_context"
+                    else item["tool_name"]
+                )
+    expected = [
+        loads(line)
+        for line in (Path(__file__).parent / "fixtures/orchestration-fusion.ndjson")
+        .read_text()
+        .splitlines()
+    ]
+    assert len(events) == 22
+    assert events == expected
+    validator = StreamValidator("session", "run", "turn")
+    for event in expected:
+        validator.accept(deepcopy(event))
 
 
-@pytest.mark.parametrize("boundary", range(19))
+@pytest.mark.parametrize("boundary", range(22))
 def test_sigkill_recovery_at_every_golden_event(config, boundary):
     script = """
 import json,runpy,sys

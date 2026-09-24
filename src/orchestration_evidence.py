@@ -2,8 +2,14 @@
 
 from dataclasses import asdict, dataclass, replace
 
-from .orchestration_state import EvidenceState, integer
-from .orchestration_tools import ToolError, bounded_json, evidence_key, normalized
+from .orchestration_state import (
+    EvidenceState,
+    QuestionState,
+    WorkStatus,
+    integer,
+    records,
+)
+from .orchestration_tools import ToolError, bounded_json, evidence_groups, evidence_key
 
 COMPRESSION_PROMPT_RESERVE = 1024
 
@@ -54,7 +60,10 @@ def _size(records):
 
 
 def prepare_evidence(
-    values: tuple[EvidenceState, ...], budget: EvidenceBudget = EvidenceBudget()
+    values: tuple[EvidenceState, ...],
+    budget: EvidenceBudget = EvidenceBudget(),
+    *,
+    answered_questions: tuple[QuestionState, ...] | None = None,
 ) -> EvidencePacket:
     if (
         type(values) is not tuple
@@ -62,29 +71,31 @@ def prepare_evidence(
         or type(budget) is not EvidenceBudget
     ):
         raise ToolError("Invalid final evidence")
-    # Merge connected duplicate groups, retaining the best-ranked representative
-    # and the union of question coverage, even for a duplicate bridging groups.
-    groups = []
-    for item in values:
-        if type(item) is not EvidenceState or item.question_id is None:
-            raise ToolError("Final evidence must belong to an answered question")
-        item.__post_init__()
-    for item in sorted(values, key=evidence_key):
-        keys = {(item.paper_id, item.chunk_index), normalized(item.snippet)}
-        questions = {item.question_id}
-        representatives = [item]
-        remaining = []
-        for representative, existing_keys, covered in groups:
-            if keys & existing_keys:
-                keys |= existing_keys
-                questions |= covered
-                representatives.append(representative)
-            else:
-                remaining.append((representative, existing_keys, covered))
-        groups = remaining + [(min(representatives, key=evidence_key), keys, questions)]
+    groups = evidence_groups(values)
+    coverage = {}
+    if answered_questions is not None:
+        records(answered_questions, QuestionState, "question_id", 8)
+        known = {e.evidence_id for e in values}
+        for question in answered_questions:
+            if (
+                question.status is not WorkStatus.COMPLETED
+                or not set(question.evidence_ids) <= known
+            ):
+                raise ToolError("Invalid answered-question coverage")
+            for evidence_id in question.evidence_ids:
+                coverage.setdefault(evidence_id, set()).add(question.question_id)
+    else:
+        coverage = {
+            e.evidence_id: {e.question_id} for e in values if e.question_id is not None
+        }
+    # Coverage follows citations, not the representative's retrieval path. An
+    # Intake representative can cover several answered questions without cloning.
     ranked = tuple(
-        RankedEvidence(e, tuple(sorted(q)))
-        for e, _, q in sorted(groups, key=lambda g: evidence_key(g[0]))
+        RankedEvidence(
+            group[0],
+            tuple(sorted({q for e in group for q in coverage.get(e.evidence_id, ())})),
+        )
+        for group in groups
     )
     if _size(ranked) + 32 <= budget.final_bytes and len(ranked) <= budget.max_records:
         return EvidencePacket(ranked, False)

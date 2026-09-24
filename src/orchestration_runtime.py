@@ -51,6 +51,7 @@ from .orchestration_tools import (
     Retriever,
     ToolScope,
     digest,
+    final_evidence_ids,
     public_text,
 )
 
@@ -481,12 +482,7 @@ class OrchestrationRuntime:
         if type(result) is not FinalizerResult:
             raise ValueError("Invalid finalizer result")
         answer = FinalAnswer(result.assistant_text, result.evidence_ids)
-        allowed = {
-            i
-            for q in self.load().questions
-            if q.status is WorkStatus.COMPLETED
-            for i in q.evidence_ids
-        }
+        allowed = final_evidence_ids(self.load())
         if not set(answer.evidence_ids) <= allowed or (
             active.answer and active.answer != answer.assistant_text
         ):

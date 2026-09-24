@@ -293,8 +293,20 @@ class Checkpoint:
         for question in questions.values():
             if not set(question.evidence_ids) <= evidence.keys():
                 raise StateValidationError("Unknown question evidence")
-            if any(evidence[i].question_id is None for i in question.evidence_ids):
-                raise StateValidationError("Question evidence requires a question")
+            if any(
+                evidence[i].question_id is None for i in question.evidence_ids
+            ) and not any(
+                t.tool_name is ToolName.ANSWER_QUESTION
+                and t.question_id == question.question_id
+                and t.evidence_ids == question.evidence_ids
+                and t.agent_id in agents
+                and agents[t.agent_id].kind is AgentKind.QUESTION
+                and agents[t.agent_id].question_id == question.question_id
+                for t in tools.values()
+            ):
+                raise StateValidationError(
+                    "Intake citations require an authorized answer receipt"
+                )
         for agent in agents.values():
             if agent.question_id is not None and agent.question_id not in questions:
                 raise StateValidationError("Unknown agent question")
@@ -320,12 +332,23 @@ class Checkpoint:
                 or not set(tool.evidence_ids) <= evidence.keys()
             ):
                 raise StateValidationError("Unknown tool result reference")
-            if any(evidence[i].question_id is None for i in tool.evidence_ids) and (
-                agents[tool.agent_id].kind is not AgentKind.INTAKE
-                or tool.tool_name is not ToolName.RETRIEVE_CONTEXT
-                or tool.question_id is not None
-            ):
-                raise StateValidationError("Unassigned evidence is intake-only")
+            if any(evidence[i].question_id is None for i in tool.evidence_ids):
+                intake_retrieval = (
+                    agents[tool.agent_id].kind is AgentKind.INTAKE
+                    and tool.tool_name is ToolName.RETRIEVE_CONTEXT
+                    and tool.question_id is None
+                )
+                handler_answer = (
+                    agents[tool.agent_id].kind is AgentKind.QUESTION
+                    and tool.tool_name is ToolName.ANSWER_QUESTION
+                    and tool.question_id == agents[tool.agent_id].question_id
+                    and questions[tool.question_id].status is WorkStatus.COMPLETED
+                    and questions[tool.question_id].evidence_ids == tool.evidence_ids
+                )
+                if not (intake_retrieval or handler_answer):
+                    raise StateValidationError(
+                        "Intake evidence requires an authorized receipt"
+                    )
         if sum(a.status is WorkStatus.RUNNING for a in agents.values()) > 4:
             raise StateValidationError("Too many running agents")
         if self.run.status is RunStatus.COMPLETED and (

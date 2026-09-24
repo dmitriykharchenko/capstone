@@ -280,7 +280,8 @@ def test_retrieve_sort_dedup_cap_snippets_and_query_budget(store):
     assert "query" not in bounded_json(asdict(result.event))
     second = tools.retrieve_context("query", call_id="two")
     assert second.evidence == result.evidence
-    assert len(tools.snapshot().evidence) == 4
+    # Raw bounded variants retain aliases for global cross-query deduplication.
+    assert len(tools.snapshot().evidence) == 5
     with pytest.raises(LimitError):
         tools.retrieve_context("third", call_id="three")
     assert len(retriever.calls) == 2
@@ -487,13 +488,14 @@ def test_unassigned_evidence_requires_exclusive_intake_receipt(store):
         )
     intake = bind(store, name="intake2")
     retrieved = intake.retrieve_context("query", call_id="retrieve")
-    with pytest.raises(AuthorizationError):
-        tools.answer_question(
-            question.question_id,
-            "Answer",
-            retrieved.event.evidence_ids,
-            call_id="answer",
-        )
+    result = tools.answer_question(
+        question.question_id,
+        "Answer",
+        retrieved.event.evidence_ids,
+        call_id="answer",
+    )
+    assert result.question.evidence_ids == retrieved.event.evidence_ids
+    assert decode(encode(tools.snapshot())) == tools.snapshot()
 
 
 def test_followup_depth_and_count_limits(store):
@@ -637,6 +639,7 @@ def test_intake_optional_retrieval_and_isolated_prompts(store):
     )
     result = run_intake(model, tools, IntakeInput("Compare findings"))
     assert [e.kind for e in result.events] == [
+        "context_retrieved",
         "context_retrieved",
         "question_added",
         "question_added",

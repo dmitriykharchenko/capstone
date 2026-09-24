@@ -16,6 +16,7 @@ from .orchestration_evidence import EvidenceBudget, evidence_payload, prepare_ev
 from .orchestration_state import AgentKind, WorkStatus, identifier, identifiers, text
 from .orchestration_tools import (
     ANSWER_BYTES,
+    ORIGINAL_QUERY_CALL_ID,
     QUERY_BYTES,
     DuplicateQuestion,
     LimitError,
@@ -23,6 +24,9 @@ from .orchestration_tools import (
     ToolError,
     ToolEvent,
     bounded_json,
+    final_evidence_ids,
+    handler_evidence_ids,
+    intake_evidence_ids,
     normalized,
     public_text,
 )
@@ -45,7 +49,7 @@ HANDLER_PROMPT = (
     "QUESTION-HANDLER: Answer only the assigned question using supplied ranked "
     'evidence. Return exactly {"answer": string, "evidence_ids": [string], '
     '"followups": [string]}. Provide a concise evidence-grounded answer and only '
-    "supplied evidence IDs. Acknowledge missing evidence without guessing. Propose "
+    "supplied evidence IDs (at most ten). Acknowledge missing evidence without guessing. Propose "
     "at most two distinct evidence-seeking follow-ups only for material gaps, "
     "respecting remaining_questions and remaining_depth; otherwise use []. "
     "This is an intermediate answer, not the final assistant reply. "
@@ -218,27 +222,47 @@ def run_intake(
     if type(request) is not IntakeInput:
         raise ToolError("Expected intake input")
     tools.authorize(AgentKind.INTAKE)
+    original = public_text(request.original_query, QUERY_BYTES)
+    retrieved = tools.retrieve_context(
+        request.original_query, call_id=ORIGINAL_QUERY_CALL_ID, best_effort=True
+    )
     data = {
-        "original_query": public_text(request.original_query, QUERY_BYTES),
+        "original_query": original,
         "retrieval_done": False,
-        "evidence": [],
+        "evidence": [asdict(e) for e in retrieved.evidence],
         "limits": asdict(tools.limits),
     }
     plan = parse_intake(_invoke(model, INTAKE_PROMPT, data))
-    events = []
+    events = [retrieved.event]
     if plan.queries:
         if len(plan.queries) > tools.limits.queries_per_attempt:
             raise LimitError("Retrieval limit reached")
         for index, query in enumerate(plan.queries):
-            result = tools.retrieve_context(query, call_id=f"intake-retrieve-{index}")
+            result = tools.retrieve_context(
+                query, call_id=f"intake-retrieve-{index}", best_effort=True
+            )
             events.append(result.event)
-            data["evidence"].extend(asdict(e) for e in result.evidence)
+        snapshot = tools.snapshot()
+        data["evidence"] = _model_evidence(snapshot, intake_evidence_ids(snapshot))
         data["retrieval_done"] = True
         plan = parse_intake(_invoke(model, INTAKE_PROMPT, data))
         if plan.queries:
             raise ToolError("Intake retrieval phase is exhausted")
     added, warnings = _add_proposals(tools, plan.questions)
-    return SpecialistResult(tuple(events) + added, warnings)
+    return SpecialistResult(
+        tuple(events) + added,
+        tuple(sorted(set(warnings) | set(tools.retrieval_warnings()))),
+    )
+
+
+def _model_evidence(snapshot, allowed):
+    # Reuse the bounded evidence packer; large specialist pools need compact
+    # source snippets, not an additional answer-generating/compression agent.
+    packet = prepare_evidence(
+        tuple(e for e in snapshot.evidence if e.evidence_id in allowed),
+        answered_questions=(),
+    )
+    return [asdict(record.evidence) for record in packet.records]
 
 
 def run_handler(
@@ -256,16 +280,20 @@ def run_handler(
     )
     if question.status not in (WorkStatus.QUEUED, WorkStatus.RUNNING):
         raise ToolError("Handler question is not pending")
-    retrieved = tools.retrieve_context(question.text, call_id="handler-retrieve")
+    retrieved = tools.retrieve_context(
+        question.text, call_id="handler-retrieve", best_effort=True
+    )
+    snapshot = tools.snapshot()
+    allowed = handler_evidence_ids(snapshot, agent.agent_id)
     data = {
         "original_query": original,
         "question": question.text,
-        "evidence": [asdict(e) for e in retrieved.evidence],
+        "evidence": _model_evidence(snapshot, allowed),
         "remaining_questions": max(0, tools.limits.questions - len(snapshot.questions)),
         "remaining_depth": max(0, tools.limits.depth - question.depth),
     }
     answer = parse_handler(_invoke(model, HANDLER_PROMPT, data))
-    if not set(answer.evidence_ids) <= {e.evidence_id for e in retrieved.evidence}:
+    if not set(answer.evidence_ids) <= {e["evidence_id"] for e in data["evidence"]}:
         raise ToolError("Handler cited unknown evidence")
     # Validate the entire model response before committing public answer/followups.
     # The answer receipt is the recovery barrier: no completed answer may lose
@@ -279,7 +307,9 @@ def run_handler(
         answer.evidence_ids,
         call_id="handler-answer",
     )
-    if not retrieved.evidence:
+    if retrieved.warning:
+        warnings = tuple(sorted({*warnings, retrieved.warning}))
+    elif not retrieved.evidence:
         warnings = tuple(sorted({*warnings, "empty_evidence"}))
     return SpecialistResult((retrieved.event, answered.event) + added, warnings)
 
@@ -309,9 +339,11 @@ def run_finalizer(
     ):
         raise ToolError("Questions are not settled")
     answered = [q for q in snapshot.questions if q.status is WorkStatus.COMPLETED]
-    allowed = {i for q in answered for i in q.evidence_ids}
+    allowed = final_evidence_ids(snapshot)
     packet = prepare_evidence(
-        tuple(e for e in snapshot.evidence if e.evidence_id in allowed), budget
+        tuple(e for e in snapshot.evidence if e.evidence_id in allowed),
+        budget,
+        answered_questions=tuple(answered),
     )
     warning_messages = {
         "duplicate_question": "Duplicate questions were omitted.",
@@ -327,7 +359,10 @@ def run_finalizer(
         )
     ):
         raise ToolError("Invalid finalizer warnings")
-    warnings = [warning_messages[w] for w in sorted(set(request.warnings))]
+    warnings = [
+        warning_messages[w]
+        for w in sorted(set(request.warnings) | set(tools.retrieval_warnings()))
+    ]
     if len(answered) != len(snapshot.questions):
         warnings.append(
             "Some questions failed or were cancelled; the answer is incomplete."

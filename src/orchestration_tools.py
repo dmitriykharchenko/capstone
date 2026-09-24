@@ -19,6 +19,7 @@ from .orchestration_state import (
     AgentKind,
     AgentState,
     Checkpoint,
+    EventKind,
     EvidenceState,
     QuestionState,
     RunStatus,
@@ -77,6 +78,9 @@ QUERY_BYTES = 2048
 ANSWER_BYTES = 4096
 SNIPPET_BYTES = 1024
 PAYLOAD_BYTES = 65536
+# One mandatory Intake call, additional to the optional per-attempt allowance.
+# Its receipt is run-scoped, so a resumed Intake does not search again.
+ORIGINAL_QUERY_CALL_ID = "intake-original-query"
 
 # Defense in depth for recognizable accidental secrets/private-output markers;
 # not a semantic secret classifier. Credentials/hidden prompts are never inputs.
@@ -133,23 +137,73 @@ def evidence_key(evidence: EvidenceState) -> tuple:
     )
 
 
-def rank_evidence(values: tuple[EvidenceState, ...]) -> tuple[EvidenceState, ...]:
-    """Stable best-first ranking; identical chunks and normalized text appear once."""
+def evidence_groups(
+    values: tuple[EvidenceState, ...],
+) -> tuple[tuple[EvidenceState, ...], ...]:
+    """Connected duplicate groups, best representative first, in stable rank order."""
     if type(values) is not tuple or len(values) > 128:
         raise ToolError("Invalid evidence list")
     for value in values:
         if type(value) is not EvidenceState:
             raise ToolError("Expected typed evidence")
         value.__post_init__()
-    result, seen_chunks, seen_text = [], set(), set()
+    groups = []
     for item in sorted(values, key=evidence_key):
-        key = (item.paper_id, item.chunk_index)
-        snippet = normalized(item.snippet)
-        if key not in seen_chunks and snippet not in seen_text:
-            result.append(item)
-            seen_chunks.add(key)
-            seen_text.add(snippet)
-    return tuple(result)
+        keys = {(item.paper_id, item.chunk_index), normalized(item.snippet)}
+        members, remaining = [item], []
+        for existing, members_before in groups:
+            if keys & existing:
+                keys |= existing
+                members.extend(members_before)
+            else:
+                remaining.append((existing, members_before))
+        groups = remaining + [(keys, tuple(sorted(members, key=evidence_key)))]
+    return tuple(
+        members for _, members in sorted(groups, key=lambda g: evidence_key(g[1][0]))
+    )
+
+
+def rank_evidence(values: tuple[EvidenceState, ...]) -> tuple[EvidenceState, ...]:
+    """Stable best-first ranking; identical chunks and normalized text appear once."""
+    return tuple(group[0] for group in evidence_groups(values))
+
+
+def intake_evidence_ids(snapshot: Checkpoint) -> set[str]:
+    intake = {a.agent_id for a in snapshot.agents if a.kind is AgentKind.INTAKE}
+    return {
+        i
+        for r in snapshot.tool_results
+        if r.agent_id in intake
+        and r.tool_name is ToolName.RETRIEVE_CONTEXT
+        and r.question_id is None
+        for i in r.evidence_ids
+    }
+
+
+def final_evidence_ids(snapshot: Checkpoint) -> set[str]:
+    completed = {
+        q.question_id for q in snapshot.questions if q.status is WorkStatus.COMPLETED
+    }
+    retrieved = {
+        i
+        for r in snapshot.tool_results
+        if r.tool_name is ToolName.RETRIEVE_CONTEXT
+        for i in r.evidence_ids
+    }
+    return intake_evidence_ids(snapshot) | {
+        e.evidence_id
+        for e in snapshot.evidence
+        if e.question_id in completed and e.evidence_id in retrieved
+    }
+
+
+def handler_evidence_ids(snapshot: Checkpoint, agent_id: str) -> set[str]:
+    return intake_evidence_ids(snapshot) | {
+        i
+        for r in snapshot.tool_results
+        if r.agent_id == agent_id and r.tool_name is ToolName.RETRIEVE_CONTEXT
+        for i in r.evidence_ids
+    }
 
 
 @dataclass(frozen=True)
@@ -184,6 +238,36 @@ class ToolOutcome:
     event: ToolEvent
     question: QuestionState | None = None
     evidence: tuple[EvidenceState, ...] = ()
+    warning: str | None = None
+
+    def __post_init__(self):
+        if self.warning not in (None, "retrieval_failed"):
+            raise ToolError("Invalid retrieval outcome")
+
+
+def _call_prefix(agent_id: str, attempt: int, call_id: str) -> str:
+    return "t-" + digest([agent_id, attempt, call_id])[:32] + "-"
+
+
+def _failure_operation(receipt: ToolResult) -> str:
+    return "tool:retrieval_failed:" + receipt.tool_call_id
+
+
+def _receipt_warning(receipt, event):
+    if (
+        event.kind is not EventKind.TOOL_COMMITTED
+        or event.tool_call_id != receipt.tool_call_id
+    ):
+        raise ToolError("Invalid tool outcome event")
+    if event.operation_id == receipt.tool_call_id:
+        return None
+    if (
+        receipt.tool_name is ToolName.RETRIEVE_CONTEXT
+        and not receipt.evidence_ids
+        and event.operation_id == _failure_operation(receipt)
+    ):
+        return "retrieval_failed"
+    raise ToolError("Invalid tool outcome event")
 
 
 class Retriever(Protocol):
@@ -245,9 +329,12 @@ class OrchestrationTools:
     def _prepare(self, name, call_id, arguments, *kinds):
         identifier(call_id)
         snapshot, agent = self.authorize(*kinds, active=False)
-        prefix = (
-            "t-" + digest([self.scope.agent_id, self.scope.attempt, call_id])[:32] + "-"
+        attempt = (
+            0
+            if name is ToolName.RETRIEVE_CONTEXT and call_id == ORIGINAL_QUERY_CALL_ID
+            else self.scope.attempt
         )
+        prefix = _call_prefix(self.scope.agent_id, attempt, call_id)
         receipt_id = prefix + digest([name.value, arguments])
         existing = next(
             (r for r in snapshot.tool_results if r.tool_call_id.startswith(prefix)),
@@ -273,7 +360,11 @@ class OrchestrationTools:
             self.scope.graph_version,
             limit=4096,
         )
-        event = next(e for e in events if e.tool_call_id == receipt.tool_call_id)
+        matching = [e for e in events if e.tool_call_id == receipt.tool_call_id]
+        if len(matching) != 1:
+            raise ToolError("Invalid tool outcome event")
+        event = matching[0]
+        warning = _receipt_warning(receipt, event)
         original = self._store.load(
             self.scope.run_id,
             self.scope.session_id,
@@ -300,15 +391,42 @@ class OrchestrationTools:
                 (q for q in original.questions if q.question_id == receipt.question_id),
                 None,
             ),
-            tuple(evidence[i] for i in receipt.evidence_ids),
+            rank_evidence(tuple(evidence[i] for i in receipt.evidence_ids))
+            if receipt.tool_name is ToolName.RETRIEVE_CONTEXT
+            else tuple(evidence[i] for i in receipt.evidence_ids),
+            warning,
         )
 
-    def _commit(self, snapshot, receipt, **updates):
+    def retrieval_warnings(self) -> tuple[str, ...]:
+        snapshot = self.snapshot()
+        events = self._store.events(
+            self.scope.run_id,
+            self.scope.session_id,
+            self.scope.graph_version,
+            limit=4096,
+        )
+        warnings = set()
+        for receipt in snapshot.tool_results:
+            if receipt.tool_name is not ToolName.RETRIEVE_CONTEXT:
+                continue
+            matching = [e for e in events if e.tool_call_id == receipt.tool_call_id]
+            if len(matching) != 1:
+                raise ToolError("Invalid tool outcome event")
+            warning = _receipt_warning(receipt, matching[0])
+            if warning:
+                warnings.add(warning)
+            elif not receipt.evidence_ids:
+                warnings.add("empty_evidence")
+        return tuple(sorted(warnings))
+
+    def _commit(self, snapshot, receipt, *, retrieval_failed=False, **updates):
         self._store.commit(
             replace(
                 snapshot, tool_results=snapshot.tool_results + (receipt,), **updates
             ),
-            operation_id=receipt.tool_call_id,
+            operation_id=_failure_operation(receipt)
+            if retrieval_failed
+            else receipt.tool_call_id,
         )
         return self._outcome(receipt)
 
@@ -355,8 +473,17 @@ class OrchestrationTools:
         )
         return self._commit(old, receipt, questions=old.questions + (item,))
 
-    def retrieve_context(self, query: str, *, call_id: str) -> ToolOutcome:
-        query = public_text(query, QUERY_BYTES)
+    def retrieve_context(
+        self, query: str, *, call_id: str, best_effort: bool = False
+    ) -> ToolOutcome:
+        if type(best_effort) is not bool:
+            raise ToolError("Invalid retrieval policy")
+        canonical_query = public_text(query, QUERY_BYTES)
+        original = call_id == ORIGINAL_QUERY_CALL_ID
+        if not original:
+            query = canonical_query
+        else:
+            self.authorize(AgentKind.INTAKE, active=False)
         old, agent, tool_id, replay = self._prepare(
             ToolName.RETRIEVE_CONTEXT,
             call_id,
@@ -365,16 +492,21 @@ class OrchestrationTools:
             AgentKind.QUESTION,
         )
         if replay is not None:
+            if replay.warning and not best_effort:
+                raise ToolError("Context retrieval failed")
             return replay
+        original_prefix = _call_prefix(agent.agent_id, 0, ORIGINAL_QUERY_CALL_ID)
         count = sum(
             r.agent_id == agent.agent_id
             and r.attempt == agent.attempt
             and r.tool_name is ToolName.RETRIEVE_CONTEXT
+            and not r.tool_call_id.startswith(original_prefix)
             for r in old.tool_results
         )
-        if count >= self.limits.queries_per_attempt:
+        if not original and count >= self.limits.queries_per_attempt:
             raise LimitError("Retrieval limit reached")
         iterator = None
+        failed = False
         try:
             iterator = iter(
                 self._retriever.retrieve_chunks(
@@ -415,9 +547,15 @@ class OrchestrationTools:
                     chunk.page,
                 )
                 evidence.append(item)
-            ranked = rank_evidence(tuple(evidence))
+            # Retain bounded duplicate variants in receipts so a later query can
+            # bridge their chunk/text identities. Consumers receive only winners.
+            ranked = tuple(
+                sorted({e.evidence_id: e for e in evidence}.values(), key=evidence_key)
+            )
         except Exception:
-            raise ToolError("Context retrieval failed") from None
+            if not best_effort:
+                raise ToolError("Context retrieval failed") from None
+            ranked, failed = (), True
         finally:
             if iterator is not None and hasattr(iterator, "close"):
                 try:
@@ -436,7 +574,9 @@ class OrchestrationTools:
             agent.question_id,
             tuple(e.evidence_id for e in ranked),
         )
-        return self._commit(old, receipt, evidence=old.evidence + added)
+        return self._commit(
+            old, receipt, evidence=old.evidence + added, retrieval_failed=failed
+        )
 
     def answer_question(
         self,
@@ -462,20 +602,11 @@ class OrchestrationTools:
         question = next(q for q in old.questions if q.question_id == question_id)
         if question.status not in (WorkStatus.QUEUED, WorkStatus.RUNNING):
             raise ToolError("Question cannot be answered")
-        permitted = {
-            e
-            for r in old.tool_results
-            if r.agent_id == agent.agent_id and r.tool_name is ToolName.RETRIEVE_CONTEXT
-            for e in r.evidence_ids
-        }
+        permitted = handler_evidence_ids(old, agent.agent_id)
         if not set(evidence_ids) <= permitted:
             raise AuthorizationError("Evidence is not assigned to this agent")
         evidence = rank_evidence(
-            tuple(
-                e
-                for e in old.evidence
-                if e.evidence_id in evidence_ids and e.question_id == question_id
-            )
+            tuple(e for e in old.evidence if e.evidence_id in evidence_ids)
         )
         if len(evidence) != len(evidence_ids):
             raise ToolError("Answer evidence must be unique and assigned")
