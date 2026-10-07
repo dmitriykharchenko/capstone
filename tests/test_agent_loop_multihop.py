@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,8 @@ from src.agent_loop import (
     MultihopCoverageCompletedEvent,
     MultihopCoverageStartedEvent,
     MultihopFinalDeltaEvent,
+    _mark_chunks_seen,
+    _retrieve_multihop,
 )
 from src.cli.models import MockChatModel
 from src.paper_search import PaperChunkMatch
@@ -96,6 +99,47 @@ def results():
     }
 
 
+def test_retrieval_fills_from_lower_ranked_unseen_and_drops_identical_text():
+    first = [
+        chunk(1, "shared"),
+        *[chunk(rank, f"alpha-{rank}") for rank in range(2, 6)],
+    ]
+    second = [
+        chunk(1, "shared"),
+        replace(chunk(2, "other-paper"), text="  evidence from alpha-2  "),
+        *[chunk(rank, f"beta-{rank}") for rank in range(3, 8)],
+    ]
+    retriever = HopRetriever({"first": first, "second": second})
+    seen = set()
+    _, _, first_chunks, reused = _retrieve_multihop(retriever, "first", seen)
+    assert not reused
+    _mark_chunks_seen(seen, first_chunks)
+    _, _, second_chunks, reused = _retrieve_multihop(retriever, "second", seen)
+    assert not reused
+    assert [chunk.paper_id for chunk in second_chunks] == [
+        "beta-3",
+        "beta-4",
+        "beta-5",
+        "beta-6",
+        "beta-7",
+    ]
+    assert retriever.calls == [("first", 5), ("second", 10)]
+
+
+def test_retrieval_reuses_its_own_unique_top_excerpts_when_none_are_new():
+    retriever = HopRetriever(
+        {"first": [chunk(1, "shared")], "second": [chunk(1, "shared")]}
+    )
+    seen = set()
+    _, _, first, reused = _retrieve_multihop(retriever, "first", seen)
+    assert not reused
+    _mark_chunks_seen(seen, first)
+    _, _, second, reused = _retrieve_multihop(retriever, "second", seen)
+    assert reused
+    assert [chunk.paper_id for chunk in second] == ["shared"]
+    assert retriever.calls == [("first", 5), ("second", 6)]
+
+
 def test_run_retrieves_each_hop_composes_all_answers_and_persists_only_final(tmp_path):
     database = tmp_path / "history.sqlite3"
     model = StageModel()
@@ -108,7 +152,7 @@ def test_run_retrieves_each_hop_composes_all_answers_and_persists_only_final(tmp
             "beta",
         ]
 
-    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 5)]
+    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 7)]
     assert [stage for stage, _ in model.calls] == [
         "planner",
         "subanswer",
@@ -193,7 +237,10 @@ def test_adaptive_followups_use_exact_hop_path_and_compose_in_order(
         source_ids = [source.paper_id for source in loop.last_sources]
 
     all_queries = ["alpha evidence", "beta evidence", *expected]
-    assert retriever.calls == [(query, 5) for query in all_queries]
+    assert retriever.calls == [
+        (query, 5 + seen)
+        for query, seen in zip(all_queries, (0, 2, *range(3, 3 + len(expected))))
+    ]
     assert source_ids == ["shared", "alpha", "beta", *expected]
     assert [stage for stage, _ in model.calls] == [
         "planner",
@@ -324,7 +371,7 @@ def test_invalid_or_duplicate_coverage_fails_before_followup_and_persistence(
         with pytest.raises(AgentCoverageError) as raised:
             loop.run("session", "question")
     assert raised.value.stage == "coverage"
-    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 5)]
+    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 7)]
     with SQLiteHistoryStore(database) as store:
         assert store.get_messages("session") == []
 

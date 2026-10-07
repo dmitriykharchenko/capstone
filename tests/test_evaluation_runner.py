@@ -170,7 +170,7 @@ def test_existing_strategy_values_all_use_multihop_default_retrieval(strategy):
 
     result = EvaluationRunner(retriever, model).run([case()], strategy)
 
-    assert retriever.calls == [("Question one hop 1", 5), ("Question one hop 2", 5)]
+    assert retriever.calls == [("Question one hop 1", 5), ("Question one hop 2", 10)]
     assert len(result[0]["retrieved_chunks"]) == 10
     assert [item["rank"] for item in result[0]["retrieved_chunks"]] == list(
         range(1, 11)
@@ -354,7 +354,7 @@ def test_followup_failures_are_explicit_and_later_cases_continue():
     assert results[1]["error"] is None
 
 
-def test_followup_retrieval_failure_has_explicit_stage_and_next_case_runs():
+def test_followup_retrieval_failure_recovers_after_next_case_runs():
     class FailFirstGapRetriever(FakeRetriever):
         def __init__(self):
             super().__init__()
@@ -367,13 +367,23 @@ def test_followup_retrieval_failure_has_explicit_stage_and_next_case_runs():
                 raise RuntimeError("private retrieval detail")
             return chunks(query)
 
+    retriever = FailFirstGapRetriever()
     results = EvaluationRunner(
-        FailFirstGapRetriever(),
+        retriever,
         FakeModel(followups=("material gap evidence",)),
     ).run([case("failure"), case("success")], "hybrid")
 
-    assert results[0]["error"]["stage"] == "followup_retrieval"
+    assert results[0]["error"] is None
     assert results[1]["error"] is None
+    assert [query for query, _ in retriever.calls] == [
+        "failure hop 1",
+        "failure hop 2",
+        "material gap evidence",
+        "success hop 1",
+        "success hop 2",
+        "material gap evidence",
+        "material gap evidence",
+    ]
 
 
 def test_malformed_judge_is_recorded_without_discarding_answer_or_later_case():
@@ -402,9 +412,51 @@ def test_valid_judge_json_and_aggregation_ready_result_schema():
         "generated_answer",
         "judge_scores",
         "error",
+        "attempt_history",
+        "metrics",
+        "performance",
     }
     assert [result["judge_scores"][name]["score"] for name in JUDGE_CRITERIA] == [4] * 7
+    assert result["performance"]["status"] == "pass"
     json.dumps(result)
+
+
+def test_case_performance_budget_fails_extra_followups_and_round_trips():
+    budgeted = {
+        **case(),
+        "performance_budget": {"max_followup_queries": 0, "max_retrievals": 2},
+    }
+    model = FakeModel(followups=("Question one followup 1",))
+
+    result = EvaluationRunner(FakeRetriever(), model).run([budgeted], "hybrid")[0]
+
+    assert result["input"] == budgeted
+    assert result["judge_scores"] is not None
+    performance = result["performance"]
+    assert performance["status"] == "fail"
+    assert performance["checks"]["followup_queries"] == {
+        "value": 1,
+        "limit": 0,
+        "status": "fail",
+    }
+    assert performance["checks"]["retrievals"] == {
+        "value": 3,
+        "limit": 2,
+        "status": "fail",
+    }
+    assert performance["checks"]["rag_model_calls"]["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "budget",
+    [{}, [], {"max_retrievals": -1}, {"max_retrievals": None}, {"unknown": 1},
+     {"max_rag_model_calls": 1.5}, {"max_retrievals": True}],
+)
+def test_invalid_performance_budget_rejects_whole_input(budget):
+    with pytest.raises(EvaluationValidationError, match="performance_budget"):
+        EvaluationRunner(FakeRetriever(), FakeModel()).run(
+            [{**case(), "performance_budget": budget}], "hybrid"
+        )
 
 
 def test_seven_hops_aggregate_and_judge_all_thirty_five_chunks():

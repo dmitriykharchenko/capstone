@@ -433,7 +433,10 @@ def test_seven_hops_and_long_delta_stream_are_not_limited_by_graph_recursion(tmp
         assert events[-1].answer == "text " * 60
         assert sum(event.stage == "final_delta" for event in events) == 60
         assert [stage for stage, _ in model.calls].count("coverage") == 1
-        assert lookup.calls == [(query, 5) for query in (*queries, *followups)]
+        assert lookup.calls == [
+            (query, 5 * (index + 1))
+            for index, query in enumerate((*queries, *followups))
+        ]
 
 
 def test_index_failure_after_stream_commit_is_explicit_and_never_replayed(tmp_path):

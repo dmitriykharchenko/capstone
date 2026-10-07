@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import CancelledError
+from copy import deepcopy
+from dataclasses import dataclass, field as dataclass_field
 from numbers import Real
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from .agent_loop import (
@@ -24,11 +27,25 @@ from .agent_loop import (
     _load_message_types,
     _raise_if_output_limited,
     _response_text,
-    run_multihop,
+)
+from .evaluation_stages import EvaluationStages, EvaluationStopped
+from .evaluation_metrics import (
+    EvaluationMetrics,
+    EvaluationPricing,
+    MeasuredModel,
+    MeasuredRetriever,
+    PerformanceBudget,
+    check_performance,
+)
+from .evaluation_diagnostics import (
+    EvaluationRefusalError,
+    classify_failure,
+    failure_record,
 )
 from .paper_search import (
     EVALUATION_RETRIEVAL_STRATEGIES,
 )
+from .planner_retry import PlannerRetryPolicy, planner_refused
 
 DEFAULT_JUDGE_PROMPT_PATH = Path(__file__).resolve().parents[1] / "tests" / "judge.md"
 JUDGE_CRITERIA = (
@@ -52,6 +69,13 @@ _EXTRA_JUDGE_FIELDS = {
 _SYSTEM_HEADER = "SYSTEM PROMPT:\n"
 _USER_HEADER = "\nUSER PROMPT (fill per example):\n"
 _CHUNK_TEMPLATE = "1. {{chunk_1}}\n2. {{chunk_2}}\n..."
+_FOLLOWUPS_DECIDED = {
+    "followup_retrieval",
+    "followup_subanswer",
+    "composer",
+    "judge",
+    "done",
+}
 _PLACEHOLDERS = re.compile(
     r"\{\{query\}\}|\{\{ground_truth_or_\"NOT PROVIDED\"\}\}"
     r"|\{\{generated_answer\}\}|\{\{reference_answer\}\}"
@@ -77,19 +101,39 @@ class EvaluationCase:
     question: str
     grading_notes: str
     sources: tuple[str, ...]
+    performance_budget: tuple[tuple[str, int | float], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        value: dict[str, Any] = {
             "question": self.question,
             "grading_notes": self.grading_notes,
             "sources": list(self.sources),
         }
+        if self.performance_budget:
+            value["performance_budget"] = dict(self.performance_budget)
+        return value
 
 
 @dataclass(frozen=True)
 class _JudgeTemplate:
     system_prompt: str
     user_prompt: str
+
+
+@dataclass
+class EvaluationCaseState:
+    """Run-local checkpoint and safe failure history, never a durable chat store."""
+
+    index: int
+    case: EvaluationCase
+    strategy: str
+    stages: EvaluationStages
+    judge_template: _JudgeTemplate
+    result: dict[str, Any] | None = None
+    retry_round: int = -1
+    attempts: dict[tuple[str, int | None], int] = dataclass_field(default_factory=dict)
+    failure_history: list[dict[str, Any]] = dataclass_field(default_factory=list)
+    metrics: EvaluationMetrics = dataclass_field(default_factory=EvaluationMetrics)
 
 
 def validate_test_cases(value: Any) -> tuple[EvaluationCase, ...]:
@@ -113,7 +157,17 @@ def validate_test_cases(value: Any) -> tuple[EvaluationCase, ...]:
                 raise EvaluationValidationError(
                     f"case {index} source {source_index} must be a non-empty string"
                 )
-        validated.append(EvaluationCase(question, grading_notes, tuple(sources)))
+        budget: tuple[tuple[str, int | float], ...] = ()
+        if "performance_budget" in raw_case:
+            try:
+                budget = PerformanceBudget.overrides(raw_case["performance_budget"])
+            except (TypeError, ValueError):
+                raise EvaluationValidationError(
+                    f"case {index} performance_budget is invalid"
+                ) from None
+        validated.append(
+            EvaluationCase(question, grading_notes, tuple(sources), budget)
+        )
     return tuple(validated)
 
 
@@ -172,6 +226,10 @@ class EvaluationRunner:
         config: ChatOpenAIConfig | None = None,
         judge_prompt_path: str | Path = DEFAULT_JUDGE_PROMPT_PATH,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        planner_retry_policy: PlannerRetryPolicy | None = None,
+        pricing: EvaluationPricing | None = None,
+        clock: Callable[[], float] = perf_counter,
+        performance_budget: PerformanceBudget | None = None,
     ) -> None:
         if not callable(getattr(retriever, "retrieve_chunks", None)):
             raise TypeError("retriever must provide retrieve_chunks")
@@ -184,17 +242,28 @@ class EvaluationRunner:
         self._config = config or ChatOpenAIConfig()
         self._judge_prompt_path = Path(judge_prompt_path)
         self._system_prompt = system_prompt
+        self._planner_retry_policy = planner_retry_policy or PlannerRetryPolicy()
+        self._pricing = pricing or EvaluationPricing()
+        self._clock = clock
+        self._performance_budget = performance_budget or PerformanceBudget()
 
     def run(self, payload: Any, strategy: str) -> list[dict[str, Any]]:
-        """Validate all input, then run each case in order while isolating failures."""
+        """Finish the initial pass, then resume failures in two ordered rounds."""
 
         cases = parse_test_cases(payload)
         _validate_strategy(strategy)
         judge_template = _load_judge_template(self._judge_prompt_path)
-        return [
-            self._run_case(index, case, strategy, judge_template)
+        states = [
+            self.start_case(index, case, strategy, judge_template=judge_template)
             for index, case in enumerate(cases, start=1)
         ]
+        for retry_round in range(3):
+            pending = [state for state in states if state.stages.stage != "done"]
+            if not pending:
+                break
+            for state in pending:
+                self.resume_case(state, retry_round)
+        return [deepcopy(state.result) for state in states]
 
     def run_file(self, path: str | Path, strategy: str) -> list[dict[str, Any]]:
         """Run all cases from one UTF-8 JSON file."""
@@ -202,52 +271,136 @@ class EvaluationRunner:
         cases = load_test_cases(path)
         return self.run([case.as_dict() for case in cases], strategy)
 
-    def _run_case(
+    def start_case(
         self,
         index: int,
         case: EvaluationCase,
         strategy: str,
-        judge_template: _JudgeTemplate,
+        *,
+        judge_template: _JudgeTemplate | None = None,
+    ) -> EvaluationCaseState:
+        """Allocate a case without executing any provider or retrieval work."""
+        _validate_strategy(strategy)
+        return EvaluationCaseState(
+            index,
+            case,
+            strategy,
+            EvaluationStages(case.question),
+            judge_template
+            if judge_template is not None
+            else _load_judge_template(self._judge_prompt_path),
+            metrics=EvaluationMetrics(self._pricing, self._clock),
+        )
+
+    def resume_case(
+        self, state: EvaluationCaseState, retry_round: int
     ) -> dict[str, Any]:
+        """Advance from the exact cursor until completion or one stage failure."""
+        if state.stages.stage == "done":
+            return deepcopy(state.result)
+        if (
+            isinstance(retry_round, bool)
+            or not isinstance(retry_round, int)
+            or retry_round != state.retry_round + 1
+            or not 0 <= retry_round <= 2
+        ):
+            raise ValueError("evaluation retry rounds must advance from 0 through 2")
+        state.retry_round = retry_round
         result: dict[str, Any] = {
-            "case_index": index,
-            "input": case.as_dict(),
-            "retrieval_strategy": strategy,
+            "case_index": state.index,
+            "input": state.case.as_dict(),
+            "retrieval_strategy": state.strategy,
             "retrieved_chunks": [],
             "generated_answer": None,
             "judge_scores": None,
             "error": None,
         }
-        try:
-            multihop = run_multihop(
-                self._model_instance(),
-                self._retriever,
-                case.question,
-                system_prompt=self._system_prompt,
-            )
-            chunks = list(multihop.chunks)
-            result["retrieved_chunks"] = _serialize_chunks(chunks)
-            answer = multihop.answer
-            result["generated_answer"] = answer
-        except Exception as exc:
-            result["error"] = _error(_multihop_error_stage(exc), exc)
-            return result
-        try:
-            judge_prompt = _render_judge_prompt(judge_template, case, chunks, answer)
-            judge_text = self._invoke(_judge_messages(judge_template, judge_prompt))
-            result["judge_scores"] = parse_judge_output(judge_text)
-        except Exception as exc:
-            result["error"] = _error("judge", exc)
-        return result
+        stages = state.stages
+        while stages.stage != "done":
+            key = (stages.stage, stages.hop)
+            state.attempts[key] = state.attempts.get(key, 0) + 1
+            try:
+                with state.metrics.stage(stages.stage):
+                    if stages.stage == "judge":
+                        result["retrieved_chunks"] = _serialize_chunks(stages.chunks)
+                        result["generated_answer"] = stages.answer
+                        template = state.judge_template
+                        prompt = _render_judge_prompt(
+                            template, state.case, stages.chunks, stages.answer
+                        )
+                        model = MeasuredModel(
+                            self._model_instance(),
+                            state.metrics,
+                            "judge",
+                            _ranked_chunk_text(stages.chunks),
+                            stages.chunks,
+                        )
+                        text = self._invoke(_judge_messages(template, prompt), model)
+                        result["judge_scores"] = parse_judge_output(text)
+                        stages.stage = "done"
+                    else:
+                        subanswer = stages.stage in {"subanswer", "followup_subanswer"}
+                        model = MeasuredModel(
+                            self._model_instance(),
+                            state.metrics,
+                            stages.stage,
+                            stages.contexts[stages.hop_index] if subanswer else "",
+                            stages.hop_chunks[stages.hop_index] if subanswer else (),
+                            (
+                                stages.reused_hops[stages.hop_index]
+                                or state.attempts[key] > 1
+                            )
+                            if subanswer
+                            else False,
+                        )
+                        stages.advance(
+                            model,
+                            MeasuredRetriever(
+                                self._retriever, state.metrics, stages.stage
+                            ),
+                            self._system_prompt,
+                            self._planner_retry_policy,
+                        )
+                        state.metrics.reused_searches = sum(stages.reused_hops)
+            except EvaluationStopped as exc:
+                raise exc.error_type() from None
+            except Exception as exc:
+                _raise_if_terminal(exc)
+                reason = (
+                    ("invalid_judge_output", None)
+                    if isinstance(exc, JudgeOutputError)
+                    else classify_failure(exc, stages.stage)
+                )
+                result["error"] = failure_record(
+                    stages.stage, reason, retry_round, state.attempts[key], stages.hop
+                )
+                state.failure_history.append(dict(result["error"]))
+                break
+        result["attempt_history"] = deepcopy(state.failure_history)
+        result["metrics"] = state.metrics.snapshot()
+        result["performance"] = check_performance(
+            result["metrics"],
+            self._performance_budget.merged(state.case.performance_budget),
+            followup_queries=(
+                len(stages.subqueries) - stages.initial_count
+                if stages.stage in _FOLLOWUPS_DECIDED
+                else None
+            ),
+            completed=stages.stage == "done",
+        )
+        state.result = result
+        return deepcopy(result)
 
-    def _invoke(self, messages: Sequence[Any]) -> str:
-        response = self._model_instance().invoke(messages)
+    def _invoke(self, messages: Sequence[Any], model: Any = None) -> str:
+        response = (self._model_instance() if model is None else model).invoke(messages)
+        if planner_refused(response):
+            raise EvaluationRefusalError("Provider declined the request.")
         _raise_if_output_limited(response)
         return _response_text(response)
 
     def _model_instance(self) -> ChatModel | Any:
         if self._model is None:
-            self._model = _create_chat_openai(self._config)
+            self._model = _create_chat_openai(self._config, max_retries=0)
         return self._model
 
 
@@ -456,9 +609,20 @@ def _multihop_error_stage(exc: Exception) -> str:
     return "model"
 
 
-def _error(stage: str, exc: Exception) -> dict[str, str]:
-    message = str(exc).strip() or exc.__class__.__name__
+def _error(stage: str, _exc: Exception) -> dict[str, str]:
+    message = f"Evaluation {stage} failed for this case. Check backend configuration and retry."
     return {"stage": stage, "message": message}
+
+
+def _raise_if_terminal(exc: Exception) -> None:
+    """Do not turn transport shutdown or wrapped cancellation into case retries."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (CancelledError, BrokenPipeError)):
+            raise current
+        current = current.__cause__
 
 
 __all__ = [

@@ -31,7 +31,9 @@ from .agent_loop import (
     MultihopPlanEvent,
     MultihopProgress,
     _aggregate_sources,
+    _assert_answer_chunks,
     _chunk_text,
+    _mark_chunks_seen,
     _raise_if_output_limited,
     _response_text,
     _review_multihop_coverage,
@@ -66,6 +68,10 @@ class ChatState(TypedDict):
     subanswers: NotRequired[tuple[str, ...]]
     contexts: NotRequired[tuple[str, ...]]
     hop_sources: NotRequired[tuple[tuple[SourceRecord, ...], ...]]
+    hop_chunks: NotRequired[tuple[tuple[Any, ...], ...]]
+    seen: NotRequired[tuple[Any, ...]]
+    chunks: NotRequired[tuple[Any, ...]]
+    reused: NotRequired[bool]
     context: NotRequired[str]
     sources: NotRequired[tuple[SourceRecord, ...]]
     reviewed: NotRequired[bool]
@@ -114,6 +120,8 @@ def _prepare(state: ChatState, runtime: Runtime[ChatInvocation]) -> dict[str, An
         "subanswers": (),
         "contexts": (),
         "hop_sources": (),
+        "hop_chunks": (),
+        "seen": (),
         "reviewed": False,
         "parts": (),
     }
@@ -143,12 +151,14 @@ def _hop_started(state: ChatState, runtime: Runtime[ChatInvocation]) -> dict[str
 def _retrieve(state: ChatState, runtime: Runtime[ChatInvocation]) -> dict[str, Any]:
     query = state["subqueries"][len(state["subanswers"])]
     try:
-        context, sources = runtime.context.loop._retrieve(query)
+        context, sources, chunks, reused = runtime.context.loop._retrieve(
+            query, set(state["seen"])
+        )
     except AgentRetrievalError as exc:
         if state["reviewed"]:
             setattr(exc, "stage", "followup_retrieval")
         raise
-    return {"context": context, "sources": sources}
+    return {"context": context, "sources": sources, "chunks": chunks, "reused": reused}
 
 
 def _subanswer(state: ChatState, runtime: Runtime[ChatInvocation]) -> dict[str, Any]:
@@ -156,6 +166,9 @@ def _subanswer(state: ChatState, runtime: Runtime[ChatInvocation]) -> dict[str, 
     index = len(state["subanswers"])
     query = state["subqueries"][index]
     try:
+        _assert_answer_chunks(
+            state["chunks"], set(state["seen"]), reused=state["reused"]
+        )
         answer = call.loop._answer_hop(
             call.model, call.types, state["user_text"], query, state["context"]
         )
@@ -167,10 +180,15 @@ def _subanswer(state: ChatState, runtime: Runtime[ChatInvocation]) -> dict[str, 
         phase = "hop_started"
     else:
         phase = "compose" if state["reviewed"] else "coverage_started"
+    seen = set(state["seen"])
+    if not state["reused"]:
+        _mark_chunks_seen(seen, state["chunks"])
     return {
         "subanswers": (*state["subanswers"], answer),
         "contexts": (*state["contexts"], state["context"]),
         "hop_sources": (*state["hop_sources"], state["sources"]),
+        "hop_chunks": (*state["hop_chunks"], state["chunks"]),
+        "seen": tuple(seen),
         "phase": phase,
         "event": MultihopHopCompletedEvent(
             index + 1, len(state["subqueries"]), query, answer, state["sources"]

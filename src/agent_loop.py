@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from .paper_search import PaperChunkMatch
+from .planner_retry import PLAN_CORRECTION, PlannerRetryPolicy, planner_refused
 from .sqlite_history import (
     DatabasePath,
     MessageRecord,
@@ -279,7 +280,9 @@ def _resolve_api_key(config: ChatOpenAIConfig) -> str:
     return key
 
 
-def _create_chat_openai(config: ChatOpenAIConfig) -> ChatModel:
+def _create_chat_openai(
+    config: ChatOpenAIConfig, *, max_retries: int | None = None
+) -> ChatModel:
     try:
         from langchain_openai import ChatOpenAI
     except ImportError as exc:
@@ -296,6 +299,8 @@ def _create_chat_openai(config: ChatOpenAIConfig) -> ChatModel:
     }
     if config.max_tokens is not None:
         options["max_tokens"] = config.max_tokens
+    if max_retries is not None:
+        options["max_retries"] = max_retries
     try:
         return cast(
             ChatModel,
@@ -431,6 +436,37 @@ def _source_snippet(text: str) -> str:
     return f"{snippet[: SOURCE_SNIPPET_LENGTH - 1].rstrip()}…"
 
 
+def _fact_context(facts: object) -> list[dict[str, str | None]]:
+    if not isinstance(facts, tuple):
+        raise AgentRetrievalError("paper chunk facts are invalid")
+    payload: list[dict[str, str | None]] = []
+    for fact in facts:
+        fact_type = getattr(fact, "fact_type", None)
+        value = getattr(fact, "value", None)
+        statement = getattr(fact, "statement", None)
+        unit = getattr(fact, "unit", None)
+        if (
+            not isinstance(fact_type, str)
+            or not fact_type.strip()
+            or not isinstance(value, str)
+            or not value.strip()
+            or not isinstance(statement, str)
+            or not statement.strip()
+            or unit is not None
+            and not isinstance(unit, str)
+        ):
+            raise AgentRetrievalError("paper chunk facts are invalid")
+        payload.append(
+            {
+                "fact_type": fact_type,
+                "value": value,
+                "statement": statement,
+                "unit": unit,
+            }
+        )
+    return payload
+
+
 def _paper_context(
     chunks: Sequence[PaperChunkMatch],
 ) -> tuple[str, tuple[SourceRecord, ...]]:
@@ -447,6 +483,7 @@ def _paper_context(
         filename = getattr(chunk, "filename", None)
         title = getattr(chunk, "title", None)
         page = getattr(chunk, "page", None)
+        facts = _fact_context(getattr(chunk, "facts", ()))
         if rank != position:
             raise AgentRetrievalError("paper chunk ranks must be consecutive from 1")
         if not isinstance(text, str) or not text.strip():
@@ -481,6 +518,7 @@ def _paper_context(
                 "filename": filename,
                 "title": title,
                 "page": page,
+                "facts": facts,
             }
         )
         sources.append(
@@ -509,7 +547,7 @@ def _paper_context(
     )
 
 
-def _parse_plan(response: Any) -> tuple[str, ...]:
+def _parse_plan(response: Any, *, strict_json: bool = False) -> tuple[str, ...]:
     """Parse the planner's strict JSON object into distinct subqueries."""
 
     try:
@@ -517,8 +555,16 @@ def _parse_plan(response: Any) -> tuple[str, ...]:
     except AgentModelError as exc:
         raise AgentPlanError("planner output must contain non-empty JSON") from exc
     try:
-        payload = json.loads(text)
-    except (json.JSONDecodeError, TypeError) as exc:
+        payload = (
+            json.loads(
+                text,
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            )
+            if strict_json
+            else json.loads(text)
+        )
+    except (ValueError, TypeError) as exc:
         raise AgentPlanError("planner output must be a JSON object") from exc
     if not isinstance(payload, dict) or set(payload) != {"subqueries"}:
         raise AgentPlanError("planner output must contain only subqueries")
@@ -665,6 +711,7 @@ def _plan_multihop(
     types: tuple[Any, Any, Any, Any],
     history: Sequence[Any],
     user_text: str,
+    retry_policy: PlannerRetryPolicy | None = None,
 ) -> tuple[str, ...]:
     human_message, _, system_message, _ = types
     messages = [
@@ -679,7 +726,61 @@ def _plan_multihop(
         *history,
         human_message(content=user_text),
     ]
-    return _parse_plan(_invoke_multihop(model, messages, "Planner"))
+    if retry_policy is None:
+        return _parse_plan(_invoke_multihop(model, messages, "Planner"))
+    return _plan_with_retries(model, messages, system_message, retry_policy)
+
+
+def _plan_with_retries(
+    model: ChatModel,
+    messages: list[Any],
+    system_message: Any,
+    policy: PlannerRetryPolicy,
+) -> tuple[str, ...]:
+    corrected = False
+    error_type: type[AgentModelError] = AgentModelError
+    for attempt in range(1, policy.max_attempts + 1):
+        delay = None
+        error_type = AgentModelError
+        try:
+            response = model.invoke(messages)
+        except Exception as exc:
+            if isinstance(exc, AgentIncompleteResponseError) or policy.incomplete(exc):
+                error_type = AgentIncompleteResponseError
+                delay = policy.delay(attempt)
+            else:
+                delay = policy.provider_delay(exc, attempt)
+        else:
+            if planner_refused(response):
+                break
+            try:
+                _raise_if_output_limited(response)
+                return _parse_plan(response, strict_json=True)
+            except (AgentPlanError, AgentIncompleteResponseError) as exc:
+                error_type = type(exc)
+                delay = policy.delay(attempt)
+        if delay is None or attempt == policy.max_attempts:
+            break
+        if (
+            error_type in {AgentPlanError, AgentIncompleteResponseError}
+            and not corrected
+        ):
+            messages = [
+                messages[0],
+                system_message(content=PLAN_CORRECTION),
+                *messages[1:],
+            ]
+            corrected = True
+        policy.sleep(delay)
+    # Raise outside the handler: no rejected text or provider exception chain escapes.
+    message = (
+        INCOMPLETE_RESPONSE_MESSAGE
+        if error_type is AgentIncompleteResponseError
+        else "Planning failed for this case. Check the model configuration and retry."
+    )
+    error = error_type(message)
+    setattr(error, "stage", "planner")
+    raise error from None
 
 
 def _review_multihop_coverage(
@@ -723,25 +824,100 @@ def _review_multihop_coverage(
         raise
 
 
+ChunkFingerprint = tuple[tuple[str, int], str]
+
+
+def _chunk_fingerprint(chunk: PaperChunkMatch) -> ChunkFingerprint:
+    return (
+        (chunk.paper_id, chunk.chunk_index),
+        " ".join(chunk.text.split()).casefold(),
+    )
+
+
+def _contains_chunk(
+    seen: set[ChunkFingerprint], fingerprint: ChunkFingerprint
+) -> bool:
+    return any(
+        identity == fingerprint[0] or text == fingerprint[1]
+        for identity, text in seen
+    )
+
+
+def _mark_chunks_seen(
+    seen: set[ChunkFingerprint], chunks: Sequence[PaperChunkMatch]
+) -> None:
+    seen.update(_chunk_fingerprint(chunk) for chunk in chunks)
+
+
+def _seen_chunks(
+    hop_chunks: Sequence[Sequence[PaperChunkMatch]], *, before: int | None = None
+) -> set[ChunkFingerprint]:
+    seen: set[ChunkFingerprint] = set()
+    for chunks in hop_chunks[:before]:
+        _mark_chunks_seen(seen, chunks)
+    return seen
+
+
+def _assert_answer_chunks(
+    chunks: Sequence[PaperChunkMatch], seen: set[ChunkFingerprint], *, reused: bool
+) -> None:
+    if reused:
+        return
+    check_seen = set(seen)
+    for chunk in chunks:
+        fingerprint = _chunk_fingerprint(chunk)
+        if _contains_chunk(check_seen, fingerprint):
+            raise AgentRetrievalError("duplicate paper chunk evidence would be sent to model")
+        check_seen.add(fingerprint)
+
+
 def _retrieve_multihop(
-    paper_retriever: PaperChunkRetriever, subquery: str
-) -> tuple[str, tuple[SourceRecord, ...], tuple[PaperChunkMatch, ...]]:
+    paper_retriever: PaperChunkRetriever,
+    subquery: str,
+    seen: set[ChunkFingerprint] | None = None,
+) -> tuple[str, tuple[SourceRecord, ...], tuple[PaperChunkMatch, ...], bool]:
+    """Retrieve fresh evidence, falling back to unique ranked excerpts when exhausted."""
+
+    seen = set() if seen is None else seen
     try:
-        chunks = tuple(
-            list(
-                paper_retriever.retrieve_chunks(subquery, n_results=PAPER_CHUNK_LIMIT)
-            )[:PAPER_CHUNK_LIMIT]
+        ranked = tuple(
+            paper_retriever.retrieve_chunks(
+                subquery, n_results=PAPER_CHUNK_LIMIT + len(seen)
+            )
         )
     except AgentRetrievalError:
         raise
     except Exception as exc:
         raise AgentRetrievalError(f"paper chunk retrieval failed: {exc}") from exc
+    fresh: list[PaperChunkMatch] = []
+    local_seen: set[ChunkFingerprint] = set()
+    for chunk in ranked:
+        fingerprint = _chunk_fingerprint(chunk)
+        if _contains_chunk(seen, fingerprint) or _contains_chunk(local_seen, fingerprint):
+            continue
+        fresh.append(chunk)
+        local_seen.add(fingerprint)
+        if len(fresh) == PAPER_CHUNK_LIMIT:
+            break
+    reused = not fresh
+    selected = fresh
+    if reused:
+        local_seen.clear()
+        for chunk in ranked:
+            fingerprint = _chunk_fingerprint(chunk)
+            if _contains_chunk(local_seen, fingerprint):
+                continue
+            selected.append(chunk)
+            local_seen.add(fingerprint)
+            if len(selected) == PAPER_CHUNK_LIMIT:
+                break
+    chunks = tuple(replace(chunk, rank=index) for index, chunk in enumerate(selected, 1))
     if not chunks:
         raise AgentRetrievalError(
             f"no indexed paper chunks are available for subquery: {subquery}"
         )
     context, sources = _paper_context(chunks)
-    return context, sources, chunks
+    return context, sources, chunks, reused
 
 
 def _answer_multihop(
@@ -814,6 +990,7 @@ def run_multihop(
     *,
     history: Sequence[Any] = (),
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    planner_retry_policy: PlannerRetryPolicy | None = None,
 ) -> MultihopResult:
     """Run Chat's exact bounded multihop pipeline without persistence side effects."""
 
@@ -825,17 +1002,25 @@ def run_multihop(
     if not isinstance(system_prompt, str) or not system_prompt.strip():
         raise AgentConfigurationError("system_prompt must be a non-empty string")
     types = _load_message_types()
-    initial_subqueries = _plan_multihop(model, types, history, user_text)
+    initial_subqueries = _plan_multihop(
+        model, types, history, user_text, planner_retry_policy
+    )
     subqueries = list(initial_subqueries)
     subanswers: list[str] = []
     contexts: list[str] = []
     hop_sources: list[tuple[SourceRecord, ...]] = []
     hop_chunks: list[tuple[PaperChunkMatch, ...]] = []
+    seen: set[ChunkFingerprint] = set()
     for subquery in initial_subqueries:
-        context, sources, chunks = _retrieve_multihop(paper_retriever, subquery)
+        context, sources, chunks, reused = _retrieve_multihop(
+            paper_retriever, subquery, seen
+        )
+        _assert_answer_chunks(chunks, seen, reused=reused)
         subanswers.append(
             _answer_multihop(model, types, system_prompt, user_text, subquery, context)
         )
+        if not reused:
+            _mark_chunks_seen(seen, chunks)
         contexts.append(context)
         hop_sources.append(sources)
         hop_chunks.append(chunks)
@@ -844,17 +1029,22 @@ def run_multihop(
     )
     for subquery in followups:
         try:
-            context, sources, chunks = _retrieve_multihop(paper_retriever, subquery)
+            context, sources, chunks, reused = _retrieve_multihop(
+                paper_retriever, subquery, seen
+            )
         except AgentRetrievalError as exc:
             setattr(exc, "stage", "followup_retrieval")
             raise
         try:
+            _assert_answer_chunks(chunks, seen, reused=reused)
             answer = _answer_multihop(
                 model, types, system_prompt, user_text, subquery, context
             )
         except AgentModelError as exc:
             setattr(exc, "stage", "followup_subanswer")
             raise
+        if not reused:
+            _mark_chunks_seen(seen, chunks)
         subqueries.append(subquery)
         subanswers.append(answer)
         contexts.append(context)
@@ -996,9 +1186,10 @@ class AgentLoop:
     ) -> tuple[str, ...]:
         return _plan_multihop(model, types, history, user_text)
 
-    def _retrieve(self, subquery: str) -> tuple[str, tuple[SourceRecord, ...]]:
-        context, sources, _ = _retrieve_multihop(self._paper_retriever, subquery)
-        return context, sources
+    def _retrieve(
+        self, subquery: str, seen: set[ChunkFingerprint]
+    ) -> tuple[str, tuple[SourceRecord, ...], tuple[PaperChunkMatch, ...], bool]:
+        return _retrieve_multihop(self._paper_retriever, subquery, seen)
 
     def _answer_hop(
         self,
@@ -1039,11 +1230,15 @@ class AgentLoop:
         subanswers: list[str] = []
         contexts: list[str] = []
         hop_sources: list[tuple[SourceRecord, ...]] = []
+        seen: set[ChunkFingerprint] = set()
         for subquery in subqueries:
-            context, sources = self._retrieve(subquery)
+            context, sources, chunks, reused = self._retrieve(subquery, seen)
+            _assert_answer_chunks(chunks, seen, reused=reused)
             subanswers.append(
                 self._answer_hop(model, types, user_text, subquery, context)
             )
+            if not reused:
+                _mark_chunks_seen(seen, chunks)
             contexts.append(context)
             hop_sources.append(sources)
         return subanswers, contexts, hop_sources
