@@ -39,6 +39,7 @@
   import { selectActiveRoute } from "../slices/router/router-selectors";
   import { filterPaperList, paperListEntries } from "../lib/paper-listing";
   import PdfViewer from "./PdfViewer.svelte";
+  import LibraryChooser from "./LibraryChooser.svelte";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import PanelLeftOpen from "@lucide/svelte/icons/panel-left-open";
@@ -200,6 +201,7 @@
         <PanelLeftOpen class="size-4" />
       {/if}
     </Button>
+    <LibraryChooser />
     <form class="flex min-w-0 flex-1 items-center gap-2" onsubmit={submitSearch}>
       <Input
         class="flex-1"

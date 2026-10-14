@@ -2,7 +2,7 @@
 
 [Index](README.md) · [Architecture](architecture.md) · [Configuration](configuration.md) · [PDF viewer](pdf-viewer.md) · [Operations](operations-and-testing.md)
 
-**Source inspection: September 25, 2026.** The Rust code under `app/src-tauri/` is a desktop host and Python process bridge, not an independent Rust RAG service. Source inspection does not establish runtime or package acceptance.
+**Source inspection: October 14, 2026.** The Rust code under `app/src-tauri/` is a desktop host and Python process bridge, not an independent Rust RAG service. Source inspection does not establish runtime or package acceptance.
 
 ## Process boundaries
 
@@ -23,7 +23,7 @@
 | `evaluate_stream` | Python evaluation; typed requests and sanitized [evaluation DTOs](../app/src-tauri/src/evaluation/mod.rs) |
 | `orchestration_start`, `orchestration_resume`, `orchestration_pending`, `orchestration_discard`, `orchestration_trace` | Separate [orchestration bridge](../app/src-tauri/src/orchestration/mod.rs); not the mounted Chat workflow |
 
-Graph depth defaults to one and permits 0–5. Evaluation validates nonempty cases before spawning work; nested result fields remain snake_case while event/envelope fields become camelCase. See [graph](knowledge-graph.md), [evaluation](evaluation.md) and [orchestration](orchestration.md) for their exact contracts.
+Evaluation validates nonempty cases before spawning work; nested result fields remain snake_case while event/envelope fields become camelCase. See [evaluation](evaluation.md) and [orchestration](orchestration.md) for their exact contracts.
 
 ## Python bridge and stream lifetime
 

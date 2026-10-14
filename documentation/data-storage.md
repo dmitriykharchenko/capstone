@@ -10,7 +10,7 @@
 
 | Path | Canonical / authoritative state | Derived or supporting state |
 | --- | --- | --- |
-| Python/Tauri | PDFs; SQLite completed exchanges/messages/source snapshots; separate orchestration store for orchestration requests | Chroma paper vectors, Chroma exchange vectors, BM25 JSON, Cozo graph, SQLite paper outcome indicators, plaintext logs |
+| Python/Tauri | PDFs; SQLite completed exchanges/messages/source snapshots; separate orchestration store for orchestration requests | Chroma paper and fact vectors, Chroma exchange vectors, BM25 JSON, Cozo graph, SQLite paper outcome indicators, plaintext logs |
 See [getting started](getting-started.md), [desktop bridge](native-desktop.md), and [orchestration](orchestration.md) for the surrounding lifecycle.
 
 ## Python storage layout
@@ -19,16 +19,34 @@ Defaults originate in [CLIConfig](../src/cli/config.py), [model construction](..
 
 | Default location / name | Owner and content |
 | --- | --- |
-| `ResearchPapers/` | Input PDFs; indexing reads top-level files |
-| `data/chat_history.sqlite3` | `SQLiteHistoryStore`: messages, exchanges, sources, paper statuses |
-| `data/chroma/`, collection `documents` | Paper chunks, explicit embeddings, provenance metadata |
-| `data/chroma/`, collection `chat_exchanges` | Embedded completed exchange contexts with SQLite identity metadata |
-| `data/chroma/bm25_index.json` | `BM25Index` snapshot of full paper corpus text/provenance and lexical statistics |
-| `data/paper_graph.db` | `CozoGraphStore`, resolved as the Chroma directory's parent plus `paper_graph.db` |
-| `data/chat_logs.txt` | Best-effort plaintext chat log |
-| `data/retrieval_logs.txt` | Best-effort plaintext retrieval log, including full supplied context for chat |
+| `ResearchPapers/` in development; `~/Library/Application Support/Capstone/ResearchPapers/` when frozen | Input PDFs; indexing reads top-level files |
+| `data/chat_history.sqlite3` in development; `~/Library/Application Support/Capstone/chat_history.sqlite3` when frozen | `SQLiteHistoryStore`: messages, exchanges, sources, paper statuses |
+| `data/chroma/` in development; `~/Library/Application Support/Capstone/chroma/` when frozen, collection `documents` | Paper chunks, explicit embeddings, provenance metadata |
+| Same Chroma directory, collection `facts` | Unique fact statements, explicit embeddings, fact type/value metadata |
+| Same Chroma directory, collection `chat_exchanges` | Embedded completed exchange contexts with SQLite identity metadata |
+| `bm25_index.json` in the Chroma directory | `BM25Index` snapshot of full paper corpus text/provenance and lexical statistics |
+| `paper_graph.db` beside the Chroma directory | `CozoGraphStore`, resolved as the Chroma directory's parent plus `paper_graph.db` |
+| `data/chat_logs.txt` in development; `~/Library/Application Support/Capstone/chat_logs.txt` when frozen | Best-effort plaintext chat log |
+| `data/retrieval_logs.txt` in development; `~/Library/Application Support/Capstone/retrieval_logs.txt` when frozen | Best-effort plaintext retrieval log, including full supplied context for chat |
 
 Relative overrides and endpoint/model settings are detailed in [configuration](configuration.md). Changing one path does not relocate the others atomically. In particular, the graph path follows the Chroma parent, whereas the history path is separately configured.
+
+### Selected-library layout
+
+Choosing research folder `L` in the desktop app changes the ownership boundary: input PDFs remain directly under `L/`, while all generated library state stays under `L/.research-assistant/`. The selected root overrides inherited legacy paper/data/database/Chroma/log paths for that desktop operation.
+
+| Selected-library path | Content |
+| --- | --- |
+| `L/*.pdf` | Top-level input PDFs, read in place; nested PDFs are not discovered |
+| `L/.research-assistant/chat_history.sqlite3` | Conversations, source snapshots, and paper statuses |
+| `L/.research-assistant/chroma/` | Paper, fact, and exchange vectors plus `bm25_index.json` |
+| `L/.research-assistant/paper_graph.db` | Cozo paper/fact graph |
+| `L/.research-assistant/chat_orchestration.sqlite3` | Durable orchestration requests and checkpoints |
+| `L/.research-assistant/pdf-artifacts/` | Desktop PDF conversion artifacts |
+| `L/.research-assistant/logs/` | Chat and retrieval logs |
+| `L/.research-assistant/evaluations/` | Evaluation result files |
+
+If `.research-assistant/` is absent, validation creates it and the library starts fresh. If it already exists, the app reuses it. Folder switching performs no migration, copying, replacement, cleanup, or automatic indexing; returning from A to B to A restores each folder's own on-disk state.
 
 ### Canonical SQLite schema
 
@@ -104,6 +122,7 @@ The separate [orchestration store](../src/orchestration/store.py) is not another
 | Source PDFs | Preserved |
 | Canonical history and saved source snapshots | Preserved |
 | Paper vectors/chunks | Best-effort delete `documents` collection |
+| Fact vectors | Preserved in `facts` |
 | Exchange vectors | Preserved in `chat_exchanges` |
 | Lexical index | Removes BM25 JSON independently |
 | SQLite outcome indicators | Cleared |

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "package:macos-arm64": "node scripts/build-macos-arm64.mjs",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "CAPSTONE_PYTHON=\"${CAPSTONE_PYTHON:-$(prefix=$(conda run -n ragcourse printenv CONDA_PREFIX 2>/dev/null) && [ -n \"$prefix\" ] && echo \"$prefix/bin/python\")}\" tauri"

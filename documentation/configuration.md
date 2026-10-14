@@ -2,19 +2,25 @@
 
 [Index](README.md) · [Getting started](getting-started.md) · [Storage](data-storage.md) · [Native desktop](native-desktop.md)
 
-**Source inspection: September 25, 2026.** This reference documents variable names and source defaults, not the values present in any user's environment. No credential file or live credential was read to write it.
+**Source inspection: October 14, 2026.** This reference documents variable names and source defaults, not the values present in any user's environment. No credential file or live credential was read to write it.
 
 ## Configuration loading
 
-The Python CLI searches for the nearest `.env` at or above the repository root and best-effort loads it without overriding existing environment variables. Writable locations are individually configured, normally under repository `data/`. Missing credentials select a deterministic mock model and local embedder; mock behavior does not establish retrieval quality or provider connectivity. There is no general renderer settings API.
+In source mode, the Python CLI searches for the nearest `.env` at or above the repository root and best-effort loads it without overriding existing environment variables. Frozen backends do not load `.env`; their writable defaults are under `~/Library/Application Support/Capstone` unless overridden. Missing credentials select a deterministic mock model and local embedder; mock behavior does not establish retrieval quality or provider connectivity. There is no general renderer settings API.
 
 Sources: [Python configuration](../src/cli/config.py) and [Python construction](../src/cli/models.py).
 
 ### Tauri shell versus Python dotenv
 
-The Rust Tauri shell itself resolves `CAPSTONE_PYTHON`, `CAPSTONE_PROJECT_ROOT`, and its native paper root from inherited environment. Python subsequently loads dotenv inside its own process. Setting `CAPSTONE_PAPERS_DIR` only in that file can therefore make Python indexing and Rust paper browsing see different roots. For a nondefault corpus, supply the same intended value to the parent desktop process.
+The Rust Tauri shell itself resolves `CAPSTONE_PYTHON`, `CAPSTONE_PROJECT_ROOT`, and its native paper root from inherited environment. Source-mode Python subsequently loads dotenv inside its own process. Setting `CAPSTONE_PAPERS_DIR` only in that file can therefore make Python indexing and Rust paper browsing see different roots. For a nondefault corpus, supply the same intended value to the parent desktop process.
 
-Likewise, `CAPSTONE_PROJECT_ROOT` changes the shell's working/source-root selection; it is not a replacement for all Python data-path overrides. Python computes its default paths from the imported `src/cli/config.py` location.
+Likewise, `CAPSTONE_PROJECT_ROOT` changes the shell's working/source-root selection; it is not a replacement for all Python data-path overrides. In source mode, Python computes its default paths from the imported `src/cli/config.py` location.
+
+### App-selected research library
+
+In **Papers**, **Open folder** persists an absolute canonical research-library root. The native host passes that root only to each backend child as `CAPSTONE_LIBRARY_DIR`; it does not mutate the parent process environment. In this selected mode the root is authoritative for top-level PDF discovery, and every writable library artifact is derived beneath `<root>/.research-assistant/`. Legacy `CAPSTONE_DATA_DIR`, `CAPSTONE_PAPERS_DIR`, database, Chroma, and log overrides do not redirect a selected library to mixed locations.
+
+No selection keeps the defaults and overrides below. A selected folder without `.research-assistant/` starts fresh; an existing directory is reused in place. Selection does not migrate, replace, or delete data, and it does not automatically index papers or call a provider.
 
 ## Provider settings
 
@@ -40,14 +46,17 @@ When both real credentials are present, OpenAI takes precedence; an explicit end
 | --- | --- | --- |
 | `CAPSTONE_PYTHON` | Package script attempts Conda `ragcourse`; bridge fallback `python3` | Tauri interpreter selection |
 | `CAPSTONE_PROJECT_ROOT` | Two levels above Tauri Cargo manifest directory | Tauri command working/root directory |
-| `CAPSTONE_PAPERS_DIR` | Repository `ResearchPapers/` | Native Tauri browsing and Python indexing, subject to loading distinction above |
-| `CAPSTONE_DB_PATH` | `data/chat_history.sqlite3` | Canonical history and paper-status store |
-| `CAPSTONE_CHROMA_DIR` | `data/chroma/` | Paper/history collections and lexical index directory |
-| `CAPSTONE_LOG_PATH` | `data/chat_logs.txt` | Chat diagnostic output |
-| `CAPSTONE_RETRIEVAL_LOG_PATH` | `data/retrieval_logs.txt` | Retrieval/context diagnostic output |
+| `CAPSTONE_DATA_DIR` | Source: repository `data/`; frozen macOS: `~/Library/Application Support/Capstone` | Default root for writable backend data |
+| `CAPSTONE_PAPERS_DIR` | Source: repository `ResearchPapers/`; frozen macOS: `CAPSTONE_DATA_DIR/ResearchPapers` | Native Tauri browsing and Python indexing, subject to loading distinction above |
+| `CAPSTONE_DB_PATH` | `CAPSTONE_DATA_DIR/chat_history.sqlite3` | Canonical history and paper-status store |
+| `CAPSTONE_CHROMA_DIR` | `CAPSTONE_DATA_DIR/chroma/` | Paper/history collections and lexical index directory |
+| `CAPSTONE_LOG_PATH` | `CAPSTONE_DATA_DIR/chat_logs.txt` | Chat diagnostic output |
+| `CAPSTONE_RETRIEVAL_LOG_PATH` | `CAPSTONE_DATA_DIR/retrieval_logs.txt` | Retrieval/context diagnostic output |
 | `TAURI_DEV_HOST` | Unset | Vite host override; when set, configured websocket HMR uses port 1421 |
 
 Relative Python overrides are interpreted by the process; prefer deliberate absolute paths for isolated profiles. Do not assume changing only the history path also redirects Chroma or every artifact.
+
+`CAPSTONE_LIBRARY_DIR` is reserved for the desktop host's per-child selection contract. Prefer **Open folder** instead of setting it manually. When it is present, the selected-root rules above take precedence over the legacy path rows in this table.
 
 Cozo's Python `paper_graph.db` is derived from the parent of the configured Chroma directory. Durable `chat_orchestration.sqlite3` is derived beside the history database. Evaluation artifact configuration is a separate code-level path/template rather than another documented `CAPSTONE_*` environment switch; see [Evaluation](evaluation.md).
 

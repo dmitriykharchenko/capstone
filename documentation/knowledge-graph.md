@@ -6,7 +6,7 @@
 
 ## Purpose and boundaries
 
-The paper knowledge graph stores bibliographic relationships among **papers**, **authors**, and **topics**, plus typed facts connected through their source chunks. Chunk/fact relations support retrieval; the desktop app has no graph view. It is not a citation graph, a chunk-similarity graph, or the durable question/agent/tool execution graph described in [orchestration](orchestration.md).
+The paper knowledge graph stores bibliographic relationships among **papers**, **authors**, and **topics**, plus typed facts connected through their source chunks. Chunk/fact relations support retrieval; at query time, `src` reads only those relations through `chunks_for_facts` and `facts_for_chunks`. The desktop app has no graph view. It is not a citation graph, a chunk-similarity graph, or the durable question/agent/tool execution graph described in [orchestration](orchestration.md).
 
 | Layer | Tauri/Python path |
 | --- | --- |
@@ -34,8 +34,6 @@ The conceptual relations are:
 | `paper_chunk` | `(paper_id, chunk_id)` | Paper-to-chunk edge |
 | `chunk_fact` | `(chunk_id, fact_id)` | Chunk-to-fact edge |
 | `paper_fact_version` | `paper_id` | Completed fact-extraction version used for backfill |
-
-Wire node kinds are `paper`, `author`, and `topic`. Wire edge kinds are exactly `authored_by` and `has_topic`. Edges retain paper-as-source orientation.
 
 `normalize_node_name` compacts whitespace after Unicode NFKC normalization and applies case folding. `stable_node_id` computes SHA-256 over that normalized UTF-8 name and prefixes the digest with `author:` or `topic:`. Namespace separation prevents an author and a topic with the same text from being the same node. Paper IDs come from the paper/indexing contract rather than this author/topic hash function.
 
@@ -77,10 +75,10 @@ Skipped already-indexed papers use their stored Chroma chunks, ordered by `chunk
 
 - Uses embedded CozoDB with the SQLite engine and `dataframe=False`; creates/validates ten relation schemas.
 - Owns a sibling `.lock` file for process exclusion and a `threading.RLock` for in-process serialization. Default `lock_timeout` is 5 seconds. Context-manager exit/`close` releases ownership; operations after closure fail.
-- On POSIX the owner writes its PID into the `.lock` file. `stop_lock_owner` stops that owner (SIGTERM, then SIGKILL) only when it is a live `src.cli` process; `index_papers` and `reset_all_indices` call it first, so a new run or reset replaces a previous backend instead of failing as locked. `python -m src.cli` also exits when its parent process is gone, so a closed app leaves no lock owner behind.
+- On POSIX the owner writes its PID into the `.lock` file. `stop_lock_owner` stops that owner (SIGTERM, then SIGKILL) only when it is a live source CLI or frozen backend process; `index_papers_stream` and `reset_all_indices` call it first, so a new streamed run or reset replaces a previous backend instead of failing as locked. `python -m src.cli` also exits when its parent process is gone, so a closed app leaves no lock owner behind.
 - `replace_paper` can replace paper metadata and its chunk/fact graph in one transaction; `replace_paper_facts` provides the fact-only backfill transaction.
 - `remove_paper` removes the paper, all incident edges/chunks, its version marker, and newly orphaned author/topic/fact nodes transactionally. Shared facts survive while another chunk references them.
-- `facts_for_chunks` and `chunks_for_facts` are deterministic read APIs. `_all_nodes` and `_all_edges` still expose only the legacy explorer nodes/edges.
+- `facts_for_chunks` and `chunks_for_facts` are deterministic read APIs and the only graph reads used by `src` at query time.
 - Uses parameter-bound values rather than interpolating user identifiers into query scripts.
 - Exposes `GraphStoreConfigurationError`, `GraphStoreLockedError`, `GraphStoreClosedError`, and `GraphStorePersistenceError`; failed transactional replacement aborts rather than presenting a partial graph.
 

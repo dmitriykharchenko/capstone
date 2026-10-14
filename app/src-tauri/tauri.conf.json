@@ -28,6 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "resources/backend/macos-arm64/capstone-cli": "backend/macos-arm64/capstone-cli"
+    },
     "icon": [
       "icons/icon.png"
     ]

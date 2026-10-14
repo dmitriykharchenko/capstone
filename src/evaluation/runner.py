@@ -44,9 +44,10 @@ from .diagnostics import (
 from ..retrieval.paper_search import (
     EVALUATION_RETRIEVAL_STRATEGIES,
 )
+from ..cli.config import runtime_resource_path
 from ..chat.planner_retry import PlannerRetryPolicy, planner_refused
 
-DEFAULT_JUDGE_PROMPT_PATH = Path(__file__).resolve().parents[2] / "tests" / "judge.md"
+DEFAULT_JUDGE_PROMPT_PATH = runtime_resource_path("tests/judge.md")
 JUDGE_CRITERIA = (
     "context_precision",
     "context_recall",

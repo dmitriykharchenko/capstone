@@ -2,13 +2,13 @@
 
 [Documentation index](README.md) · [Architecture](architecture.md) · [Retrieval and chat](retrieval-and-chat.md) · [Evaluation](evaluation.md)
 
-**Source inspection date: 2026-09-25.** This guide describes the current working tree, including uncommitted implementation. It is not a claim of clean-checkout parity, runtime acceptance, or a completed feature rollout. No application, provider, live store, or application test is run for this documentation.
+**Source inspection date: 2026-10-14.** This guide describes the current working tree, including uncommitted implementation. It is not a claim of clean-checkout parity, runtime acceptance, or a completed feature rollout. No application, provider, live store, or application test is run for this documentation.
 
 ## 1. Two different meanings of orchestration
 
 | Layer | Current implementation | Persistence and actual entry point |
 | --- | --- | --- |
-| Normal Python command workflows | Ephemeral LangGraph command, unary, chat, indexing, and evaluation graphs | Existing CLI/Tauri commands; canonical chat history and operation-specific persistence remain outside LangGraph |
+| Normal Python command workflows | Ephemeral LangGraph chat, indexing, and evaluation graphs; direct unary dispatch | Existing CLI/Tauri commands; canonical chat history and operation-specific persistence remain outside LangGraph |
 | Durable specialist orchestration | Intake, question handlers, finalizer, bounded tools, SQLite journal, owned execution handles | Separate opt-in `orchestration_*` CLI/Tauri commands; not the default visible Chat flow |
 
 Do not confuse a transient graph invocation with a durable run. The normal Chat UI displays the adaptive multihop pipeline described in [retrieval and chat](retrieval-and-chat.md). Its planner, coverage review, and hop progress are not the durable intake/question/finalizer trace.
@@ -31,7 +31,7 @@ Do not confuse a transient graph invocation with a durable run. The normal Chat 
 | --- | --- |
 | `chat`, `index_papers` | Unary and streaming |
 | `evaluate` | Streaming only |
-| `health`, `sessions`, `messages`, `search`, `search_papers`, `paper_statuses`, `bm25_status`, `reset_all_indices` | Unary |
+| `health`, `sessions`, `messages`, `search`, `search_papers`, `paper_metadata`, `paper_statuses`, `bm25_status`, `reset_all_indices` | Unary |
 
 There is no command-level graph, checkpointer, retry policy, or result cache: an unknown command raises `ValueError` and handler errors surface unchanged as JSON errors.
 
@@ -53,7 +53,7 @@ There is no command-level graph, checkpointer, retry policy, or result cache: an
 
 | Record or enum | Meaning |
 | --- | --- |
-| `RunState` | Run/session/graph identity, run status, recovery counter, optional canonical exchange, fixed error code |
+| `RunState` | Run/session/graph identity, run status, retry counter, optional canonical exchange, fixed error code |
 | `QuestionState` | Public question, parent/depth, work status, bounded answer and cited evidence IDs |
 | `AgentState` | Intake/question/finalizer kind, assignment, work status, retry count, fenced attempt number |
 | `EvidenceState` | Paper/chunk identity, compact snippet, score, optional page, originating question |
@@ -68,7 +68,7 @@ There is no command-level graph, checkpointer, retry policy, or result cache: an
 
 [`src/orchestration/store.py`](../src/orchestration/store.py) exports `SQLiteOrchestrationStore`. Its standalone default is `data/chat_orchestration.sqlite3`. The CLI's `store_path` resolves `chat_orchestration.sqlite3` next to the configured canonical history database, rather than reusing the history file. `:memory:` and the canonical `chat_history.sqlite3` filename are rejected as orchestration storage targets.
 
-The database schema version is **3** (`DATABASE_SCHEMA_VERSION`); checkpoint/event serialization remains **1** (`SCHEMA_VERSION`). `APPLICATION_ID` is `0x4F524348`. These versions are distinct from the transport version and `GRAPH_VERSION = "orchestration-v1"`.
+The database schema version is **6** (`DATABASE_SCHEMA_VERSION`); checkpoint/event serialization remains **1** (`SCHEMA_VERSION`). `APPLICATION_ID` is `0x4F524348`. These versions are distinct from the transport version and `GRAPH_VERSION = "orchestration-v1"`.
 
 | Table | Responsibility |
 | --- | --- |
@@ -146,7 +146,7 @@ Only question strings are sent to `add_question`. The `part` labels are not pers
 
 `run_finalizer` requires every question to be settled, consumes completed answers and eligible evidence, and alone returns `FinalizerResult.assistant_text`. It explicitly supplies warnings for failed/cancelled questions, missing evidence, retrieval failure, duplicate questions, and budget omissions. Final output is bounded to 8192 bytes; late output is fenced if the input checkpoint changes.
 
-Finalizer history accepts only user/assistant turns, at most 16 turns, each at most 2048 bytes, with an 8192-byte serialized history budget. `history_context` in [`src/orchestration/publication.py`](../src/orchestration/publication.py) reads only the bounded prefix through the stored cutoff.
+Finalizer history accepts only user/assistant turns, at most 16 turns, each at most 2048 bytes, with a 7500-byte encoded history budget. `history_context` in [`src/orchestration/publication.py`](../src/orchestration/publication.py) reads only the bounded prefix through the stored cutoff.
 
 ## 5. Evidence fusion and compression
 

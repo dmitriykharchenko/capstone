@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) · [Architecture](architecture.md) · [Retrieval and chat](retrieval-and-chat.md) · [Orchestration](orchestration.md)
 
-**Source inspection date: 2026-09-25.** This guide describes the current working tree, including uncommitted implementation. It does not assert clean-checkout parity or runtime acceptance. No app, provider, live store, application test, or installation is run for this documentation.
+**Source inspection date: 2026-10-14.** This guide describes the current working tree, including uncommitted implementation. It does not assert clean-checkout parity or runtime acceptance. No app, provider, live store, application test, or installation is run for this documentation.
 
 ## 1. What evaluation measures and which path runs
 
@@ -10,7 +10,7 @@ An evaluation case supplies a question, grading notes, and reference source file
 
 | Surface | Actual implementation | Important difference |
 | --- | --- | --- |
-| Tauri application in `app/` | Svelte upload UI → `api.runEvaluation` → `evaluate_stream` → Python `src.cli` | Python stage checkpoints, two deferred retry rounds, structured failure diagnostics, artifact schema v2 |
+| Tauri application in `app/` | Svelte upload UI → `api.runEvaluation` → `evaluate_stream` → Python `src.cli` | Python stage checkpoints, two deferred retry rounds, structured failure diagnostics, artifact schema v3 |
 | Python library | `EvaluationRunner.run`, `run_file`, `start_case`, `resume_case` | Returns results; library calls alone do not publish an artifact |
 
 The UI has no retrieval selector; it always runs **Multihop Hybrid**. Its identifier is `multihop-hybrid`, while the wire value is `hybrid`; see `EVALUATION_RETRIEVAL_TYPE` and `EVALUATION_WIRE_RETRIEVAL_TYPE` in [evaluation-types.ts](../app/src/lib/evaluation-types.ts).
@@ -48,15 +48,15 @@ Shape example, using a fictitious filename rather than claiming corpus membershi
 
 | Resource | Current content and consumer |
 | --- | --- |
-| [`tests/eval_questions.json`](../tests/eval_questions.json) | 60 cases; Python repository dataset and a file a user may upload |
+| [`tests/eval_questions.json`](../tests/eval_questions.json) | 70 cases; Python repository dataset and a file a user may upload |
 | [`tests/judge.md`](../tests/judge.md) | Python default judge template, read by `_load_judge_template` |
 | [`tests/eval_questions_performance.json`](../tests/eval_questions_performance.json) | 10 performance, efficiency, and reliability cases; the LiveCodeBench, VIPER, and LINC single-paper lookups limit retrieval to two searches with `performance_budget` |
 
 The visible upload workflow supplies its own cases; the checked-in dataset is not automatically started.
 
-The 60-case dataset contains untagged cases and category markers inside `grading_notes`, keeping the three-field schema. Tagged families cover enumeration, nonexistent-source questions, partially supported lists, multi-hop reasoning, contradictions, precise quotes, and boundary/precision questions. Enumeration cases span 2, 4, and 11 unique works; multi-hop cases explicitly specify 2, 3, and 4 hops. Source filenames and aliases are ground-truth annotations, not permission for the retriever to manufacture evidence for an absent title.
+The 70-case dataset contains untagged cases and category markers inside `grading_notes`, keeping the three-field schema. Tagged families cover enumeration, nonexistent-source questions, partially supported lists, multi-hop reasoning, contradictions, precise quotes, boundary/precision questions, and security cases. Enumeration cases include 2, 3–5, and at least 10 unique works; multi-hop cases explicitly specify 2, 3, and 4 hops. Source filenames and aliases are ground-truth annotations, not permission for the retriever to manufacture evidence for an absent title.
 
-[`tests/test_eval_questions.py`](../tests/test_eval_questions.py) checks production-loader round trips, exact three-field dataset shape, normalized question uniqueness, unique source lists, PDF basenames, category coverage, enumeration cardinality, hop annotations, and verbatim quotes. Source existence checks depend on local corpus availability; quote checks explicitly skip when the local PDFs or `pypdf` are absent. These tests are source references, not a statement that PDF checks ran during this documentation pass.
+[`tests/test_eval_questions.py`](../tests/test_eval_questions.py) checks production-loader round trips, normalized question uniqueness, unique source lists, PDF basenames, category coverage, enumeration cardinality, hop annotations, security cases, and verbatim quotes. Source existence checks depend on local corpus availability; quote checks explicitly skip when the local PDFs or `pypdf` are absent. These tests are source references, not a statement that PDF checks ran during this documentation pass.
 
 ## 3. Python construction and retrieval semantics
 
@@ -79,7 +79,7 @@ Reference sources and grading notes are passed to the judge, not into planner/re
 | Stage | Work | Checkpointed output before advancing |
 | --- | --- | --- |
 | `planner` | `_plan_multihop` with empty history and evaluation planner retry policy | Validated ordered `subqueries`, `initial_count` |
-| `retrieval` | `_retrieve_multihop` for the current initial hop, excluding earlier evidence by `(paper_id, chunk_index)` and normalized text | Context, unique hop chunks, and reuse status |
+| `retrieval` | `_retrieve_multihop` for the current initial hop, deduplicating excerpts within that retrieval | Context and unique hop chunks |
 | `subanswer` | `_answer_multihop` from original question, subquery, and retrieved context | Validated subanswer; next hop cursor |
 | `coverage` | `_review_multihop_coverage` once after initial hops | Validated follow-ups or decision to compose |
 | `followup_retrieval` | Retrieval for a coverage follow-up | Its context/chunks |
@@ -87,7 +87,7 @@ Reference sources and grading notes are passed to the judge, not into planner/re
 | `composer` | Aggregate/deduplicate chunks; compose from ordered subanswers with empty history | Final answer and ranked aggregate chunks |
 | `judge` | Render the reference/rubric prompt and validate seven scores | Final result; cursor becomes `done` |
 
-Current constants are 1–5 initial subqueries, at most 2 follow-ups, at most 7 total hops, 5 chunks per hop, and at most 35 aggregate source records. A single fact from one paper uses exactly one initial search and is never split into reworded searches. Retrieval requests five plus the number of earlier chunks, then uses the first five unseen excerpts. A search with no unseen excerpts answers from its own deduplicated top excerpts and is recorded as reused; that is the only permitted repeated evidence. Retrieval with no chunks is a stage failure; it does not generate an unsupported answer. Coverage review is a single bounded pass, not an unlimited search loop.
+Current constants are 1–5 initial subqueries, at most 2 follow-ups, at most 7 total hops, 5 chunks per hop, and at most 35 aggregate source records. A single fact from one paper uses exactly one initial search and is never split into reworded searches. Retrieval requests five excerpts, deduplicates them within that search, and requests ten candidates only if duplicates leave fewer than five excerpts. Retrieval with no chunks is a stage failure; it does not generate an unsupported answer. Coverage review is a single bounded pass, not an unlimited search loop.
 
 `EvaluationStages.advance` executes exactly one non-judge stage. Successful validated outputs are committed to the run-local object before advancing. Failed calls leave the cursor and prior successful work intact. The object retains public query/context/chunk/answer state, not provider handles, raw exception objects, rejected model output, or chat stores.
 
@@ -197,7 +197,7 @@ These safety checks protect diagnostics, not the inherent privacy of an evaluati
 
 **Higher is better for every score**, including `hallucination_rate`: 5 means no unsupported claims; 0 means largely unsupported. The name is not a literal percentage/rate. Semantic similarity is an LLM judgment, not cosine similarity. Hallucination is assessed against retrieved context, not merely agreement with the reference. Missing ground truth should lower judge confidence and produce flags rather than false certainty.
 
-`_evaluation_result` computes aggregates from the latest final-at-that-point results with no error and a judge-score object. Each criterion is an unweighted arithmetic mean across successful judged cases; failures are excluded, not treated as zero. Terminal means use only the final successful results after retry replacement. With no successes, every aggregate is null. There is no combined overall score or threshold that changes a case from transport/model success to failure.
+`_evaluation_result` in [`src/cli/stream_workflows.py`](../src/cli/stream_workflows.py) computes aggregates from the latest final-at-that-point results with no error and a judge-score object. Each criterion is an unweighted arithmetic mean across successful judged cases; failures are excluded, not treated as zero. Terminal means use only the final successful results after retry replacement. With no successes, every aggregate is null. There is no combined overall score or threshold that changes a case from transport/model success to failure.
 
 The UI formats scores to two decimals and uses [`evaluationScoreColor`](../app/src/lib/evaluation-score.ts) for a clamped red-to-green 0–5 scale. Display rounding and color do not change stored judge scores or aggregate calculations.
 
@@ -234,10 +234,10 @@ The Tauri [RagEvals component](../app/src/components/RagEvals.svelte) shows dist
 | Item | Value or behavior |
 | --- | --- |
 | `EVALUATION_RESULTS_SCHEMA` | `rag-evaluation-results` |
-| `EVALUATION_RESULTS_SCHEMA_VERSION` | 2 |
+| `EVALUATION_RESULTS_SCHEMA_VERSION` | 3 |
 | `CANONICAL_RETRIEVAL_IDENTIFIER` | `multihop-hybrid` |
-| `DEFAULT_EVALUATION_RESULTS_PATH` | `tests/eval_results.json`, used as a filename template, not overwritten |
-| Artifact fields | `schema`, `schema_version`, `metadata`, `input_cases`, `results`, `aggregate_scores`, `summary` |
+| `DEFAULT_EVALUATION_RESULTS_PATH` | Development: `tests/eval_results.json`; frozen app: `~/Library/Application Support/Capstone/eval_results.json`. It is used as a filename template, not overwritten. |
+| Artifact fields | `schema`, `schema_version`, `metadata`, `input_cases`, `results`, `aggregate_scores`, `aggregate_metrics`, `summary` |
 | Metadata | Canonical retrieval identifier plus requested strategy label |
 | Summary | `total`, `succeeded`, `failed` |
 

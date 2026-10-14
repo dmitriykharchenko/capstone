@@ -5,6 +5,8 @@ from __future__ import annotations
 import errno
 import hashlib
 import os
+import shlex
+import sys
 import threading
 import time
 import unicodedata
@@ -215,11 +217,33 @@ class _DatabaseLock:
             self._handle = None
 
 
+def _is_backend_owner_command(command: str) -> bool:
+    """Match only this source CLI or this exact frozen backend executable."""
+
+    command = command.strip()
+    if not command:
+        return False
+    executable = str(Path(sys.executable).resolve())
+    if getattr(sys, "frozen", False):
+        return command == executable or command.startswith(
+            f"{executable} --multiprocessing-fork "
+        )
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return False
+    return (
+        len(arguments) == 3
+        and Path(arguments[0]).resolve() == Path(executable)
+        and arguments[1:] == ["-m", "src.cli"]
+    )
+
+
 def stop_lock_owner(database_path: str | Path, *, timeout: float = 10.0) -> bool:
     """Stop the backend process holding the database lock; return whether one was stopped.
 
-    Only a live ``src.cli`` process recorded in the lock file is signalled, so a
-    stale or reused process ID never terminates an unrelated program.
+    Only the exact source CLI or frozen executable recorded in the lock file is
+    signalled, so a stale or reused process ID never terminates another program.
     """
 
     if os.name == "nt":  # pragma: no cover - no owner PID is recorded on Windows
@@ -241,7 +265,7 @@ def stop_lock_owner(database_path: str | Path, *, timeout: float = 10.0) -> bool
         text=True,
         check=False,
     ).stdout
-    if "src.cli" not in command:
+    if not _is_backend_owner_command(command):
         return False
     for sig, wait in ((signal.SIGTERM, timeout), (signal.SIGKILL, 2.0)):
         try:

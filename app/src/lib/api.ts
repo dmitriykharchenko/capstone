@@ -44,6 +44,17 @@ export interface PdfData {
   bytes: number[];
 }
 
+export interface LibrarySelection {
+  path: string;
+  dataPath: string;
+}
+
+export interface ChooseLibraryResponse {
+  library: LibrarySelection | null;
+  changed: boolean;
+  cancelled: boolean;
+}
+
 // One persisted per-paper indexing outcome, returned by `paper_statuses` so the
 // UI can restore indicators after a restart.
 export interface PaperStatusInfo {
@@ -190,6 +201,10 @@ export type IndexStreamEvent =
 
 export const api = {
   ...orchestrationApi,
+  getCurrentLibrary: () =>
+    invoke<LibrarySelection | null>("get_current_library"),
+  chooseLibrary: () =>
+    invoke<ChooseLibraryResponse>("choose_library"),
   listPapers: () => invoke<PaperInfo[]>("list_papers"),
   readPdf: (paperId: string) => invoke<PdfData>("read_pdf", { paperId }),
   // Stream a chat turn: each token delta and the terminal event are delivered

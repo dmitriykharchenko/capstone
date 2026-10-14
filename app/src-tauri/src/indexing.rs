@@ -1,9 +1,10 @@
 //! Paper indexing progress, index status and index reset over the Python bridge.
 
 use serde_json::Value;
-use tauri::ipc::Channel;
+use tauri::{ipc::Channel, State};
 
 use crate::error::CommandError;
+use crate::library::LibraryState;
 use crate::{bridge, project_root, run_blocking};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -141,16 +142,26 @@ fn paper_index_stream_event(value: &Value) -> PaperIndexStreamEvent {
 #[tauri::command]
 pub(crate) async fn index_papers_stream(
     on_event: Channel<PaperIndexStreamEvent>,
+    state: State<'_, LibraryState>,
 ) -> Result<(), CommandError> {
+    index_papers_stream_with_state(on_event, &state).await
+}
+
+async fn index_papers_stream_with_state(
+    on_event: Channel<PaperIndexStreamEvent>,
+    state: &LibraryState,
+) -> Result<(), CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
         let request = serde_json::json!({ "command": "index_papers", "stream": true });
         let mut sent_error = false;
-        let result = bridge::call_streaming(&root, request, |value| {
-            let event = paper_index_stream_event(&value);
-            sent_error |= matches!(event, PaperIndexStreamEvent::Error { .. });
-            let _ = on_event.send(event);
-        });
+        let result =
+            bridge::call_streaming(&root, operation.library_directory(), request, |value| {
+                let event = paper_index_stream_event(&value);
+                sent_error |= matches!(event, PaperIndexStreamEvent::Error { .. });
+                let _ = on_event.send(event);
+            });
         if let Err(error) = result {
             if !sent_error {
                 let _ = on_event.send(PaperIndexStreamEvent::Error {
@@ -165,30 +176,54 @@ pub(crate) async fn index_papers_stream(
 }
 
 #[tauri::command]
-pub(crate) async fn paper_statuses() -> Result<Value, CommandError> {
+pub(crate) async fn paper_statuses(state: State<'_, LibraryState>) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
-    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "paper_statuses" })))
-        .await
+    run_blocking(move || {
+        bridge::call(
+            &root,
+            operation.library_directory(),
+            serde_json::json!({ "command": "paper_statuses" }),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn bm25_status() -> Result<Value, CommandError> {
+pub(crate) async fn bm25_status(state: State<'_, LibraryState>) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
-    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "bm25_status" }))).await
+    run_blocking(move || {
+        bridge::call(
+            &root,
+            operation.library_directory(),
+            serde_json::json!({ "command": "bm25_status" }),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn reset_all_indices() -> Result<Value, CommandError> {
+pub(crate) async fn reset_all_indices(
+    state: State<'_, LibraryState>,
+) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
-    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "reset_all_indices" })))
-        .await
+    run_blocking(move || {
+        bridge::call(
+            &root,
+            operation.library_directory(),
+            serde_json::json!({ "command": "reset_all_indices" }),
+        )
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(unix)]
-    use crate::test_support::run_with_fake_python;
+    use crate::test_support::{run_with_fake_python, test_library_state};
 
     #[test]
     fn maps_and_serializes_paper_progress_event() {
@@ -284,9 +319,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn forwards_nonzero_bridge_failure_to_channel_error() {
+        let state = test_library_state();
         let (result, events) = run_with_fake_python(
             "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"start\",\"completed\":0,\"total\":0}'\nprintf '%s\\n' 'process failed' >&2\nexit 17\n",
-            |channel| tauri::async_runtime::block_on(index_papers_stream(channel)),
+            |channel| {
+                tauri::async_runtime::block_on(index_papers_stream_with_state(channel, &state))
+            },
         );
 
         let error = result.expect_err("non-zero bridge process must fail");

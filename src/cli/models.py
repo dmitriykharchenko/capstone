@@ -301,6 +301,7 @@ def build_paper_indexer(config: CLIConfig):
                     )
                 ),
                 graph_store=graph_store,
+                artifacts_directory=config.conversion_directory,
                 max_workers=config.index_max_workers,
             )
         return PaperIndexer(
@@ -310,6 +311,7 @@ def build_paper_indexer(config: CLIConfig):
             metadata_extractor=PaperMetadataExtractor(model=MockChatModel()),
             fact_extractor=FactExtractor(model=MockChatModel()),
             graph_store=graph_store,
+            artifacts_directory=config.conversion_directory,
             max_workers=config.index_max_workers,
         )
     except Exception:

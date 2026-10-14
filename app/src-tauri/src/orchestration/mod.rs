@@ -3,8 +3,10 @@ mod bridge;
 mod wire;
 
 use serde_json::{json, Value};
-use tauri::ipc::Channel;
+use tauri::{ipc::Channel, State};
 use wire::{validate_type, Validator, ERROR};
+
+use crate::library::LibraryState;
 
 fn failure() -> CommandError {
     CommandError::InvalidResponse(ERROR.into())
@@ -51,16 +53,23 @@ where
     send(terminal.unwrap()).map_err(|_| failure())
 }
 
-async fn stream(request: Value, on_event: Channel<Value>) -> Result<(), CommandError> {
+async fn stream(
+    request: Value,
+    on_event: Channel<Value>,
+    state: &LibraryState,
+) -> Result<(), CommandError> {
     if let Some(message) = request.get("message") {
         validate_type(message, "query").map_err(|_| failure())?;
     }
+    let operation = state.begin_operation()?;
     let root = crate::project_root();
     crate::run_blocking(move || {
         forward(
             request,
             |value| on_event.send(value).map_err(|_| ERROR),
-            |request, callback| bridge::call(&root, request, callback),
+            |request, callback| {
+                bridge::call(&root, operation.library_directory(), request, callback)
+            },
         )
     })
     .await
@@ -73,8 +82,9 @@ pub async fn orchestration_start(
     turn_id: String,
     message: String,
     on_event: Channel<Value>,
+    state: State<'_, LibraryState>,
 ) -> Result<(), CommandError> {
-    stream(json!({"command":"orchestration_start","session_id":session_id,"run_id":run_id,"turn_id":turn_id,"message":message}), on_event).await
+    stream(json!({"command":"orchestration_start","session_id":session_id,"run_id":run_id,"turn_id":turn_id,"message":message}), on_event, &state).await
 }
 
 #[tauri::command]
@@ -83,11 +93,12 @@ pub async fn orchestration_resume(
     run_id: String,
     turn_id: String,
     on_event: Channel<Value>,
+    state: State<'_, LibraryState>,
 ) -> Result<(), CommandError> {
-    stream(json!({"command":"orchestration_resume","session_id":session_id,"run_id":run_id,"turn_id":turn_id}), on_event).await
+    stream(json!({"command":"orchestration_resume","session_id":session_id,"run_id":run_id,"turn_id":turn_id}), on_event, &state).await
 }
 
-async fn control(request: Value) -> Result<Value, CommandError> {
+async fn control(request: Value, state: &LibraryState) -> Result<Value, CommandError> {
     for key in ["session_id", "run_id", "turn_id"] {
         if let Some(value) = request.get(key) {
             validate_type(value, "id").map_err(|_| failure())?;
@@ -96,10 +107,11 @@ async fn control(request: Value) -> Result<Value, CommandError> {
     if let Some(value) = request.get("exchange_id") {
         validate_type(value, "exchange").map_err(|_| failure())?;
     }
+    let operation = state.begin_operation()?;
     let root = crate::project_root();
     crate::run_blocking(move || {
         let mut result = None;
-        bridge::call(&root, &request, |value| {
+        bridge::call(&root, operation.library_directory(), &request, |value| {
             if result.is_some() {
                 return Err(ERROR);
             }
@@ -149,24 +161,34 @@ async fn control(request: Value) -> Result<Value, CommandError> {
 }
 
 #[tauri::command]
-pub async fn orchestration_pending(session_id: String) -> Result<Value, CommandError> {
-    control(json!({"command":"orchestration_pending","session_id":session_id})).await
+pub async fn orchestration_pending(
+    session_id: String,
+    state: State<'_, LibraryState>,
+) -> Result<Value, CommandError> {
+    control(
+        json!({"command":"orchestration_pending","session_id":session_id}),
+        &state,
+    )
+    .await
 }
 #[tauri::command]
 pub async fn orchestration_discard(
     session_id: String,
     run_id: String,
     turn_id: String,
+    state: State<'_, LibraryState>,
 ) -> Result<Value, CommandError> {
-    control(json!({"command":"orchestration_discard","session_id":session_id,"run_id":run_id,"turn_id":turn_id})).await
+    control(json!({"command":"orchestration_discard","session_id":session_id,"run_id":run_id,"turn_id":turn_id}), &state).await
 }
 #[tauri::command]
 pub async fn orchestration_trace(
     session_id: String,
     exchange_id: u64,
+    state: State<'_, LibraryState>,
 ) -> Result<Value, CommandError> {
     control(
         json!({"command":"orchestration_trace","session_id":session_id,"exchange_id":exchange_id}),
+        &state,
     )
     .await
 }

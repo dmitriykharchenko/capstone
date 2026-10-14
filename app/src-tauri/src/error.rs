@@ -18,6 +18,9 @@ pub enum CommandError {
 
     #[error("invalid response from python bridge: {0}")]
     InvalidResponse(String),
+
+    #[error("library selection failed: {0}")]
+    Library(String),
 }
 
 impl Serialize for CommandError {

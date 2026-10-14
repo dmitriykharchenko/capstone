@@ -1,9 +1,10 @@
 //! Chat turn streaming, session history and history search over the Python bridge.
 
 use serde_json::Value;
-use tauri::ipc::Channel;
+use tauri::{ipc::Channel, State};
 
 use crate::error::CommandError;
+use crate::library::LibraryState;
 use crate::{bridge, project_root, run_blocking};
 
 const MAX_CHAT_SOURCES: usize = 35;
@@ -321,7 +322,18 @@ pub(crate) async fn chat_stream(
     session_id: String,
     message: String,
     on_event: Channel<ChatStreamEvent>,
+    state: State<'_, LibraryState>,
 ) -> Result<(), CommandError> {
+    chat_stream_with_state(session_id, message, on_event, &state).await
+}
+
+async fn chat_stream_with_state(
+    session_id: String,
+    message: String,
+    on_event: Channel<ChatStreamEvent>,
+    state: &LibraryState,
+) -> Result<(), CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
         let request = serde_json::json!({
@@ -331,18 +343,19 @@ pub(crate) async fn chat_stream(
             "stream": true,
         });
         let mut terminal_event_seen = false;
-        let result = bridge::call_streaming(&root, request, |value| {
-            if terminal_event_seen {
-                return;
-            }
-            if let Some(event) = chat_stream_event(&value) {
-                terminal_event_seen = matches!(
-                    &event,
-                    ChatStreamEvent::Done { .. } | ChatStreamEvent::Error { .. }
-                );
-                let _ = on_event.send(event);
-            }
-        });
+        let result =
+            bridge::call_streaming(&root, operation.library_directory(), request, |value| {
+                if terminal_event_seen {
+                    return;
+                }
+                if let Some(event) = chat_stream_event(&value) {
+                    terminal_event_seen = matches!(
+                        &event,
+                        ChatStreamEvent::Done { .. } | ChatStreamEvent::Error { .. }
+                    );
+                    let _ = on_event.send(event);
+                }
+            });
         if !terminal_event_seen {
             let _ = on_event.send(ChatStreamEvent::Error {
                 message: CHAT_TRANSPORT_ERROR.to_string(),
@@ -354,17 +367,30 @@ pub(crate) async fn chat_stream(
 }
 
 #[tauri::command]
-pub(crate) async fn list_sessions() -> Result<Value, CommandError> {
-    let root = project_root();
-    run_blocking(move || bridge::call(&root, serde_json::json!({ "command": "sessions" }))).await
-}
-
-#[tauri::command]
-pub(crate) async fn get_messages(session_id: String) -> Result<Value, CommandError> {
+pub(crate) async fn list_sessions(state: State<'_, LibraryState>) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
         bridge::call(
             &root,
+            operation.library_directory(),
+            serde_json::json!({ "command": "sessions" }),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn get_messages(
+    session_id: String,
+    state: State<'_, LibraryState>,
+) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
+    let root = project_root();
+    run_blocking(move || {
+        bridge::call(
+            &root,
+            operation.library_directory(),
             serde_json::json!({ "command": "messages", "session_id": session_id }),
         )
     })
@@ -376,7 +402,9 @@ pub(crate) async fn search(
     query: String,
     limit: Option<u32>,
     session_id: Option<String>,
+    state: State<'_, LibraryState>,
 ) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
         let mut request = serde_json::json!({ "command": "search", "query": query });
@@ -386,7 +414,7 @@ pub(crate) async fn search(
         if let Some(session_id) = session_id {
             request["session_id"] = serde_json::json!(session_id);
         }
-        bridge::call(&root, request)
+        bridge::call(&root, operation.library_directory(), request)
     })
     .await
 }
@@ -395,7 +423,7 @@ pub(crate) async fn search(
 mod tests {
     use super::*;
     #[cfg(unix)]
-    use crate::test_support::run_with_fake_python;
+    use crate::test_support::{run_with_fake_python, test_library_state};
 
     fn chat_source(rank: u32) -> Value {
         serde_json::json!({
@@ -607,9 +635,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn chat_bridge_failure_emits_one_sanitized_terminal_error() {
+        let state = test_library_state();
         let (result, events) = run_with_fake_python(
             "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"plan\",\"subqueries\":[{\"id\":\"subquery-1\",\"index\":1,\"query\":\"alpha\"},{\"id\":\"subquery-2\",\"index\":2,\"query\":\"beta\"}]}'\nexit 17\n",
-            |channel| tauri::async_runtime::block_on(chat_stream("session".to_string(), "question".to_string(), channel)),
+            |channel| {
+                tauri::async_runtime::block_on(chat_stream_with_state(
+                    "session".to_string(),
+                    "question".to_string(),
+                    channel,
+                    &state,
+                ))
+            },
         );
 
         result.expect_err("non-zero bridge process must fail");

@@ -14,6 +14,7 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - pyinstaller
   - pip:
       - pymupdf4llm==1.28.2
       - python-dotenv

@@ -2,19 +2,19 @@
 
 [Documentation home](README.md) · [Architecture](architecture.md) · [Getting started](getting-started.md) · [Configuration](configuration.md)
 
-**Source inspection date: 2026-09-25.** This guide describes the current working-tree source, including uncommitted changes. It does not assert clean-checkout parity, a successful build, or observed desktop behavior. No application, provider, live store, or application test is run for this documentation pass.
+**Source inspection date: 2026-10-14.** This guide describes the current working-tree source, including uncommitted changes. It does not assert clean-checkout parity, a successful build, or observed desktop behavior. No application, provider, live store, or application test is run for this documentation pass.
 
 ## Frontend boundary
 
-The Svelte frontend in `app/` uses a Themis store, typed Redux sagas, Tailwind styling and five top-level pages. [main.ts](../app/src/main.ts) mounts [App.svelte](../app/src/App.svelte). [api.ts](../app/src/lib/api.ts) uses Tauri `invoke` and `Channel` for native paper/PDF access and Python-backed workflows. Ordinary Chat/index/evaluation unsubscribe callbacks are no-ops: closing an event channel does not cancel the invocation. No shell-wide command inventory gate is present.
+The Svelte frontend in `app/` uses a Themis store, typed Redux sagas, Tailwind styling and four top-level pages. [main.ts](../app/src/main.ts) mounts [App.svelte](../app/src/App.svelte). [api.ts](../app/src/lib/api.ts) uses Tauri `invoke` and `Channel` for native paper/PDF access and Python-backed workflows. Ordinary Chat/index/evaluation unsubscribe callbacks are no-ops: closing an event channel does not cancel the invocation. No shell-wide command inventory gate is present.
 
 See [native desktop](native-desktop.md) for process and security boundaries, [PDF viewer](pdf-viewer.md) for rendering ownership, and [orchestration](orchestration.md) for the distinction between transport contracts and a finished recovery UI.
 
 ## Shell, lifecycle, and styling
 
-`App.svelte` owns `store.init()`/disposal and explicitly starts every entry in `appSagas` on mount. It dispatches `loadSessions()` and `loadPapers()` immediately; background data work is not deferred until a user opens those tabs. Page components are conditionally mounted according to `selectActiveRoute()`, but the application store and sagas remain alive across tab switches.
+`App.svelte` owns `store.init()`/disposal and starts the root `appSaga` on mount. That saga resolves `get_current_library` before it starts library-dependent sagas or dispatches `loadSessions()` and `loadPapers()`. An invalid or inaccessible saved selection stops those loads and presents a recovery view with **Open folder**, rather than silently reading default storage. Page components are conditionally mounted according to `selectActiveRoute()`, but the application store and sagas remain alive across tab switches.
 
-[store.ts](../app/src/store.ts) instantiates one `Store` with `throttledSelectorFrequency: 64`. Reducer keys are `chat`, `sessions`, `papers`, `search`, `paperSearch`, `router`, and `evaluation`. Components subscribe through selectors and dispatch intent actions; request work belongs to sagas.
+[store.ts](../app/src/store.ts) instantiates one `Store` with `throttledSelectorFrequency: 64`. Reducer keys are `chat`, `sessions`, `papers`, `search`, `paperSearch`, `router`, `evaluation`, and `library`. Components subscribe through selectors and dispatch intent actions; request work belongs to sagas.
 
 The visible tabs are **Chat**, **History Search**, **Papers**, and **RAG Evals**; **RAG Evals** sits at the right end of the header and is faded until hovered or active. The shell uses a full-height layout with a 38-pixel overlay header. Content headers and scroll regions use explicit stacking and padding. Shared controls use [app.css](../app/src/app.css) and `app/src/lib/components/ui/`.
 
@@ -100,6 +100,8 @@ History results show a session/exchange label and both sides of the saved exchan
 
 [PapersList.svelte](../app/src/components/PapersList.svelte) combines search, a collapsible paper sidebar, index controls, progress, and PDF viewer. Selection dispatches `openPaper` but is not a route parameter. The sidebar toggle has an accessible name/expanded state and the sidebar collapses when focus enters the PDF iframe.
 
+The header displays the current research folder with a truncating path and full-path tooltip. **Open folder** invokes the native chooser and is disabled during tracked chat, session/paper/PDF loads, searches, indexing, reset, or evaluation work; the native host is the final race-safe busy authority. Cancel and same-folder selection preserve all frontend state. A changed selection first replaces the route with bare `/papers`, then reloads the renderer so paper/PDF selection, sessions/messages, query collections, index/evaluation progress, pending views, late saga responses, and route parameters from the previous library cannot reappear. The reload bootstraps the new native selection before any library data read and does not start indexing or provider work.
+
 **Index papers** dispatches `runPaperIndex`. **Reset indices** dispatches `resetIndices` without a confirmation dialog. The tooltip names vector/BM25/status indexes; reset is destructive, not a display reset. Consult [paper indexing](paper-indexing.md) and [storage](data-storage.md).
 
 `papersSaga` handles paper listing, best-effort status reads, streaming index progress, and reset. `takeLeading` prevents duplicate index workers and duplicate resets. The stream's `start`, `started`, `progress`, `done`, and `error` events drive aggregate progress and per-paper indicators. Status dots expose labels through tooltips and `aria-label`, with a separate BM25 dot; a running attempt can mark unvisited papers queued.
@@ -110,7 +112,7 @@ Listing is followed by best-effort `paperStatuses` and `bm25Status`; failed hydr
 
 ## RAG Evals page
 
-The page offers one displayed strategy, **Multihop Hybrid**, and **Add tests JSON**. The strategy control has one item; it is not a selectable vector/BM25 comparison UI. `addTests` requires a `.json` filename, reads the local file, validates it with [parseEvaluationTestCases](../app/src/lib/evaluation-upload.ts), and dispatches `runEvaluation` immediately on success. There is no separate upload-then-start step.
+The page offers **Add tests JSON**; it does not provide a selectable vector/BM25 comparison UI. `addTests` requires a `.json` filename, reads the local file, validates it with [parseEvaluationTestCases](../app/src/lib/evaluation-upload.ts), and dispatches `runEvaluation` immediately on success. There is no separate upload-then-start step.
 
 Cases contain nonempty `question` and `grading_notes` strings plus a `sources` array whose entries must be nonempty strings; the upload parser accepts an empty `sources` array. There is no separate `gold_answer` field in `EvaluationTestCase`. Invalid file/JSON/schema feedback is local `uploadError`; request/stream failure lives in the evaluation slice. `evaluationSaga` uses `takeLeading` and processes result/progress events into indexed case rows and aggregate scores. Results survive tab switches because the store remains alive, but the page does not load prior result files into that store on restart.
 

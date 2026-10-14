@@ -16,6 +16,15 @@ import { routerReducer } from "./slices/router/router-slice";
 import { routerSaga } from "./slices/router/sagas/router-saga";
 import { evaluationReducer } from "./slices/evaluation/evaluation-slice";
 import { evaluationSaga } from "./slices/evaluation/sagas/evaluation-saga";
+import { libraryReducer } from "./slices/library/library-slice";
+import {
+  initializeLibrary,
+  librarySaga,
+  type LibraryServices,
+} from "./slices/library/sagas/library-saga";
+import { loadSessions } from "./slices/sessions/sessions-slice";
+import { loadPapers } from "./slices/papers/papers-slice";
+import { all, call, fork, put } from "typed-redux-saga";
 
 const reducers = {
   chat: chatReducer,
@@ -25,6 +34,7 @@ const reducers = {
   paperSearch: paperSearchReducer,
   router: routerReducer,
   evaluation: evaluationReducer,
+  library: libraryReducer,
 };
 
 // Single application store instance. Selectors are created against it at module
@@ -35,12 +45,19 @@ export const store = new Store(reducers, undefined, {
 
 // Every app saga; started explicitly after `store.init()` (the package saga
 // manager does not auto-start app sagas).
-export const appSagas = [
-  chatSaga,
-  sessionsSaga,
-  papersSaga,
-  searchSaga,
-  paperSearchSaga,
-  routerSaga,
-  evaluationSaga,
-];
+export function* appSaga(libraryServices?: LibraryServices) {
+  yield* fork(librarySaga, libraryServices);
+  const initialized = yield* call(initializeLibrary, libraryServices);
+  if (!initialized) return;
+  yield* all([
+    fork(chatSaga),
+    fork(sessionsSaga),
+    fork(papersSaga),
+    fork(searchSaga),
+    fork(paperSearchSaga),
+    fork(routerSaga),
+    fork(evaluationSaga),
+  ]);
+  yield* put(loadSessions());
+  yield* put(loadPapers());
+}

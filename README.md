@@ -19,10 +19,10 @@ numbers.
 - **Chat:** adaptive multi-hop answering (plan, hybrid retrieval, subanswers,
   coverage review, final answer) with sources.
 - **Papers:** browse and read the local PDFs, before or after searching, and open
-  them from Chat sources.
+  them from the Papers view.
 - **History:** search saved conversations.
-- **RAG Evals:** run batteries of test questions, scored by an LLM judge, with
-  latency, token, and cost metrics, to validate changes to the RAG system.
+- **RAG Evals:** run batteries of test questions with latency, token, and cost
+  metrics; with a provider key, an LLM judge scores the results.
 
 ## Screenshots
 
@@ -53,10 +53,10 @@ progress.
 | PDFs | Placed in `ResearchPapers/` (default) or a configured directory |
 | Provider account | OpenAI or OpenRouter key for real model and embedding behavior |
 
-Python packages (from `environment.yml`): `pymupdf4llm`, `python-dotenv`,
-`langchain-openai`, `langchain-core`, `openai`, `chromadb`, `pypdf`,
-`pycozo[embedded]`, `langgraph`. `pytest` is not included; install it separately
-to run the Python tests.
+`environment.yml` is a portable cross-platform developer environment. It keeps
+the project's declared requirements and adds PyInstaller as the approved
+build-time tool. `pytest` is not included; install it separately to run the
+Python tests.
 
 ## Quick start
 
@@ -125,7 +125,10 @@ Do not commit `.env` or type keys on the command line.
 
 ### Step 5 — Add the papers
 
-Put the PDF files in `ResearchPapers/` in the repository root.
+Put PDF files directly in `ResearchPapers/` in the repository root, or keep an
+existing folder ready to select from **Papers** after the app starts. Discovery
+is top-level only: PDFs in nested folders are not listed. The app reads PDFs in
+place and does not rename, move, or copy them.
 
 ### Step 6 — Start the app
 
@@ -154,15 +157,59 @@ stop the app.
 Do not use `npm run dev` to start the app: it opens only a web page that cannot
 reach the Python backend.
 
+### Build the frozen Python backend (macOS arm64)
+
+Create or update the generated project environment as in Step 2, then run:
+
+```bash
+conda run -n ragcourse sh -c 'exec "$CONDA_PREFIX/bin/python" tools/build_macos_backend.py'
+```
+
+The deterministic output is
+`app/src-tauri/resources/backend/macos-arm64/capstone-cli/`. Bundle that entire
+directory: `capstone-cli` requires its sibling `_internal/` runtime. The build
+includes application code and required prompt/schema resources, but not local
+PDFs, `.env` files, indexes, history, logs, or evaluation output. After an
+approved dependency change, use Conda's package-manager history to identify the
+intentional root dependency, preserve this portable baseline and its pip inputs,
+then verify the target-platform solves. Do not replace this file with a full
+platform-resolved Conda export or edit a generated `prefix:` line; either makes
+the developer environment host-specific.
+
+### Build the local macOS arm64 app package
+
+On a native Apple Silicon Mac, after creating the `ragcourse` environment and
+installing the locked app dependencies, run this single command from `app/`:
+
+```bash
+npm run package:macos-arm64
+```
+
+It builds the frontend, rebuilds the frozen backend with the environment's
+approved PyInstaller, and creates exactly one local-use DMG at
+`release/macos-arm64/Research-assistant_macos-arm64.dmg`. The script restores
+and verifies the bundled backend's required relative MuPDF library links. The
+DMG is unsigned and unnotarized; signing, notarization, and public distribution
+are not supported by this command. It does not package `.env`, PDFs, indexes,
+history, logs, or other mutable user data.
+
 ### Step 7 — First use in the app
 
-1. Open **Papers** and check that your PDFs are listed.
-2. Click **Index papers** and wait for it to finish. This calls the embedding and
-   chat models and costs money.
+1. Open **Papers**. To use a folder other than the displayed default, click
+   **Open folder** and select it. Choosing a folder does not index anything or
+   call a model provider.
+2. Click **Index papers** and wait for it to finish. With a provider key, this
+   calls the embedding and chat models and costs money.
 3. Ask a question in **Chat**.
 4. Optional: in **RAG Evals**, upload `tests/eval_questions_performance.json`
-   (10 cases) or `tests/eval_questions.json` (60 cases). The run starts as soon
-   as a valid file is uploaded, and it also costs money.
+   (10 cases) or `tests/eval_questions.json` (70 cases). The run starts as soon
+   as a valid file is uploaded; with a provider key, it also costs money.
+
+For a selected folder `L`, the app keeps generated state under
+`L/.research-assistant/`. A folder without that directory starts fresh; selecting
+the folder again later reuses its existing history, indexes, graph, checkpoints,
+conversion assets, logs, and evaluation output. Switching folders does not copy
+or migrate data from the previous folder.
 
 ### If something goes wrong
 
@@ -170,7 +217,7 @@ reach the Python backend.
 | --- | --- |
 | Start fails with a port error | Port 1420 is in use. Close the other program using it, then start again. |
 | Window opens but Chat or indexing fails with Python import errors | The app did not find the `ragcourse` environment and fell back to `python3`. On macOS/Linux, start it from `app/` with `CAPSTONE_PYTHON="$(conda run -n ragcourse printenv CONDA_PREFIX)/bin/python" npm run tauri -- dev`. On Windows, check that `$env:CAPSTONE_PYTHON` is set as in step 6 before running `npx tauri dev`. |
-| **Papers** is empty | The PDFs are not in `ResearchPapers/`, or `CAPSTONE_PAPERS_DIR` points elsewhere. |
+| **Papers** is empty | Put PDFs at the top level of the displayed Papers folder, or click **Open folder** and choose the intended readable directory. |
 | Answers look generic or fake | No API key was found, so the backend uses a mock model. Check `.env`. |
 
 More help: [Getting started](documentation/getting-started.md) and
@@ -178,8 +225,8 @@ More help: [Getting started](documentation/getting-started.md) and
 
 ## Configuration reference
 
-All settings are optional except one API key. Set them in `.env` in the
-repository root. Python loads this file without overriding variables already set
+All settings are optional. In development, set Python settings in `.env` in the
+repository root; Python loads this file without overriding variables already set
 in the shell.
 
 | Variable | Default | Purpose |
@@ -193,12 +240,13 @@ in the shell.
 | `CAPSTONE_CHAT_MAX_TOKENS` | unset | Optional output cap |
 | `CAPSTONE_SYSTEM_PROMPT` | unset | Optional system prompt override |
 | `CAPSTONE_INDEX_MAX_WORKERS` | `4` | Parallel paper indexing workers |
-| `CAPSTONE_PAPERS_DIR` | `ResearchPapers/` | PDF directory |
-| `CAPSTONE_DB_PATH` | `data/chat_history.sqlite3` | Chat history and paper statuses |
-| `CAPSTONE_CHROMA_DIR` | `data/chroma/` | Vector store and BM25 index |
-| `CAPSTONE_LOG_PATH` | `data/chat_logs.txt` | Chat log |
-| `CAPSTONE_RETRIEVAL_LOG_PATH` | `data/retrieval_logs.txt` | Retrieval log |
-| `CAPSTONE_PYTHON` | Conda `ragcourse` interpreter | Python used by the desktop app |
+| `CAPSTONE_DATA_DIR` | `data/` (development) / `~/Library/Application Support/Capstone/` (frozen) | Root for default writable paths |
+| `CAPSTONE_PAPERS_DIR` | `ResearchPapers/` (development) / `$CAPSTONE_DATA_DIR/ResearchPapers/` (frozen) | PDF directory |
+| `CAPSTONE_DB_PATH` | `$CAPSTONE_DATA_DIR/chat_history.sqlite3` | Chat history and paper statuses |
+| `CAPSTONE_CHROMA_DIR` | `$CAPSTONE_DATA_DIR/chroma/` | Vector store and BM25 index |
+| `CAPSTONE_LOG_PATH` | `$CAPSTONE_DATA_DIR/chat_logs.txt` | Chat log |
+| `CAPSTONE_RETRIEVAL_LOG_PATH` | `$CAPSTONE_DATA_DIR/retrieval_logs.txt` | Retrieval log |
+| `CAPSTONE_PYTHON` | unset (falls back to `python3`) | Python used by the desktop app |
 | `CAPSTONE_PROJECT_ROOT` | Repository root | Working directory for the Python process |
 
 Without an API key the backend uses a deterministic mock model and a local hashing
@@ -208,6 +256,11 @@ embedder. This is for development only and does not reflect answer quality.
 the desktop shell from the parent environment, not from `.env`. Set them in the
 shell that launches the app when you change them. See
 [Configuration](documentation/configuration.md) for details.
+
+An app-selected Papers folder takes precedence over the legacy data and paper
+path overrides for desktop backend operations. The shell passes that selection
+to each child process as `CAPSTONE_LIBRARY_DIR`; it is an internal desktop
+contract, not a value users need to put in `.env`.
 
 ## Tests
 
@@ -229,13 +282,13 @@ suites and safe troubleshooting.
 ## Known limitations and reviewer notes
 
 - **Paid operations:** indexing, Chat, and evaluations call provider APIs when a
-  key is configured. A full 70-case evaluation cost about $1.78.
+  key is configured.
 - **Development build only:** `npm run tauri -- build` does not bundle Python,
   dependencies, or the paper corpus; the app runs from the repository layout.
 - **Prompt injection:** retrieved text is marked as untrusted, but this relies on
   the model following its prompt.
-- **Evaluation:** scores come from an LLM judge, not deterministic ground truth.
-  Citation accuracy is not measured.
+- **Evaluation:** with a provider key, scores come from an LLM judge, not
+  deterministic ground truth. Citation accuracy is not measured.
 - **Retrieval:** broad enumeration and cross-corpus comparison questions score
   lowest. Scores are relative rankings, not calibrated confidence.
 - **Index consistency:** Chroma, CozoDB, BM25, and SQLite are updated without a
@@ -243,8 +296,9 @@ suites and safe troubleshooting.
   Replacing a PDF under the same filename requires explicit reindexing.
 - **Embedding changes:** changing the embedding model or provider requires
   rebuilding the index.
-- **Reset:** "reset all indices" deletes derived data and is not reversible
-  without reindexing; PDFs and chat history are kept.
+- **Reset:** "reset all indices" deletes the paper-chunk collection, BM25 file,
+  and SQLite paper statuses. It keeps PDFs, chat history, CozoDB graph data, and
+  fact-vector data.
 - **Logs:** chat and retrieval logs contain questions, answers, and retrieved
   text. Do not share them publicly.
 - **Security:** the Tauri configuration has `csp: null`.

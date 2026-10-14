@@ -54,7 +54,6 @@ export function* papersSaga() {
     yield* put(papersLoading());
     try {
       const papers = yield* call(api.listPapers);
-      yield* put(setPapers(papers));
       // Hydrate per-paper indicators from persisted outcomes so an already
       // indexed paper stays marked after a restart. Best-effort: a failure
       // here must not surface as a papers-load error.
@@ -72,6 +71,9 @@ export function* papersSaga() {
       } catch {
         // Ignore; BM25 dots simply fall back to "not indexed".
       }
+      // End the single loading window only after all library-scoped startup
+      // reads settle, so the folder chooser cannot race their native operations.
+      yield* put(setPapers(papers));
     } catch (error) {
       yield* put(papersFailed(String(error)));
     }

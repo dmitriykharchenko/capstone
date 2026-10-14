@@ -13,13 +13,12 @@ from uuid import uuid4
 
 from .diagnostics import sanitize_result_diagnostics
 from .metrics import aggregate_metrics
+from ..cli.config import default_evaluation_results_path
 
 EVALUATION_RESULTS_SCHEMA = "rag-evaluation-results"
 EVALUATION_RESULTS_SCHEMA_VERSION = 3
 CANONICAL_RETRIEVAL_IDENTIFIER = "multihop-hybrid"
-DEFAULT_EVALUATION_RESULTS_PATH = (
-    Path(__file__).resolve().parents[2] / "tests" / "eval_results.json"
-)
+DEFAULT_EVALUATION_RESULTS_PATH = default_evaluation_results_path()
 
 
 def evaluation_results_artifact(

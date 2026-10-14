@@ -2,7 +2,7 @@
 
 [Index](README.md) · [Setup](getting-started.md) · [Configuration](configuration.md) · [Storage](data-storage.md)
 
-**Source inspection: September 25, 2026.** This chapter describes the working tree, including uncommitted implementation. It separates executable call paths from capabilities that are currently exposed only as lower-level APIs.
+**Source inspection: October 14, 2026.** This chapter describes the working tree, including uncommitted implementation. It separates executable call paths from capabilities that are currently exposed only as lower-level APIs.
 
 ## Repository boundaries
 
@@ -68,7 +68,7 @@ This describes ordinary Chat. Durable orchestration has separate Intake/question
 | --- | --- | --- |
 | Saved conversation | Canonical SQLite exchange/messages/source records | Derived indexing failure does not prove the conversation was lost |
 | Python paper retrieval | Chroma plus lexical cache | Python's per-indexer lock is not a transaction spanning Cozo and Chroma |
-| Graph relationships | Cozo data derived from indexed PDFs | Stored for indexing; no desktop graph view |
+| Graph relationships | Cozo data derived from indexed PDFs | Query-time retrieval reads only fact-to-chunk relations; no desktop graph view |
 | Evaluation results | Separate timestamped JSON artifacts | Evaluation does not append answers to normal Chat history |
 | Durable orchestration | Separate trace/checkpoint database plus canonical publication arbitration | Checkpoint durability does not mean ordinary Chat has Resume/Discard UI |
 | UI search cache | In-memory query-keyed collections | Not durable search-result storage |

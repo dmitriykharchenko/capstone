@@ -45,37 +45,52 @@ impl Drop for OwnedChild {
     }
 }
 
-pub fn call<F>(root: &Path, request: &Value, on_line: F) -> Result<(), &'static str>
+pub fn call<F>(
+    root: &Path,
+    library_directory: Option<&Path>,
+    request: &Value,
+    on_line: F,
+) -> Result<(), &'static str>
 where
     F: FnMut(Value) -> Result<(), &'static str>,
 {
-    let executable = std::env::var_os("CAPSTONE_PYTHON")
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "python3".into());
-    call_with_executable(root, Path::new(&executable), request, on_line)
+    let backend = crate::backend_invocation(root, library_directory);
+    call_with_backend(&backend, request, on_line)
 }
 
+#[cfg(test)]
 pub fn call_with_executable<F>(
     root: &Path,
     executable: &Path,
+    request: &Value,
+    on_line: F,
+) -> Result<(), &'static str>
+where
+    F: FnMut(Value) -> Result<(), &'static str>,
+{
+    let backend = crate::BackendInvocation {
+        executable: executable.to_path_buf(),
+        working_directory: root.to_path_buf(),
+        frozen: false,
+        data_directory: None,
+        library_directory: None,
+    };
+    call_with_backend(&backend, request, on_line)
+}
+
+fn call_with_backend<F>(
+    backend: &crate::BackendInvocation,
     request: &Value,
     mut on_line: F,
 ) -> Result<(), &'static str>
 where
     F: FnMut(Value) -> Result<(), &'static str>,
 {
-    call_with_timeout(
-        root,
-        executable,
-        request,
-        &mut on_line,
-        Duration::from_secs(120),
-    )
+    call_with_timeout(backend, request, &mut on_line, Duration::from_secs(120))
 }
 
 fn call_with_timeout<F>(
-    root: &Path,
-    executable: &Path,
+    backend: &crate::BackendInvocation,
     request: &Value,
     mut on_line: F,
     timeout: Duration,
@@ -87,13 +102,26 @@ where
     if payload.len() > 16_384 {
         return Err(ERROR);
     }
-    let mut command = Command::new(executable);
+    let mut command = Command::new(&backend.executable);
+    if !backend.frozen {
+        command.args(["-m", "src.cli"]);
+    }
     command
-        .args(["-m", "src.cli"])
-        .current_dir(root)
+        .current_dir(&backend.working_directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if backend.frozen
+        && std::env::var_os("CAPSTONE_DATA_DIR")
+            .map_or(true, |value| value.to_string_lossy().trim().is_empty())
+    {
+        if let Some(data_directory) = &backend.data_directory {
+            command.env("CAPSTONE_DATA_DIR", data_directory);
+        }
+    }
+    if let Some(library_directory) = &backend.library_directory {
+        command.env("CAPSTONE_LIBRARY_DIR", library_directory);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -198,9 +226,15 @@ mod tests {
             &self,
             callback: impl FnMut(Value) -> Result<(), &'static str>,
         ) -> Result<(), &'static str> {
+            let backend = crate::BackendInvocation {
+                executable: self.0.join("fake-python"),
+                working_directory: self.0.clone(),
+                frozen: false,
+                data_directory: None,
+                library_directory: None,
+            };
             call_with_timeout(
-                &self.0,
-                &self.0.join("fake-python"),
+                &backend,
                 &serde_json::json!({}),
                 callback,
                 Duration::from_secs(2),
@@ -267,5 +301,32 @@ mod tests {
                 start.elapsed()
             );
         }
+    }
+
+    #[test]
+    fn durable_bridge_receives_selected_library_per_child() {
+        let fixture = Fixture::new("printf '{\"library\":\"%s\"}\\n' \"$CAPSTONE_LIBRARY_DIR\"");
+        let library = fixture.0.join("Papers — 研究");
+        let backend = crate::BackendInvocation {
+            executable: fixture.0.join("fake-python"),
+            working_directory: fixture.0.clone(),
+            frozen: false,
+            data_directory: None,
+            library_directory: Some(library.clone()),
+        };
+        let mut received = None;
+
+        call_with_timeout(
+            &backend,
+            &serde_json::json!({}),
+            |value| {
+                received = value["library"].as_str().map(str::to_string);
+                Ok(())
+            },
+            Duration::from_secs(2),
+        )
+        .unwrap();
+
+        assert_eq!(received.as_deref(), library.to_str());
     }
 }

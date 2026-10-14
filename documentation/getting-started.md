@@ -2,7 +2,7 @@
 
 [Index](README.md) · [Architecture](architecture.md) · [Configuration](configuration.md) · [Operations and testing](operations-and-testing.md)
 
-**Source inspection: September 25, 2026.** The commands below describe checked-in/current scripts; they were not executed for this documentation task. Installation, app launch, indexing, evaluation, and packaging have different side effects. Do not treat a setup guide as permission to run paid workloads or reset existing data.
+**Source inspection: October 14, 2026.** The commands below describe checked-in/current scripts; they were not executed for this documentation task. Installation, app launch, indexing, evaluation, and packaging have different side effects. Do not treat a setup guide as permission to run paid workloads or reset existing data.
 
 ## Desktop launch boundary
 

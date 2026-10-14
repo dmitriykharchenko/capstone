@@ -99,7 +99,7 @@ An empty extraction removes the paper's graph entry and vector records under the
 
 Concurrent `started`/outcome events can interleave in completion order; use `paper_id`, not array position, to update UI state. A skipped paper still receives artifact inspection. When its graph fact version is stale, the indexer reads its existing Chroma chunks by `paper_id`, orders them by `chunk_index`, extracts/embeds facts, and atomically replaces only fact graph relations before updating `facts`. Chunk records and paper/author/topic graph data are unchanged. A current version skips fact work. A backfill failure retains `status="skipped"` with actionable text so the CLI does not overwrite its saved indexed status.
 
-`_already_indexed_ids` selects only SQLite rows whose status is `indexed`. `empty` and `failed` are retried. Status-store open/read/write failures are intentionally best-effort: indexing can continue without durable indicators. The streaming command leaves skipped rows unchanged. `_refresh_bm25_index` rebuilds from the full Chroma corpus, including skipped papers, and swallows refresh failures. Consequently, `done` is not proof that indicators and BM25 were successfully persisted.
+`_already_indexed_ids` selects only SQLite rows whose status is `indexed`. `empty` and `failed` are retried. Status-store open/read/write failures are intentionally best-effort: indexing can continue without durable indicators. The streaming command leaves genuinely skipped rows unchanged, while a successful fact backfill reports `indexed`; a backfill error reports `failed`. `_refresh_bm25_index` rebuilds from the full Chroma corpus, including skipped papers, and swallows refresh failures. Consequently, `done` is not proof that indicators and BM25 were successfully persisted.
 
 `handle_search_papers` does **not** lazily index. Its implementation returns an empty match list with a “run indexing first” reason when the collection count is zero, despite the handler's stale lazy-indexing docstring.
 
@@ -109,7 +109,7 @@ Concurrent `started`/outcome events can interleave in completion order; use `pap
 
 | Reset implementation | Clears | Preserves / limitations |
 | --- | --- | --- |
-| Python `handle_reset_all_indices` | Chroma `documents`, `bm25_index.json`, SQLite paper status rows | PDFs, canonical chat history, `chat_exchanges`, Cozo graph, and orchestration state remain; steps are independent/best-effort |
+| Python `handle_reset_all_indices` | Chroma `documents`, `bm25_index.json`, SQLite paper status rows | PDFs, canonical chat history, Chroma `facts`, `chat_exchanges`, Cozo graph, and orchestration state remain; steps are independent/best-effort |
 
 Python returns an `ok` envelope plus per-step flags. The vector step currently treats any `delete_collection` exception as an already-reset collection after successful client construction, so its true flag is not a strong deletion proof. The current Tauri Papers saga awaits the reset call but does not inspect those flags before dispatching `resetIndicesSucceeded`; a successful UI notification is therefore weaker than verified reset of every component.
 

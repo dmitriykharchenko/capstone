@@ -2,7 +2,7 @@
 
 [Documentation home](README.md) · [Paper indexing](paper-indexing.md) · [Data storage](data-storage.md) · [Frontend](frontend.md) · [Orchestration](orchestration.md)
 
-**Source inspection date: 2026-09-25.** This guide describes current source, including uncommitted working-tree changes, rather than asserting clean-checkout parity or runtime success. No application, provider, store, or application test is run during this inspection.
+**Source inspection date: 2026-10-14.** This guide describes current source, including uncommitted working-tree changes, rather than asserting clean-checkout parity or runtime success. No application, provider, store, or application test is run during this inspection.
 
 ## What the current Chat UI calls
 
@@ -10,7 +10,7 @@
 
 | Path | Current backend flow |
 | --- | --- |
-| `app/` | Tauri `chat_stream` → Python `handle_chat_stream` → `AgentLoop.stream_events` → transient `chat_graph.chat_events` |
+| `app/` | Tauri `chat_stream` → Python `handle_chat_stream` → `AgentLoop.stream_events` → transient `chat_events` |
 | Durable orchestration | Separate Python orchestration request/store/runtime/transport contracts; see [orchestration](orchestration.md), not the default Chat saga |
 
 The saga admits one send at a time with `takeLeading`, appends an optimistic user message, renders intermediate evidence/final deltas, and reconciles the assistant text and sources to the terminal result. Stream consumption races against `selectSession`, `createSession`, `setSessionId`, and `loadSession`; these actions stop consuming the current channel. It does not race against every `routeChanged` action, so merely leaving the Chat route does not cancel the stream. Closing the event channel does not itself cancel the Tauri invocation. UI state is not canonical persisted history.
@@ -56,9 +56,9 @@ The deterministic combined score is `max(normal chunk score, best connected fact
 
 | Strategy | Candidate universe | Embedding call | Ordering |
 | --- | --- | --- | --- |
-| `vector` | Chroma top results | Yes | Provider collection order, mapped similarity scores |
-| `bm25` | Entire persisted corpus or accepted BM25 snapshot | No | Descending BM25, then stable provenance key |
-| `hybrid` | Entire corpus; Chroma asked for all corpus vectors | Yes | Equal-weight normalized vector/BM25 score, then stable provenance key |
+| `vector` | Chroma top results; fact hits can add chunks | Yes | Provider collection order normally; fact-enabled retrieval uses combined scores |
+| `bm25` | Entire persisted corpus or accepted BM25 snapshot; fact hits can add chunks | No unless fact stores are enabled | Descending BM25, then stable provenance key; fact-enabled retrieval uses combined scores |
+| `hybrid` | Entire corpus; Chroma asked for all corpus vectors; fact hits can add chunks | Yes | Equal-weight normalized vector/BM25 score, then stable provenance key; fact-enabled retrieval uses combined scores |
 
 The deterministic key is `(paper_id, chunk_index, filename, page, id)`. Full-corpus hybrid rejects incomplete vector result counts. It is more expensive than candidate-limited Chat ranking and does not use the persisted BM25 snapshot in this implementation. These low-level APIs exist independently of the current evaluation UI's selected workflow; see [evaluation](evaluation.md) rather than assuming a strategy selector is wired to ordinary Chat.
 

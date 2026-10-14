@@ -167,9 +167,11 @@ def extract_pdf_pages(
     return extracted
 
 
-def _ensure_pdf_artifacts(path: Path) -> ConversionArtifacts:
+def _ensure_pdf_artifacts(
+    path: Path, output_dir: str | Path | None = None
+) -> ConversionArtifacts:
     try:
-        return ensure_artifacts(path)
+        return ensure_artifacts(path, output_dir)
     except ConversionError as exc:
         raise PDFExtractionError(str(exc)) from None
 
@@ -205,14 +207,16 @@ def _csv_table_text(table: MarkdownTable, page_number: int) -> str:
     )
 
 
-def extract_artifact_pages(pdf_path: str | Path) -> list[ExtractedPage]:
+def extract_artifact_pages(
+    pdf_path: str | Path, output_dir: str | Path | None = None
+) -> list[ExtractedPage]:
     """Ensure adjacent artifacts, then read prose and CSV rows in PDF page order.
 
     Marked Markdown tables are replaced with CSV evidence, never indexed twice.
     All tables are parsed before returning, so malformed CSV cannot cause partial
     embedding or store mutation. No raw-PDF extraction fallback is used.
     """
-    artifacts = _ensure_pdf_artifacts(Path(pdf_path))
+    artifacts = _ensure_pdf_artifacts(Path(pdf_path), output_dir)
     pages = []
     for page in artifacts.pages:
         text = page.text
@@ -248,6 +252,7 @@ class PaperIndexer:
         *,
         persist_directory: str | Path = DEFAULT_CHROMA_DIRECTORY,
         collection_name: str = DEFAULT_COLLECTION_NAME,
+        artifacts_directory: str | Path | None = None,
         client: Any | None = None,
         collection: Any | None = None,
         extractor: Callable[[Path], Sequence[ExtractedPage]] = extract_artifact_pages,
@@ -316,6 +321,9 @@ class PaperIndexer:
                 "max_embedding_batch_bytes must be at least max_chunk_bytes"
             )
         self.papers_directory = Path(papers_directory)
+        self.artifacts_directory = (
+            None if artifacts_directory is None else Path(artifacts_directory)
+        )
         self.collection = (
             collection
             if collection is not None
@@ -425,7 +433,9 @@ class PaperIndexer:
         if isinstance(extracted, (str, bytes)) or not isinstance(extracted, Sequence):
             raise TypeError("fact_extractor must return one fact sequence per chunk")
         if len(extracted) != len(chunks):
-            raise ValueError("fact_extractor returned a different number of chunk results")
+            raise ValueError(
+                "fact_extractor returned a different number of chunk results"
+            )
         result: list[tuple[Fact, ...]] = []
         for facts in extracted:
             if isinstance(facts, (str, bytes)) or not isinstance(facts, Sequence):
@@ -490,7 +500,11 @@ class PaperIndexer:
         return path
 
     def _extract_pages(self, path: Path) -> list[ExtractedPage]:
-        pages = list(self._extractor(path))
+        pages = list(
+            extract_artifact_pages(path, self.artifacts_directory)
+            if self._extractor is extract_artifact_pages
+            else self._extractor(path)
+        )
         for page in pages:
             if not isinstance(page, ExtractedPage):
                 raise TypeError("extractor must return ExtractedPage values")
@@ -573,9 +587,7 @@ class PaperIndexer:
             else ()
         )
         embeddings = self._embed_chunks(chunks)
-        fact_embeddings = self._embed_chunks(
-            [fact.statement for fact in unique_facts]
-        )
+        fact_embeddings = self._embed_chunks([fact.statement for fact in unique_facts])
         title = (
             metadata.title
             if metadata is not None
@@ -766,7 +778,7 @@ class PaperIndexer:
 
     def _backfill_skipped(self, path: Path) -> PaperIndexOutcome:
         if self._extractor is extract_artifact_pages:
-            _ensure_pdf_artifacts(path)
+            _ensure_pdf_artifacts(path, self.artifacts_directory)
         if self._fact_extractor is not None:
             if (
                 self._graph_store.fact_version_for_paper(path.stem)
@@ -787,8 +799,10 @@ class PaperIndexer:
         ids = records.get("ids")
         documents = records.get("documents")
         metadatas = records.get("metadatas")
-        if not isinstance(ids, list) or not isinstance(documents, list) or not isinstance(
-            metadatas, list
+        if (
+            not isinstance(ids, list)
+            or not isinstance(documents, list)
+            or not isinstance(metadatas, list)
         ):
             raise ValueError("stored chunks are missing ids, documents, or metadatas")
         if not ids or not len(ids) == len(documents) == len(metadatas):
@@ -829,9 +843,7 @@ class PaperIndexer:
         except FactOutputError:
             return len(stored), False
         unique_facts = self._unique_facts(facts_by_position)
-        fact_embeddings = self._embed_chunks(
-            [fact.statement for fact in unique_facts]
-        )
+        fact_embeddings = self._embed_chunks([fact.statement for fact in unique_facts])
         nodes = tuple(
             ChunkNode(chunk_id, paper_id, chunk_index, page)
             for chunk_index, chunk_id, _, page in stored

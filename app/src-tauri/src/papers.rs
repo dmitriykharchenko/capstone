@@ -5,29 +5,36 @@
 //! directory when resolved. Indexed title, author, and topic metadata is loaded
 //! read-only through the Python bridge; no PDF parsing is performed.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::State;
 
 use crate::error::CommandError;
+use crate::library::LibraryState;
 use crate::{bridge, project_root, run_blocking};
 
-fn repository() -> PaperRepository {
-    PaperRepository::new(papers_directory(&project_root()))
+fn repository(library_directory: Option<&Path>) -> PaperRepository {
+    PaperRepository::new(papers_directory(&project_root(), library_directory))
 }
 
 #[tauri::command]
-pub(crate) async fn list_papers() -> Result<Vec<PaperInfo>, CommandError> {
+pub(crate) async fn list_papers(
+    state: State<'_, LibraryState>,
+) -> Result<Vec<PaperInfo>, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
-        let mut papers = repository().list_papers()?;
+        let library_directory = operation.library_directory();
+        let mut papers = repository(library_directory).list_papers()?;
         let paper_ids = papers.iter().map(|paper| &paper.id).collect::<Vec<_>>();
         let request = serde_json::json!({
             "command": "paper_metadata",
             "paper_ids": paper_ids,
         });
-        if let Ok(response) = bridge::call(&root, request) {
+        if let Ok(response) = bridge::call(&root, library_directory, request) {
             if let Ok(metadata) = serde_json::from_value::<PaperMetadataResponse>(response) {
                 merge_paper_metadata(&mut papers, metadata);
             }
@@ -38,22 +45,28 @@ pub(crate) async fn list_papers() -> Result<Vec<PaperInfo>, CommandError> {
 }
 
 #[tauri::command]
-pub(crate) async fn read_pdf(paper_id: String) -> Result<PdfData, CommandError> {
-    run_blocking(move || repository().read_pdf(&paper_id)).await
+pub(crate) async fn read_pdf(
+    paper_id: String,
+    state: State<'_, LibraryState>,
+) -> Result<PdfData, CommandError> {
+    let operation = state.begin_operation()?;
+    run_blocking(move || repository(operation.library_directory()).read_pdf(&paper_id)).await
 }
 
 #[tauri::command]
 pub(crate) async fn search_papers(
     query: String,
     limit: Option<u32>,
+    state: State<'_, LibraryState>,
 ) -> Result<Value, CommandError> {
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
         let mut request = serde_json::json!({ "command": "search_papers", "query": query });
         if let Some(limit) = limit {
             request["limit"] = serde_json::json!(limit);
         }
-        bridge::call(&root, request)
+        bridge::call(&root, operation.library_directory(), request)
     })
     .await
 }
@@ -101,14 +114,51 @@ pub struct PdfData {
     pub bytes: Vec<u8>,
 }
 
-/// Resolve the papers directory, honoring `CAPSTONE_PAPERS_DIR`.
-pub fn papers_directory(project_root: &Path) -> PathBuf {
-    if let Ok(explicit) = std::env::var("CAPSTONE_PAPERS_DIR") {
-        if !explicit.trim().is_empty() {
-            return PathBuf::from(explicit);
-        }
+/// Resolve the papers directory, honoring packaged data-root overrides.
+pub fn papers_directory(project_root: &Path, library_directory: Option<&Path>) -> PathBuf {
+    let environment_library = std::env::var_os("CAPSTONE_LIBRARY_DIR");
+    let papers_override = std::env::var_os("CAPSTONE_PAPERS_DIR");
+    let data_override = std::env::var_os("CAPSTONE_DATA_DIR");
+    let packaged_data_directory = crate::bundled_data_directory();
+    papers_directory_with(
+        project_root,
+        library_directory,
+        environment_library.as_deref(),
+        papers_override.as_deref(),
+        data_override.as_deref(),
+        packaged_data_directory.as_deref(),
+    )
+}
+
+fn papers_directory_with(
+    project_root: &Path,
+    library_directory: Option<&Path>,
+    environment_library: Option<&OsStr>,
+    papers_override: Option<&OsStr>,
+    data_override: Option<&OsStr>,
+    packaged_data_directory: Option<&Path>,
+) -> PathBuf {
+    if let Some(directory) = library_directory {
+        return directory.to_path_buf();
+    }
+    if let Some(directory) = nonblank_path(environment_library) {
+        return directory;
+    }
+    if let Some(directory) = nonblank_path(papers_override) {
+        return directory;
+    }
+    if let Some(directory) = packaged_data_directory {
+        return nonblank_path(data_override)
+            .unwrap_or_else(|| directory.to_path_buf())
+            .join("ResearchPapers");
     }
     project_root.join("ResearchPapers")
+}
+
+fn nonblank_path(value: Option<&OsStr>) -> Option<PathBuf> {
+    value
+        .filter(|value| !value.to_string_lossy().trim().is_empty())
+        .map(PathBuf::from)
 }
 
 /// List available papers and resolve their PDF paths within one directory.
@@ -204,7 +254,10 @@ fn merge_paper_metadata(papers: &mut [PaperInfo], response: PaperMetadataRespons
         paper.metadata_status = PaperMetadataStatus::Missing;
     }
     for metadata in response.papers {
-        let Some(paper) = papers.iter_mut().find(|paper| paper.id == metadata.paper_id) else {
+        let Some(paper) = papers
+            .iter_mut()
+            .find(|paper| paper.id == metadata.paper_id)
+        else {
             continue;
         };
         paper.title = Some(metadata.title);
@@ -228,6 +281,7 @@ fn is_safe_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
 
     #[test]
     fn merges_real_metadata_and_marks_unindexed_papers_missing() {
@@ -251,6 +305,98 @@ mod tests {
         assert_eq!(papers[0].metadata_status, PaperMetadataStatus::Available);
         assert_eq!(papers[1].title, None);
         assert_eq!(papers[1].metadata_status, PaperMetadataStatus::Missing);
+    }
+
+    #[test]
+    fn packaged_papers_follow_explicit_data_root_after_papers_override() {
+        let root = Path::new("/isolated/source");
+        let app_data = Path::new("/isolated/Application Support/Capstone");
+
+        assert_eq!(
+            papers_directory_with(
+                root,
+                None,
+                None,
+                Some(OsStr::new("/external/papers")),
+                Some(OsStr::new("/external/data")),
+                Some(app_data),
+            ),
+            PathBuf::from("/external/papers")
+        );
+        assert_eq!(
+            papers_directory_with(
+                root,
+                None,
+                None,
+                None,
+                Some(OsStr::new("/external/data")),
+                Some(app_data),
+            ),
+            PathBuf::from("/external/data/ResearchPapers")
+        );
+    }
+
+    #[test]
+    fn selected_library_is_authoritative_over_legacy_and_packaged_paths() {
+        let root = Path::new("/isolated/source");
+        let selected = Path::new("/selected/Papers — 研究");
+        assert_eq!(
+            papers_directory_with(
+                root,
+                Some(selected),
+                Some(OsStr::new("/environment/library")),
+                Some(OsStr::new("/legacy/papers")),
+                Some(OsStr::new("/legacy/data")),
+                Some(Path::new("/packaged/data")),
+            ),
+            selected
+        );
+    }
+
+    #[test]
+    fn packaged_blank_or_unset_data_root_falls_back_to_application_support() {
+        let root = Path::new("/isolated/source");
+        let app_data = Path::new("/isolated/Application Support/Capstone");
+
+        for data_override in [None, Some(OsStr::new("   "))] {
+            assert_eq!(
+                papers_directory_with(
+                    root,
+                    None,
+                    None,
+                    Some(OsStr::new("  ")),
+                    data_override,
+                    Some(app_data),
+                ),
+                PathBuf::from("/isolated/Application Support/Capstone/ResearchPapers")
+            );
+        }
+        assert_eq!(
+            papers_directory_with(
+                root,
+                None,
+                None,
+                None,
+                Some(OsStr::new("/ignored/data")),
+                None,
+            ),
+            PathBuf::from("/isolated/source/ResearchPapers")
+        );
+    }
+
+    #[test]
+    fn environment_library_precedes_legacy_paths_without_persisted_selection() {
+        assert_eq!(
+            papers_directory_with(
+                Path::new("/source"),
+                None,
+                Some(OsStr::new("/environment/Papers — 研究")),
+                Some(OsStr::new("/legacy/papers")),
+                Some(OsStr::new("/legacy/data")),
+                Some(Path::new("/packaged/data")),
+            ),
+            PathBuf::from("/environment/Papers — 研究")
+        );
     }
 
     fn paper(id: &str) -> PaperInfo {

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::ipc::Channel;
+use tauri::{ipc::Channel, State};
 
 use crate::error::CommandError;
+use crate::library::LibraryState;
 use crate::{bridge, project_root, run_blocking};
 
 mod metrics;
@@ -759,12 +760,23 @@ pub(crate) async fn evaluate_stream(
     retrieval_type: EvaluationRetrievalType,
     test_cases: Vec<EvaluationRequestCase>,
     on_event: Channel<EvaluationStreamEvent>,
+    state: State<'_, LibraryState>,
+) -> Result<(), CommandError> {
+    evaluate_stream_with_state(retrieval_type, test_cases, on_event, &state).await
+}
+
+async fn evaluate_stream_with_state(
+    retrieval_type: EvaluationRetrievalType,
+    test_cases: Vec<EvaluationRequestCase>,
+    on_event: Channel<EvaluationStreamEvent>,
+    state: &LibraryState,
 ) -> Result<(), CommandError> {
     if test_cases.is_empty() || test_cases.iter().any(|case| !case.validate()) {
         return Err(CommandError::Bridge(
             "test cases must be a non-empty array of valid cases".to_string(),
         ));
     }
+    let operation = state.begin_operation()?;
     let root = project_root();
     run_blocking(move || {
         let request = serde_json::json!({
@@ -774,14 +786,15 @@ pub(crate) async fn evaluate_stream(
             "test_cases": test_cases,
         });
         let mut terminal_event_seen = false;
-        let result = bridge::call_streaming(&root, request, |value| {
-            let event = evaluation_stream_event(value);
-            terminal_event_seen |= matches!(
-                event,
-                EvaluationStreamEvent::Complete { .. } | EvaluationStreamEvent::Error { .. }
-            );
-            let _ = on_event.send(event);
-        });
+        let result =
+            bridge::call_streaming(&root, operation.library_directory(), request, |value| {
+                let event = evaluation_stream_event(value);
+                terminal_event_seen |= matches!(
+                    event,
+                    EvaluationStreamEvent::Complete { .. } | EvaluationStreamEvent::Error { .. }
+                );
+                let _ = on_event.send(event);
+            });
         if let Err(error) = result {
             if !terminal_event_seen {
                 let _ = on_event.send(EvaluationStreamEvent::Error {
@@ -806,7 +819,7 @@ pub(crate) async fn evaluate_stream(
 mod tests {
     use super::*;
     #[cfg(unix)]
-    use crate::test_support::run_with_fake_python;
+    use crate::test_support::{run_with_fake_python, test_library_state};
 
     #[cfg(unix)]
     #[test]
@@ -846,6 +859,7 @@ mod tests {
                 "error",
             ),
         ] {
+            let state = test_library_state();
             let frames = progress.iter().chain(std::iter::once(&terminal));
             let mut contents = String::from("#!/bin/sh\n");
             for frame in frames {
@@ -853,10 +867,11 @@ mod tests {
             }
             contents.push_str(&format!("exit {exit_code}\n"));
             let (result, events) = run_with_fake_python(&contents, |channel| {
-                tauri::async_runtime::block_on(evaluate_stream(
+                tauri::async_runtime::block_on(evaluate_stream_with_state(
                     EvaluationRetrievalType::Hybrid,
                     vec![serde_json::from_value(input.clone()).unwrap()],
                     channel,
+                    &state,
                 ))
             });
 

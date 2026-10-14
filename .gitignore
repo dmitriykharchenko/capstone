@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 out/
+.build/
 
 # IDE
 .idea/
@@ -47,6 +48,8 @@ data/
 # Rust / Tauri build artifacts
 target/
 app/src-tauri/gen/
+app/src-tauri/resources/backend/
+app/release/
 
 # Local npm cache (workaround for root-owned global cache)
 .npm-cache/

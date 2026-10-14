@@ -1,4 +1,4 @@
-//! Subprocess bridge to the Python CLI (`python -m src.cli`).
+//! Subprocess bridge to the development Python CLI or bundled frozen backend.
 //!
 //! One request is written as JSON to the child's stdin; one JSON response is
 //! read from stdout. The child runs from the repository root so the `src`
@@ -14,7 +14,7 @@ use std::thread::{self, JoinHandle};
 
 use serde_json::Value;
 
-use crate::error::CommandError;
+use crate::{error::CommandError, BackendInvocation};
 
 const STDERR_CAPTURE_LIMIT: usize = 64 * 1024;
 
@@ -107,27 +107,42 @@ impl Drop for StreamingChild {
     }
 }
 
-/// Return the Python interpreter to invoke, honoring `CAPSTONE_PYTHON`.
-///
-/// An unset or empty/whitespace-only `CAPSTONE_PYTHON` falls back to `python3`,
-/// so a shell substitution that resolves to an empty string (e.g. conda not
-/// found) never spawns an empty command.
-fn python_executable() -> String {
-    match std::env::var("CAPSTONE_PYTHON") {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => "python3".to_string(),
+fn command_for_backend(backend: &BackendInvocation) -> Command {
+    let mut command = Command::new(&backend.executable);
+    if !backend.frozen {
+        command.args(["-m", "src.cli"]);
     }
+    command
+        .current_dir(&backend.working_directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if backend.frozen
+        && std::env::var_os("CAPSTONE_DATA_DIR")
+            .map_or(true, |value| value.to_string_lossy().trim().is_empty())
+    {
+        if let Some(data_directory) = &backend.data_directory {
+            command.env("CAPSTONE_DATA_DIR", data_directory);
+        }
+    }
+    if let Some(library_directory) = &backend.library_directory {
+        command.env("CAPSTONE_LIBRARY_DIR", library_directory);
+    }
+    command
 }
 
 /// Send `request` to the Python CLI and return the parsed JSON response.
-pub fn call(project_root: &Path, request: Value) -> Result<Value, CommandError> {
-    let mut child = Command::new(python_executable())
-        .arg("-m")
-        .arg("src.cli")
-        .current_dir(project_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+pub fn call(
+    project_root: &Path,
+    library_directory: Option<&Path>,
+    request: Value,
+) -> Result<Value, CommandError> {
+    let backend = crate::backend_invocation(project_root, library_directory);
+    call_with_backend(&backend, request)
+}
+
+fn call_with_backend(backend: &BackendInvocation, request: Value) -> Result<Value, CommandError> {
+    let mut child = command_for_backend(&backend)
         .spawn()
         .map_err(|e| CommandError::Bridge(format!("failed to spawn python: {e}")))?;
 
@@ -171,19 +186,39 @@ pub fn call(project_root: &Path, request: Value) -> Result<Value, CommandError> 
 /// parsed error line is surfaced as a `CommandError` including stderr.
 pub fn call_streaming<F>(
     project_root: &Path,
+    library_directory: Option<&Path>,
     request: Value,
     on_line: F,
 ) -> Result<(), CommandError>
 where
     F: FnMut(Value),
 {
-    let executable = python_executable();
-    call_streaming_with_executable(project_root, Path::new(&executable), request, on_line)
+    let backend = crate::backend_invocation(project_root, library_directory);
+    call_streaming_with_backend(&backend, request, on_line)
 }
 
+#[cfg(test)]
 fn call_streaming_with_executable<F>(
     project_root: &Path,
     executable: &Path,
+    request: Value,
+    on_line: F,
+) -> Result<(), CommandError>
+where
+    F: FnMut(Value),
+{
+    let backend = BackendInvocation {
+        executable: executable.to_path_buf(),
+        working_directory: project_root.to_path_buf(),
+        frozen: false,
+        data_directory: None,
+        library_directory: None,
+    };
+    call_streaming_with_backend(&backend, request, on_line)
+}
+
+fn call_streaming_with_backend<F>(
+    backend: &BackendInvocation,
     request: Value,
     mut on_line: F,
 ) -> Result<(), CommandError>
@@ -193,13 +228,7 @@ where
     let payload = serde_json::to_vec(&request)
         .map_err(|e| CommandError::Bridge(format!("failed to encode request: {e}")))?;
 
-    let child = Command::new(executable)
-        .arg("-m")
-        .arg("src.cli")
-        .current_dir(project_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let child = command_for_backend(backend)
         .spawn()
         .map_err(|e| CommandError::Bridge(format!("failed to spawn python: {e}")))?;
 
@@ -247,7 +276,10 @@ where
         let value: Value = serde_json::from_str(trimmed)
             .map_err(|e| CommandError::InvalidResponse(format!("{e}: {trimmed}")))?;
         if value.get("ok").and_then(Value::as_bool) == Some(false) {
-            python_error = value.get("error").and_then(Value::as_str).map(str::to_string);
+            python_error = value
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string);
         }
         on_line(value);
     }
@@ -275,8 +307,10 @@ where
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_SCRIPT_ID: AtomicU64 = AtomicU64::new(0);
@@ -377,5 +411,67 @@ mod tests {
 
         assert!(matches!(error, CommandError::InvalidResponse(_)));
         assert!(!still_running, "malformed child was not reaped");
+    }
+
+    #[test]
+    fn frozen_backend_runs_its_resource_executable_with_writable_data_path() {
+        let inherited_library = std::env::var_os("CAPSTONE_LIBRARY_DIR");
+        let root = std::env::temp_dir().join(format!(
+            "capstone-frozen-bridge-{}",
+            NEXT_SCRIPT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let executable = root.join("resources/backend/macos-arm64/capstone-cli/capstone-cli");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::create_dir_all(executable.parent().unwrap().join("_internal")).unwrap();
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '{\"ok\":true,\"cwd\":\"%s\",\"data\":\"%s\",\"library\":\"%s\"}\\n' \"$PWD\" \"$CAPSTONE_DATA_DIR\" \"$CAPSTONE_LIBRARY_DIR\"\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+        let data_directory = root.join("Application Support/Capstone");
+        let backend = BackendInvocation {
+            executable: executable.clone(),
+            working_directory: executable.parent().unwrap().to_path_buf(),
+            frozen: true,
+            data_directory: Some(data_directory.clone()),
+            library_directory: Some(root.join("Papers — 研究")),
+        };
+
+        let result = call_streaming_with_backend(&backend, serde_json::json!({}), |_| {});
+        let output = call_with_backend(&backend, serde_json::json!({})).unwrap();
+
+        assert!(result.is_ok());
+        assert!(executable.parent().unwrap().join("_internal").is_dir());
+        assert_eq!(
+            output["cwd"].as_str(),
+            fs::canonicalize(executable.parent().unwrap())
+                .unwrap()
+                .to_str()
+        );
+        assert_eq!(output["data"].as_str(), data_directory.to_str());
+        assert_eq!(
+            output["library"].as_str(),
+            backend.library_directory.as_deref().and_then(Path::to_str)
+        );
+        assert_eq!(std::env::var_os("CAPSTONE_LIBRARY_DIR"), inherited_library);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn command_only_overrides_library_for_selected_invocation() {
+        let mut backend = BackendInvocation::development(Path::new("/source"));
+        let unselected = command_for_backend(&backend);
+        assert!(!unselected
+            .get_envs()
+            .any(|(key, _)| key == "CAPSTONE_LIBRARY_DIR"));
+
+        backend.library_directory = Some(PathBuf::from("/Papers with spaces/研究"));
+        let selected = command_for_backend(&backend);
+        assert!(selected.get_envs().any(|(key, value)| {
+            key == "CAPSTONE_LIBRARY_DIR" && value == Some(OsStr::new("/Papers with spaces/研究"))
+        }));
     }
 }

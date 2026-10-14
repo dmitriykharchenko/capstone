@@ -76,6 +76,8 @@ _REFRESH_GUIDANCE = (
     "Existing Markdown lacks valid page-aware conversion metadata; "
     "back up any edits, then explicitly refresh with the converter's --overwrite option."
 )
+_FROZEN_WORKER_ARGUMENT = "--capstone-pdf-worker"
+_EXTRACTION_TIMEOUT_SECONDS = 300
 
 
 def _output_stem(source: Path) -> str:
@@ -197,21 +199,31 @@ def _extract_worker(source: str) -> int:
 def _extract_pdf(source: Path, staging: Path) -> None:
     # A private cwd also works around third-party image-path normalization of
     # spaces/parentheses. Never change the caller's cwd or logging configuration.
-    worker = "import runpy,sys; sys.exit(runpy.run_path(sys.argv[1])['_extract_worker'](sys.argv[2]))"
-    result = subprocess.run(
-        [
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, _FROZEN_WORKER_ARGUMENT, str(source.resolve())]
+    else:
+        worker = "import runpy,sys; sys.exit(runpy.run_path(sys.argv[1])['_extract_worker'](sys.argv[2]))"
+        command = [
             sys.executable,
             "-c",
             worker,
             str(Path(__file__).resolve()),
             str(source.resolve()),
-        ],
-        cwd=staging,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+        ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=staging,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=_EXTRACTION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise ConversionError(
+            "PDF conversion timed out; check that the PDF is readable and valid."
+        ) from None
     if result.returncode == 3:
         raise ConversionError(
             "PyMuPDF4LLM is unavailable; install the dependencies in environment.yml."

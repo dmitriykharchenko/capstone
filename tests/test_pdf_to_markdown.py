@@ -113,6 +113,36 @@ class ConverterTests(ConverterFixture):
                     converter._extract_pdf(self.source, self.root)
                 self.assertEqual(run.call_args.kwargs["stdout"], subprocess.DEVNULL)
                 self.assertEqual(run.call_args.kwargs["stderr"], subprocess.DEVNULL)
+                self.assertEqual(
+                    run.call_args.kwargs["timeout"],
+                    converter._EXTRACTION_TIMEOUT_SECONDS,
+                )
+
+    def test_frozen_worker_reenters_the_backend_without_python_c(self):
+        with (
+            patch.object(converter.sys, "frozen", True, create=True),
+            patch.object(converter.subprocess, "run") as run,
+        ):
+            run.return_value.returncode = 0
+            converter._extract_pdf(self.source, self.root)
+
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                sys.executable,
+                converter._FROZEN_WORKER_ARGUMENT,
+                str(self.source.resolve()),
+            ],
+        )
+
+    def test_worker_timeout_is_safely_mapped(self):
+        with patch.object(
+            converter.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired([sys.executable], 300),
+        ):
+            with self.assertRaisesRegex(converter.ConversionError, "timed out"):
+                converter._extract_pdf(self.source, self.root)
 
 
     def test_cli_cancellation_has_fixed_message_and_exit_code(self):

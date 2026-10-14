@@ -1,12 +1,12 @@
 # Research assistant: current application documentation
 
-This guide describes the **current source tree as inspected on September 25, 2026**. It explains how to run, use, understand, and extend the application. This directory is the present-tense technical reference.
+This guide describes the **current source tree as inspected on October 14, 2026**. It explains how to run, use, understand, and extend the application. This directory is the present-tense technical reference.
 
 The inspected tree includes uncommitted and untracked implementation. These documents describe those files as well as committed code. They are not a claim that the current behavior is reproducible from the Git commit alone, that every feature is enabled locally, or that a packaged release has passed acceptance.
 
 ## What the application does
 
-Research assistant is a desktop application for a local PDF research library. It can index extracted paper text, search documents and saved conversations, generate paper-grounded answers, display author–paper–topic relationships, and run question-based RAG evaluations.
+Research assistant is a desktop application for a local PDF research library. It can index extracted paper text, search documents and saved conversations, generate paper-grounded answers, show indexed paper metadata, and run question-based RAG evaluations.
 
 This guide covers the **Tauri/Python application**:
 

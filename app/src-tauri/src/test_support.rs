@@ -8,7 +8,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse};
 
+use crate::library::LibraryState;
+
 static PYTHON_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+pub fn test_library_state() -> LibraryState {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    LibraryState::load(std::env::temp_dir().join(format!("capstone-test-library-state-{suffix}")))
+}
 
 /// Run `invoke` with `CAPSTONE_PYTHON` pointing at a shell script built from
 /// `script`, returning its result and every JSON frame sent to the channel.

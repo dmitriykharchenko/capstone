@@ -2,7 +2,7 @@
 
 [Index](README.md) · [Setup](getting-started.md) · [Configuration](configuration.md) · [Storage](data-storage.md) · [Evaluation](evaluation.md)
 
-**Source inspection: September 25, 2026.** This is a runbook for the current working tree, not a report that the applications or their suites passed today. The documentation task runs only static documentation checks.
+**Source inspection: October 14, 2026.** This is a runbook for the current working tree, not a report that the applications or their suites passed today. The documentation task runs only static documentation checks.
 
 ## Start with the operation boundary
 
@@ -74,9 +74,9 @@ Choose the smallest relevant test first. The commands here are examples of exist
 | Python eval stage behavior | Repository root | `conda run -n ragcourse python -m pytest -q tests/test_evaluation_stages.py` | Injected models and per-stage fault/retry coverage |
 | Python durable state | Repository root | `conda run -n ragcourse python -m pytest -q tests/test_orchestration_store.py` | Checkpoint, receipt, and persistence contracts |
 | Tauri state/routing | `app/` | `node --test tests/router.test.mjs tests/search-collections.test.mjs` | Node tests use Vite SSR; no full desktop startup |
-| Tauri static frontend | `app/` | `rtk npm run check` | Svelte/type checks; not visual acceptance |
-| Tauri Rust | `app/src-tauri/` | `rtk cargo test --locked` | Native/bridge regressions; review process fixtures |
-| Renderer build | `app/` | `rtk npm run build` | Writes renderer output, not Python/packaging acceptance |
+| Tauri static frontend | `app/` | `npm run check` | Svelte/type checks; not visual acceptance |
+| Tauri Rust | `app/src-tauri/` | `cargo test --locked` | Native/bridge regressions; review process fixtures |
+| Renderer build | `app/` | `npm run build` | Writes renderer output, not Python/packaging acceptance |
 
 `pytest` is used by the Python tests but is **not listed in `environment.yml`**. The manifest lists runtime packages. Check whether your chosen development environment supplies pytest before running; do not describe the runtime manifest as a complete reproducible test-tool environment. No dependency was added by this documentation pass.
 
@@ -112,7 +112,7 @@ This guide is a snapshot of source, not a rolling runtime monitor. When changing
 1. Update the relevant domain chapter and any configuration/setup instructions affected.
 2. Keep current behavior separate from proposed work and historical requests.
 3. Check relative Markdown/source paths, heading anchors, command names, and defaults against the code.
-4. Check whitespace with `rtk git diff --check -- documentation`; newly untracked files also need a direct whitespace scan because Git's diff check does not cover them.
+4. Check whitespace with `git diff --check -- documentation`; newly untracked files also need a direct whitespace scan because Git's diff check does not cover them.
 5. Keep secrets, local machine paths, user logs, and generated run artifacts out of the docs.
 6. Report exactly which checks ran; never turn test-file existence or past history into a current pass claim.
 

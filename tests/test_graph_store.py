@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 
 import pytest
 
+from src.storage import graph_store
 from src.indexing.fact_extraction import Fact
 from src.storage.graph_store import (
     ChunkNode,
@@ -159,8 +161,31 @@ def test_client_load_failure_is_a_configuration_error(tmp_path):
         CozoGraphStore(tmp_path / "graph.db", client_factory=unavailable)
 
 
+def test_lock_owner_command_matches_only_the_current_backend(monkeypatch):
+    executable = str(Path(sys.executable).resolve())
+    monkeypatch.setattr(graph_store.sys, "frozen", False, raising=False)
+    assert graph_store._is_backend_owner_command(f"{executable} -m src.cli")
+    assert not graph_store._is_backend_owner_command(
+        f"{executable} -c 'print(1)' src.cli"
+    )
+    assert not graph_store._is_backend_owner_command("/tmp/src.cli-helper")
+
+    monkeypatch.setattr(graph_store.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(graph_store.sys, "executable", "/Applications/App/capstone-cli")
+    assert graph_store._is_backend_owner_command("/Applications/App/capstone-cli")
+    assert graph_store._is_backend_owner_command(
+        "/Applications/App/capstone-cli --multiprocessing-fork tracker_fd=1 pipe_handle=2"
+    )
+    assert not graph_store._is_backend_owner_command("/tmp/capstone-cli")
+    assert not graph_store._is_backend_owner_command(
+        "/Applications/App/capstone-cli --unrelated"
+    )
+
+
 @pytest.mark.skipif(os.name == "nt", reason="owner PID is recorded on POSIX only")
-def test_stop_lock_owner_takes_over_a_backend_lock_but_spares_other_processes(tmp_path):
+def test_stop_lock_owner_takes_over_a_backend_lock_but_spares_other_processes(
+    tmp_path, monkeypatch
+):
     database = tmp_path / "graph.db"
     holder = (
         "import sys, time\n"
@@ -182,6 +207,11 @@ def test_stop_lock_owner_takes_over_a_backend_lock_but_spares_other_processes(tm
         with pytest.raises(GraphStoreLockedError):
             CozoGraphStore(database, lock_timeout=0)
 
+        monkeypatch.setattr(
+            graph_store,
+            "_is_backend_owner_command",
+            lambda command: command.rstrip().endswith("src.cli"),
+        )
         assert stop_lock_owner(database) is True
         assert backend.wait(timeout=5) != 0
         with CozoGraphStore(database, lock_timeout=0):

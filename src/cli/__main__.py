@@ -76,7 +76,10 @@ def main() -> int:
         return _run_stream(handle_index_papers_stream(config), secret=config.api_key)
     if request.get("command") == "evaluate" and request.get("stream"):
         return _run_stream(
-            _persisted_evaluation_stream(handle_evaluation_stream(config, request)),
+            _persisted_evaluation_stream(
+                handle_evaluation_stream(config, request),
+                results_path=config.evaluation_results_path,
+            ),
             secret=config.api_key,
         )
     from .commands import dispatch
@@ -171,6 +174,8 @@ def _exit_when_orphaned(interval: float = 1.0) -> None:
     import time
 
     parent = os.getppid()
+    if parent == 1:
+        os._exit(1)
 
     def watch() -> None:
         while os.getppid() == parent:

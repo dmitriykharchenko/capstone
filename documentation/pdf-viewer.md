@@ -2,7 +2,7 @@
 
 [Index](README.md) · [Desktop host](native-desktop.md) · [Frontend](frontend.md) · [Paper indexing](paper-indexing.md) · [Operations](operations-and-testing.md)
 
-**Source inspection: September 25, 2026.** This application reads a complete local PDF through Rust, creates a browser Blob URL and displays it in an iframe. No application-owned PDF.js worker, native range lease, custom password form or sparse page renderer is part of this path. Source inspection does not establish rendering in a particular host webview.
+**Source inspection: October 14, 2026.** This application reads a complete local PDF through Rust, creates a browser Blob URL and displays it in an iframe. No application-owned PDF.js worker, native range lease, custom password form or sparse page renderer is part of this path. Source inspection does not establish rendering in a particular host webview.
 
 ## Selection and byte flow
 
