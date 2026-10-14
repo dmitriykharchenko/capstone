@@ -50,7 +50,7 @@ progress.
 | Node.js and npm | `^20.19.0` or `>=22.12.0` (required by Vite 8) |
 | Rust toolchain | Tauri 2 platform prerequisites; manifest declares Rust 1.77 |
 | Conda | Creates the `ragcourse` environment with Python 3.11 ([`environment.yml`](environment.yml)) |
-| PDFs | Placed in `ResearchPapers/` (default) or a configured directory |
+| PDFs | Placed in `ResearchPapers/` (default) or in a folder chosen with **Open folder** |
 | Provider account | OpenAI or OpenRouter key for real model and embedding behavior |
 
 `environment.yml` is a portable cross-platform developer environment. It keeps
@@ -193,6 +193,27 @@ DMG is unsigned and unnotarized; signing, notarization, and public distribution
 are not supported by this command. It does not package `.env`, PDFs, indexes,
 history, logs, or other mutable user data.
 
+### Install the published macOS app
+
+The published Apple Silicon DMG is unsigned and unnotarized. macOS Gatekeeper may
+therefore say that the app is "damaged" even when the DMG downloaded correctly.
+After copying **Research assistant.app** to `/Applications`, remove the quarantine
+attribute and open it again:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Research assistant.app"
+```
+
+If macOS prevents the DMG itself from opening, remove its quarantine attribute
+before mounting it:
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/Research-assistant_macos-arm64.dmg
+```
+
+For a normal public-installation experience without this workaround, the app must
+be signed with an Apple Developer ID and notarized by Apple.
+
 ### Step 7 — First use in the app
 
 1. Open **Papers**. To use a folder other than the displayed default, click
@@ -211,6 +232,15 @@ the folder again later reuses its existing history, indexes, graph, checkpoints,
 conversion assets, logs, and evaluation output. Switching folders does not copy
 or migrate data from the previous folder.
 
+The selected folder must be writable, because the app creates
+`.research-assistant/` inside it. The app saves the selection as
+`library-selection.json` in its app configuration directory
+(`~/Library/Application Support/com.capstone.research-assistant/` on macOS) and
+restores it on the next start. If the saved folder is missing or unreadable,
+Papers, Chat, indexing, and evaluations stay blocked until you choose another
+folder; the app does not fall back to the default. You cannot switch folders
+while an indexing, Chat, or evaluation operation is running.
+
 ### If something goes wrong
 
 | Symptom | Cause and fix |
@@ -218,6 +248,7 @@ or migrate data from the previous folder.
 | Start fails with a port error | Port 1420 is in use. Close the other program using it, then start again. |
 | Window opens but Chat or indexing fails with Python import errors | The app did not find the `ragcourse` environment and fell back to `python3`. On macOS/Linux, start it from `app/` with `CAPSTONE_PYTHON="$(conda run -n ragcourse printenv CONDA_PREFIX)/bin/python" npm run tauri -- dev`. On Windows, check that `$env:CAPSTONE_PYTHON` is set as in step 6 before running `npx tauri dev`. |
 | **Papers** is empty | Put PDFs at the top level of the displayed Papers folder, or click **Open folder** and choose the intended readable directory. |
+| Every operation fails with "persisted library is unavailable" | The saved folder was moved, deleted, or is no longer writable. Click **Open folder** and choose a valid folder. |
 | Answers look generic or fake | No API key was found, so the backend uses a mock model. Check `.env`. |
 
 More help: [Getting started](documentation/getting-started.md) and
@@ -283,8 +314,9 @@ suites and safe troubleshooting.
 
 - **Paid operations:** indexing, Chat, and evaluations call provider APIs when a
   key is configured.
-- **Development build only:** `npm run tauri -- build` does not bundle Python,
-  dependencies, or the paper corpus; the app runs from the repository layout.
+- **Packaging:** `npm run tauri -- build` does not bundle Python. Only
+  `npm run package:macos-arm64` bundles the frozen backend, and its DMG is
+  unsigned, unnotarized, and Apple Silicon only. No package includes PDFs.
 - **Prompt injection:** retrieved text is marked as untrusted, but this relies on
   the model following its prompt.
 - **Evaluation:** with a provider key, scores come from an LLM judge, not
