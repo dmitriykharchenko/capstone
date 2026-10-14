@@ -1,6 +1,6 @@
 # Research assistant: current application documentation
 
-This guide describes the **current source tree as inspected on September 25, 2026**. It explains how to run, use, understand, and extend the application. The separate [workspace history](../docs/README.md) records earlier requests and decisions; this directory is the present-tense technical reference.
+This guide describes the **current source tree as inspected on September 25, 2026**. It explains how to run, use, understand, and extend the application. This directory is the present-tense technical reference.
 
 The inspected tree includes uncommitted and untracked implementation. These documents describe those files as well as committed code. They are not a claim that the current behavior is reproducible from the Git commit alone, that every feature is enabled locally, or that a packaged release has passed acceptance.
 

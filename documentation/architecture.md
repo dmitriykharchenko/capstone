@@ -19,7 +19,6 @@
 | [`src/cli`](../src/cli/) | Python command dispatch, dependency construction, and stream publication |
 | [`tests`](../tests/) | Python regressions, evaluation questions, judge resource, and evaluation artifacts |
 | [`ResearchPapers`](../ResearchPapers/) | Local source corpus; not generated application output |
-| [`docs`](../docs/README.md) | Workspace history and decision record |
 | [`documentation`](README.md) | Current behavior and operational reference |
 
 The course checkpoint starter scripts are not the desktop application's production entrypoints. There is no current `src/server` REST service to launch; the Python interface is the CLI bridge.

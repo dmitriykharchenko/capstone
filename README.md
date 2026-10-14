@@ -5,7 +5,6 @@ backend for PDF indexing, hybrid retrieval, grounded Chat, and RAG evaluation.
 
 - [Getting started](documentation/getting-started.md)
 - [Current application documentation](documentation/README.md)
-- [Development history and decisions](docs/README.md)
 
 The desktop frontend is in `app/`, the Python backend is in `src/`, and regression
 tests are in `tests/` and `app/tests/`. Local PDFs and private runtime data are
