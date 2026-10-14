@@ -1,9 +1,9 @@
-export type RouteName = "chat" | "history" | "papers" | "graph" | "evals";
+export type RouteName = "chat" | "history" | "papers" | "evals";
 
 export interface ChatRoute {
   name: "chat";
   sessionId?: string;
-  exchangeId?: string;
+  exchangeId?: number;
 }
 
 export interface HistoryRoute {
@@ -20,11 +20,7 @@ export interface EvalsRoute {
   name: "evals";
 }
 
-export interface GraphRoute {
-  name: "graph";
-}
-
-export type AppRoute = ChatRoute | HistoryRoute | PapersRoute | GraphRoute | EvalsRoute;
+export type AppRoute = ChatRoute | HistoryRoute | PapersRoute | EvalsRoute;
 
 export interface RouterState {
   activeRoute: AppRoute;
@@ -48,6 +44,16 @@ function optionalParameter(params: URLSearchParams, name: string): string | unde
   return value === null || value.length === 0 ? undefined : value;
 }
 
+function positiveIntegerParameter(
+  params: URLSearchParams,
+  name: string,
+): number | undefined {
+  const raw = optionalParameter(params, name);
+  if (!raw || !/^[0-9]+$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 export function parseRoute(location: RouteLocation): AppRoute {
   const params = new URLSearchParams(location.search);
   switch (location.pathname) {
@@ -55,14 +61,12 @@ export function parseRoute(location: RouteLocation): AppRoute {
       return {
         name: "chat",
         sessionId: optionalParameter(params, "sessionId"),
-        exchangeId: optionalParameter(params, "exchangeId"),
+        exchangeId: positiveIntegerParameter(params, "exchangeId"),
       };
     case "/history":
       return { name: "history", query: optionalParameter(params, "q") };
     case "/papers":
       return { name: "papers", query: optionalParameter(params, "q") };
-    case "/graph":
-      return { name: "graph" };
     case "/evals":
       return { name: "evals" };
     default:
@@ -74,7 +78,7 @@ export function serializeRoute(route: AppRoute): string {
   const params = new URLSearchParams();
   if (route.name === "chat") {
     if (route.sessionId) params.set("sessionId", route.sessionId);
-    if (route.exchangeId) params.set("exchangeId", route.exchangeId);
+    if (route.exchangeId) params.set("exchangeId", String(route.exchangeId));
   } else if ((route.name === "history" || route.name === "papers") && route.query) {
     params.set("q", route.query);
   }

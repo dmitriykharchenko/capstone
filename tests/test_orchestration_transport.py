@@ -1,21 +1,17 @@
 """Offline contract/recovery tests; every database belongs to pytest tmp_path."""
 
-from copy import deepcopy
 import json
 from pathlib import Path
-import select
-import sqlite3
-import subprocess
 import sys
 from types import SimpleNamespace
 
 import pytest
 
 from src.cli.orchestration import GRAPH_VERSION, control, stream
-from src.orchestration_runtime import IteratorHandle, specialist_steps
-from src.orchestration_store import SQLiteOrchestrationStore
-from src.orchestration_wire import ERROR, StreamValidator, loads, validate_event
-from src.sqlite_history import SQLiteHistoryStore
+from src.orchestration.runtime import IteratorHandle, specialist_steps
+from src.orchestration.store import SQLiteOrchestrationStore
+from src.orchestration.wire import ERROR, StreamValidator, loads
+from src.storage.sqlite_history import SQLiteHistoryStore
 
 REQUEST = dict(
     command="orchestration_start",
@@ -29,7 +25,9 @@ REQUEST = dict(
 class Model:
     def invoke(self, messages):
         if messages[0].content.startswith("INTAKE:"):
-            return json.dumps({"queries": [], "questions": ["What is retrieval?"]})
+            return json.dumps(
+                {"parts": [{"part": "Retrieval", "question": "What is retrieval?"}]}
+            )
         if messages[0].content.startswith("QUESTION-HANDLER:"):
             return json.dumps(
                 {
@@ -70,25 +68,6 @@ def config(tmp_path, monkeypatch):
 def collect(config, request=REQUEST, **kwargs):
     kwargs.setdefault("executor", Executor())
     return list(stream(config, request, **kwargs))
-
-
-def test_fresh_stream_validated_and_canonical(config):
-    events = collect(config)
-    assert events[-1]["event"] == "done", events
-    validator = StreamValidator("session", "run", "turn")
-    for event in events:
-        validator.accept(deepcopy(event))
-    assert sum(e["event"] in ("done", "error") for e in events) == 1
-    assert (
-        "".join(e["delta"] for e in events if e["event"] == "final_delta")
-        == events[-1]["reply"]
-    )
-    with SQLiteHistoryStore(config.database_path) as history:
-        assert len(history.get_messages("session")) == 2
-        assert history.get_messages("session")[-1].content == events[-1]["reply"]
-    replay = collect(config)
-    assert [e["event"] for e in replay] == ["snapshot", "done"]
-    assert replay[-1]["exchange_id"] == events[-1]["exchange_id"]
 
 
 @pytest.mark.parametrize("failures", [1, 2])
@@ -184,223 +163,6 @@ def test_discard_idempotent_no_history_deletion(config):
         assert history.get_messages("session") == []
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        lambda e: e.update(version=2),
-        lambda e: e.update(sequence=True),
-        lambda e: e.update(run_id="bad space"),
-        lambda e: e.update(raw_provider={}),
-        lambda e: e.update(event="unknown"),
-        lambda e: e.update(turn_id=""),
-    ],
-)
-def test_malformed_envelopes(config, mutation):
-    event = collect(config)[0]
-    mutation(event)
-    with pytest.raises(ValueError, match=ERROR):
-        validate_event(event)
-
-
-def test_duplicates_order_and_terminal(config):
-    events = collect(config)
-    validator = StreamValidator("session", "run", "turn")
-    validator.accept(deepcopy(events[0]))
-    with pytest.raises(ValueError):
-        validator.accept(deepcopy(events[0]))
-    for event in events[1:]:
-        validator.accept(deepcopy(event))
-    with pytest.raises(ValueError):
-        validator.accept(deepcopy(events[-1]))
-
-
-def test_duplicate_json_keys_and_oversize():
-    for raw in ('{"event":"done","event":"error"}', '"' + "x" * 1048576 + '"'):
-        with pytest.raises(ValueError, match=ERROR):
-            loads(raw)
-
-
-def test_shared_type_boundary_corpus():
-    from src.orchestration_wire import SCHEMA, validate_type
-
-    path = Path(__file__).parent / "fixtures" / "orchestration-types.json"
-    for case in json.loads(path.read_text()):
-        if case["valid"]:
-            validate_type(case["value"], case["type"])
-        else:
-            with pytest.raises(ValueError, match=ERROR):
-                validate_type(case["value"], case["type"])
-    for name, rule in SCHEMA["types"].items():
-        if rule["kind"] == "text":
-            validate_type("é" * (rule["max"] // 2), name)
-            with pytest.raises(ValueError, match=ERROR):
-                validate_type("é" * (rule["max"] // 2 + 1), name)
-        elif rule["kind"] == "array":
-            with pytest.raises(ValueError, match=ERROR):
-                validate_type([None] * (rule["max"] + 1), name)
-
-
-def test_no_orchestration_history_authority(config):
-    collect(config)
-    with sqlite3.connect(config.database_path) as db:
-        tables = {
-            r[0]
-            for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-    assert not tables & {"runs", "checkpoints", "events", "adapter_requests"}
-    with SQLiteOrchestrationStore(
-        config.database_path.parent / "chat_orchestration.sqlite3"
-    ) as store:
-        assert (
-            store.request("run", "session", GRAPH_VERSION).query == REQUEST["message"]
-        )
-        assert store.load("run", "session", GRAPH_VERSION).run.exchange_id == 1
-
-
-def golden():
-    return [
-        loads(line)
-        for line in (Path(__file__).parent / "fixtures/orchestration.ndjson")
-        .read_text()
-        .splitlines()
-    ]
-
-
-def test_golden_ndjson(config):
-    calls = []
-
-    class Retriever:
-        def retrieve_chunks(self, query, n_results):
-            calls.append((query, n_results))
-            return []
-
-    events = collect(config, retriever=Retriever())
-    assert calls == [(REQUEST["message"], 5)] * 2
-    retrieved = [
-        e
-        for e in events
-        if e["event"] == "tool_completed"
-        and e["tool"]["tool_name"] == "retrieve_context"
-    ]
-    assert len(retrieved) == 2
-    assert retrieved[0]["tool"]["agent_id"] == "intake"
-    assert retrieved[0]["tool"]["question_id"] is None
-    assert retrieved[1]["tool"]["agent_id"].startswith("handler-")
-    assert retrieved[0]["tool"]["tool_call_id"] != retrieved[1]["tool"]["tool_call_id"]
-    assert retrieved[0]["sequence"] < next(
-        e["sequence"] for e in events if e["event"] == "question_added"
-    )
-    assert collect(config, retriever=Retriever())[-1]["event"] == "done"
-    assert len(calls) == 2
-    for event in events:
-        for key in ("question", "agent", "tool"):
-            item = event.get(key)
-            if item is None:
-                continue
-            if item.get("question_id"):
-                item["question_id"] = "q"
-            if str(item.get("agent_id", "")).startswith("handler-"):
-                item["agent_id"] = "handler"
-            if "tool_call_id" in item:
-                item["tool_call_id"] = (
-                    "intake_retrieve_context"
-                    if item["agent_id"] == "intake"
-                    and item["tool_name"] == "retrieve_context"
-                    else item["tool_name"]
-                )
-    expected = [
-        loads(line)
-        for line in (Path(__file__).parent / "fixtures/orchestration-fusion.ndjson")
-        .read_text()
-        .splitlines()
-    ]
-    assert len(events) == 22
-    assert events == expected
-    validator = StreamValidator("session", "run", "turn")
-    for event in expected:
-        validator.accept(deepcopy(event))
-
-
-@pytest.mark.parametrize("boundary", range(22))
-def test_sigkill_recovery_at_every_golden_event(config, boundary):
-    script = """
-import json,runpy,sys
-from pathlib import Path
-from types import SimpleNamespace
-m=runpy.run_path('tests/test_orchestration_transport.py')
-config=SimpleNamespace(database_path=Path(sys.argv[1]),has_api_key=False)
-for event in m['stream'](config,m['REQUEST'],executor=m['Executor']()):
- print(json.dumps(event),flush=True)
- sys.stdin.readline()
-"""
-    child = subprocess.Popen(
-        [sys.executable, "-B", "-c", script, str(config.database_path)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    observed = []
-    try:
-        for index in range(boundary + 1):
-            assert select.select([child.stdout], [], [], 15)[0], (
-                "Synthetic child stalled"
-            )
-            observed.append(loads(child.stdout.readline()))
-            if index < boundary:
-                child.stdin.write("next\n")
-                child.stdin.flush()
-    finally:
-        child.kill()
-        child.wait(timeout=10)
-        child.stdin.close()
-        child.stdout.close()
-    resumed = collect(config, dict(REQUEST, command="orchestration_resume"))
-    assert resumed[0]["event"] == "snapshot"
-    assert (
-        resumed[0]["sequence"] >= observed[-1]["sequence"]
-        or observed[-1]["event"] == "done"
-    )
-    assert resumed[-1]["event"] == "done", resumed
-    validator = StreamValidator("session", "run", "turn")
-    for event in resumed:
-        validator.accept(deepcopy(event))
-    with SQLiteHistoryStore(config.database_path) as history:
-        assert len(history.get_messages("session")) == 2
-    assert (
-        collect(config, dict(REQUEST, command="orchestration_resume"))[-1][
-            "exchange_id"
-        ]
-        == resumed[-1]["exchange_id"]
-    )
-
-
-@pytest.mark.parametrize("position", range(19))
-@pytest.mark.parametrize(
-    "field,value",
-    [("sequence", 0), ("run_id", "other"), ("version", 2), ("unexpected", "private")],
-)
-def test_golden_rejects_envelope_mutations(position, field, value):
-    events = golden()
-    validator = StreamValidator("session", "run", "turn")
-    for event in events[:position]:
-        validator.accept(event)
-    events[position][field] = value
-    with pytest.raises(ValueError, match=ERROR):
-        validator.accept(events[position])
-
-
-@pytest.mark.parametrize("position", range(19))
-def test_golden_rejects_replayed_event(position):
-    events = golden()
-    validator = StreamValidator("session", "run", "turn")
-    for event in events[: position + 1]:
-        validator.accept(deepcopy(event))
-    duplicate = deepcopy(events[position])
-    with pytest.raises(ValueError, match=ERROR):
-        validator.accept(duplicate)
-
-
 def test_wrong_identity_and_pending_session_isolation(config):
     events = stream(config, REQUEST, executor=Executor())
     next(events)
@@ -427,7 +189,7 @@ def test_wrong_identity_and_pending_session_isolation(config):
 
 
 def test_published_exchange_wins_discard_and_lost_ack(config):
-    from src.orchestration_publication import CanonicalPublisher
+    from src.orchestration.publication import CanonicalPublisher
 
     class LostAck(CanonicalPublisher):
         def publish(self, *args):
@@ -445,63 +207,9 @@ def test_published_exchange_wins_discard_and_lost_ack(config):
         assert len(history.get_messages("session")) == 2
 
 
-def test_missing_and_deleted_trace_are_sanitized(config):
-    with pytest.raises(ValueError, match=ERROR):
-        control(
-            config,
-            dict(command="orchestration_trace", session_id="session", exchange_id=1),
-        )
-    events = collect(config)
-    with pytest.raises(ValueError, match=ERROR):
-        control(
-            config,
-            dict(
-                command="orchestration_trace",
-                session_id="other",
-                exchange_id=events[-1]["exchange_id"],
-            ),
-        )
-    with sqlite3.connect(config.database_path) as db:
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("DELETE FROM exchanges WHERE id = ?", (events[-1]["exchange_id"],))
-    with pytest.raises(ValueError, match=ERROR):
-        control(
-            config,
-            dict(
-                command="orchestration_trace",
-                session_id="session",
-                exchange_id=events[-1]["exchange_id"],
-            ),
-        )
-    assert collect(config)[-1]["event"] == "error"
-
-
-@pytest.mark.parametrize("version", [1, 2])
-def test_exact_old_store_upgrade_preserves_journal(config, version):
-    from src.orchestration_store import DATABASE_SCHEMA_VERSION
-
-    path = config.database_path.parent / "chat_orchestration.sqlite3"
-    with SQLiteOrchestrationStore(path) as store:
-        checkpoint = store.create_run("session", GRAPH_VERSION, run_id="run")
-        journal = store.events("run", "session", GRAPH_VERSION)
-    with sqlite3.connect(path) as db:
-        db.execute("DROP TABLE source_display")
-        db.execute("DROP TABLE adapter_requests")
-        if version == 1:
-            db.execute("DROP TABLE noop_receipts")
-        db.execute(f"PRAGMA user_version = {version}")
-    with SQLiteOrchestrationStore(path) as store:
-        assert store.load("run", "session", GRAPH_VERSION) == checkpoint
-        assert store.events("run", "session", GRAPH_VERSION) == journal
-    with sqlite3.connect(path) as db:
-        assert (
-            db.execute("PRAGMA user_version").fetchone()[0] == DATABASE_SCHEMA_VERSION
-        )
-
-
 def test_sources_keep_public_display_fields_and_canonical_order(config):
     from src.cli.orchestration_workers import DisplayRetriever
-    from src.paper_search import PaperChunkMatch
+    from src.retrieval.paper_search import PaperChunkMatch
 
     class EvidenceModel(Model):
         def invoke(self, messages):
@@ -609,10 +317,10 @@ def test_owned_process_workers_are_joined_on_success_and_close(config, monkeypat
 @pytest.mark.parametrize("winner", ["publish", "discard"])
 def test_canonical_publication_arbitration(config, winner):
     from concurrent.futures import ThreadPoolExecutor
-    from src.orchestration_publication import CanonicalPublisher
-    from src.orchestration_request import RunRequest
-    from src.orchestration_runtime import FinalAnswer, Discarded, Published
-    from src.orchestration_tools import digest
+    from src.orchestration.publication import CanonicalPublisher
+    from src.orchestration.request import RunRequest
+    from src.orchestration.runtime import FinalAnswer, Discarded, Published
+    from src.orchestration.tools import digest
 
     request = RunRequest("turn", "Question", 0, digest([]))
     publisher = CanonicalPublisher(

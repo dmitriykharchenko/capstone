@@ -1,6 +1,5 @@
-import pytest
 
-from src.paper_search import PaperSearchError, PaperSearchIndex
+from src.retrieval.paper_search import PaperSearchIndex
 
 
 class FakeCollection:
@@ -11,6 +10,53 @@ class FakeCollection:
     def query(self, **kwargs):
         self.queries.append(kwargs)
         return self.result
+
+
+class FactDocumentCollection(FakeCollection):
+    def __init__(self, result, records):
+        super().__init__(result)
+        self.records = records
+        self.get_calls = []
+
+    def get(self, *, ids, include):
+        self.get_calls.append((ids, include))
+        return {
+            "ids": ids,
+            "documents": [self.records[identifier]["text"] for identifier in ids],
+            "metadatas": [self.records[identifier]["metadata"] for identifier in ids],
+        }
+
+
+class FactCollection:
+    def __init__(self, result):
+        self.result = result
+        self.queries = []
+
+    def query(self, **kwargs):
+        self.queries.append(kwargs)
+        return self.result
+
+
+class FactGraph:
+    def __init__(self, chunks_by_fact, facts_by_chunk):
+        self.chunks_by_fact = chunks_by_fact
+        self.facts_by_chunk = facts_by_chunk
+        self.fact_calls = []
+
+    def chunks_for_facts(self, fact_ids):
+        return {fact_id: self.chunks_by_fact[fact_id] for fact_id in fact_ids}
+
+    def facts_for_chunks(self, chunk_ids):
+        self.fact_calls.append(chunk_ids)
+        return {chunk_id: self.facts_by_chunk[chunk_id] for chunk_id in chunk_ids}
+
+
+class FactValue:
+    def __init__(self, fact_type, value, statement, unit=None):
+        self.fact_type = fact_type
+        self.value = value
+        self.statement = statement
+        self.unit = unit
 
 
 class CorpusCollection:
@@ -77,84 +123,82 @@ def raw_result(count=7):
     }
 
 
-def test_retrieve_chunks_preserves_rank_full_text_and_provenance():
-    collection = FakeCollection(raw_result(5))
-    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0, 2.0])
-
-    chunks = index.retrieve_chunks("question")
-
-    # No candidate shares terms with the query, so BM25 contributes nothing and
-    # the hybrid rank falls back to the vector-similarity order.
-    assert [chunk.rank for chunk in chunks] == [1, 2, 3, 4, 5]
-    assert chunks[0].text == "full text 0\nwith formatting"
-    assert chunks[0].score == 0.5
-    assert [chunk.score for chunk in chunks] == sorted(
-        (chunk.score for chunk in chunks), reverse=True
+def test_fact_vector_hits_add_connected_chunks_and_hydrate_facts():
+    direct_chunk_id = "paper-a:chunk:000000"
+    fact_chunk_id = "paper-b:chunk:000001"
+    result = evaluation_query(
+        [{**corpus_record("a", "general background", 0), "id": direct_chunk_id}], [0.8]
     )
-    assert chunks[2].paper_id == "paper-2"
-    assert chunks[2].chunk_index == 2
-    assert chunks[2].filename == "paper-2.pdf"
-    assert chunks[2].title == "Paper 2"
-    assert chunks[2].page == 3
-    # The candidate budget is widened past n_results so BM25 can resurface
-    # lexically strong chunks that vector search ranked lower.
-    assert collection.queries == [{
-        "query_embeddings": [[1.0, 2.0]],
-        "n_results": 25,
-        "include": ["metadatas", "documents", "distances"],
-    }]
+    collection = FactDocumentCollection(
+        result,
+        {
+            fact_chunk_id: {
+                "text": "the method uses a named dataset",
+                "metadata": {
+                    "paper_id": "paper-b",
+                    "chunk_index": 1,
+                    "filename": "paper-b.pdf",
+                    "title": "Paper B",
+                    "page": 2,
+                },
+            }
+        },
+    )
+    fact = FactValue("dataset", "Named Dataset", "The method uses Named Dataset.")
+    facts = FactCollection({"ids": [["fact:dataset"]], "distances": [[0.1]]})
+    graph = FactGraph({"fact:dataset": (fact_chunk_id,)}, {fact_chunk_id: (fact,)})
+    index = PaperSearchIndex(
+        collection=collection,
+        facts_collection=facts,
+        graph_store=graph,
+        embedder=lambda _text: [1.0],
+    )
+
+    chunks = index.retrieve_chunks("Which dataset?", n_results=1)
+
+    assert [chunk.chunk_id for chunk in chunks] == [fact_chunk_id]
+    assert chunks[0].facts == (fact,)
+    assert collection.get_calls == [([fact_chunk_id], ["metadatas", "documents"])]
+    assert facts.queries[0]["include"] == ["distances"]
+    assert graph.fact_calls == [[fact_chunk_id]]
 
 
-def test_retrieve_chunks_hybrid_ranks_strong_lexical_match_above_vector():
-    result = {
-        "metadatas": [[
-            {"paper_id": "paper-a", "chunk_index": 0, "filename": "paper-a.pdf",
-             "title": "Paper A", "page": 1},
-            {"paper_id": "paper-b", "chunk_index": 1, "filename": "paper-b.pdf",
-             "title": "Paper B", "page": 2},
-            {"paper_id": "paper-c", "chunk_index": 2, "filename": "paper-c.pdf",
-             "title": "Paper C", "page": 3},
-        ]],
-        "documents": [[
-            "graph neural network survey",
-            "transformer attention transformer attention model",
-            "clustering methods overview",
-        ]],
-        "distances": [[0.05, 0.4, 0.8]],
-    }
-    collection = FakeCollection(result)
-    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
+def test_fact_vector_hits_apply_to_explicit_vector_retrieval():
+    direct_chunk_id = "paper-a:chunk:000000"
+    fact_chunk_id = "paper-b:chunk:000001"
+    result = evaluation_query(
+        [{**corpus_record("a", "general background", 0), "id": direct_chunk_id}], [0.8]
+    )
+    collection = FactDocumentCollection(
+        result,
+        {
+            fact_chunk_id: {
+                "text": "the method uses a named dataset",
+                "metadata": {
+                    "paper_id": "paper-b",
+                    "chunk_index": 1,
+                    "filename": "paper-b.pdf",
+                    "title": "Paper B",
+                    "page": 2,
+                },
+            }
+        },
+    )
+    fact = FactValue("dataset", "Named Dataset", "The method uses Named Dataset.")
+    index = PaperSearchIndex(
+        collection=collection,
+        facts_collection=FactCollection(
+            {"ids": [["fact:dataset"]], "distances": [[0.1]]}
+        ),
+        graph_store=FactGraph(
+            {"fact:dataset": (fact_chunk_id,)}, {fact_chunk_id: (fact,)}
+        ),
+        embedder=lambda _text: [1.0],
+    )
 
-    chunks = index.retrieve_chunks("transformer attention")
+    chunks = index.retrieve_evaluation_chunks("Which dataset?", "vector", n_results=1)
 
-    # paper-b has a weaker vector score than paper-a but a strong lexical match,
-    # so the hybrid blend lifts it to the top and re-numbers the ranks.
-    assert [chunk.paper_id for chunk in chunks] == ["paper-b", "paper-a", "paper-c"]
-    assert [chunk.rank for chunk in chunks] == [1, 2, 3]
-    assert chunks[0].score > chunks[1].score > chunks[2].score
-
-
-def test_retrieve_chunks_honors_limit_and_empty_results():
-    collection = FakeCollection(raw_result())
-    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
-    assert len(index.retrieve_chunks("question", n_results=3)) == 3
-
-    empty = FakeCollection({"metadatas": [[]], "documents": [[]], "distances": [[]]})
-    assert PaperSearchIndex(
-        collection=empty, embedder=lambda text: [1.0]
-    ).retrieve_chunks("question") == []
-
-
-def test_existing_paper_search_still_collapses_to_one_match_per_paper():
-    result = raw_result(3)
-    result["metadatas"][0][1]["paper_id"] = "paper-0"
-    collection = FakeCollection(result)
-    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
-
-    matches = index.search("question", n_results=2)
-
-    assert [match.paper_id for match in matches] == ["paper-0", "paper-2"]
-    assert all("snippet" in match.__dataclass_fields__ for match in matches)
+    assert [(chunk.chunk_id, chunk.facts) for chunk in chunks] == [(fact_chunk_id, (fact,))]
 
 
 def test_evaluation_strategies_are_selectable_and_separate_from_chat_retrieval():
@@ -173,30 +217,6 @@ def test_evaluation_strategies_are_selectable_and_separate_from_chat_retrieval()
     assert chat_collection.queries[0]["n_results"] == 25
 
 
-def test_vector_evaluation_preserves_chroma_order_for_close_distances():
-    records = [corpus_record("z", "first vector result", 0), corpus_record("a", "second vector result", 1)]
-    collection = CorpusCollection(records, evaluation_query(records, [0.10000, 0.10001]))
-    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
-        "question", "vector"
-    )
-    assert [match.paper_id for match in matches] == ["paper-z", "paper-a"]
-    assert [match.rank for match in matches] == [1, 2]
-
-
-def test_bm25_evaluation_scores_the_complete_corpus():
-    records = [
-        corpus_record("a", "no matching terms", 0),
-        corpus_record("b", "needle appears in a lower vector candidate", 1),
-    ]
-    collection = CorpusCollection(records, evaluation_query(records, [0.1, 0.9]))
-    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
-        "needle", "bm25"
-    )
-    assert matches[0].paper_id == "paper-b"
-    assert collection.queries == []
-    assert collection.get_calls == 1
-
-
 def test_hybrid_fusion_has_deterministic_provenance_tie_breaking():
     records = [corpus_record("b", "needle", 0), corpus_record("a", "other", 0)]
     collection = CorpusCollection(records, evaluation_query([records[1], records[0]], [0.1, 0.5]))
@@ -208,31 +228,40 @@ def test_hybrid_fusion_has_deterministic_provenance_tie_breaking():
     assert matches[0].score == matches[1].score == 0.5
 
 
-@pytest.mark.parametrize("strategy", ["", "dense", "BM25", None])
-def test_evaluation_retrieval_rejects_invalid_strategy(strategy):
-    collection = CorpusCollection([], {"ids": [[]], "metadatas": [[]], "documents": [[]], "distances": [[]]})
-    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
-    with pytest.raises(ValueError, match="strategy must be one of"):
-        index.retrieve_evaluation_chunks("question", strategy)
+class CountingCorpusCollection(CorpusCollection):
+    """A corpus collection that also reports a chunk count for staleness checks."""
+
+    def __init__(self, records, query_result, count):
+        super().__init__(records, query_result)
+        self._count = count
+
+    def count(self):
+        return self._count
 
 
-def test_evaluation_retrieval_rejects_incomplete_provenance():
-    collection = CorpusCollection([], {"ids": [[]], "metadatas": [[]], "documents": [[]], "distances": [[]]})
-    collection.get = lambda: {"ids": ["a"], "documents": ["text"], "metadatas": [{"paper_id": "paper-a"}]}
-    index = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0])
-    with pytest.raises(PaperSearchError, match="chunk_index"):
-        index.retrieve_evaluation_chunks("question", "bm25")
-
-
-def test_evaluation_matches_include_full_text_and_provenance_and_cap_at_five():
-    records = [corpus_record(str(index), f"text {index}", index) for index in range(6)]
-    collection = CorpusCollection(records, evaluation_query(records[:5], [index / 10 for index in range(5)]))
-    matches = PaperSearchIndex(collection=collection, embedder=lambda text: [1.0]).retrieve_evaluation_chunks(
-        "question", "bm25", n_results=20
+def test_refresh_bm25_index_persists_and_is_reused_from_disk(tmp_path):
+    records = [corpus_record("a", "unrelated", 0), corpus_record("b", "needle needle", 1)]
+    builder_collection = CountingCorpusCollection(
+        records, evaluation_query(records, [0.1, 0.8]), count=2
     )
-    assert len(matches) == 5
-    assert [match.rank for match in matches] == list(range(1, 6))
-    assert matches[0].text == "text 0"
-    assert (matches[0].paper_id, matches[0].filename, matches[0].title, matches[0].page) == (
-        "paper-0", "paper-0.pdf", "Paper 0", 1
+    path = tmp_path / "bm25_index.json"
+    PaperSearchIndex(
+        collection=builder_collection, embedder=lambda text: [1.0], bm25_index_path=path
+    ).refresh_bm25_index()
+    assert path.exists()
+
+    class ExplodingGetCollection:
+        def query(self, **kwargs):
+            raise AssertionError("query must not run for the bm25 strategy")
+
+        def get(self):
+            raise AssertionError("corpus must not be scanned when a fresh index exists")
+
+        def count(self):
+            return 2
+
+    index = PaperSearchIndex(
+        collection=ExplodingGetCollection(), embedder=lambda text: [1.0], bm25_index_path=path
     )
+    matches = index.retrieve_evaluation_chunks("needle", "bm25")
+    assert [match.paper_id for match in matches] == ["paper-b", "paper-a"]

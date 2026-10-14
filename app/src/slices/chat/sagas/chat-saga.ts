@@ -15,6 +15,7 @@ import {
   chatSubanswerReceived,
   chatSubqueryStarted,
   chatSucceeded,
+  activateChat,
   createSession,
   loadSession,
   selectSession,
@@ -86,6 +87,17 @@ function* hydrateChatRoute(route: ChatRoute, services: ChatRouteServices) {
 export function* chatRouteSaga(
   services: ChatRouteServices = browserChatRouteServices,
 ) {
+  yield* takeLatest(activateChat, function* () {
+    try {
+      const result = yield* call(services.listSessions);
+      yield* put(setSessions(result.sessions));
+      const sessionId =
+        result.sessions[0]?.session_id ?? (yield* call(services.createSessionId));
+      yield* put(navigateTo({ name: "chat", sessionId }));
+    } catch (error) {
+      yield* put(sessionsFailed(String(error)));
+    }
+  });
   yield* takeLatest(routeChanged, function* (action) {
     const route = action.payload[0];
     if (route.name === "chat") yield* call(hydrateChatRoute, route, services);

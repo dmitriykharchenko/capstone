@@ -1,0 +1,1593 @@
+{
+  "aggregate_metrics": {
+    "cases_measured": 10,
+    "cases_total": 10,
+    "context": {
+      "characters": 0,
+      "chunks": 0,
+      "duplicate_chunks": 0,
+      "max_characters": 0,
+      "max_chunks": 0,
+      "max_prompt_characters": 0,
+      "prompt_characters": 0,
+      "unique_chunks": 0,
+      "utf8_bytes": 0
+    },
+    "cost": {
+      "estimated_usd": 0,
+      "known_usd": 0,
+      "priced_calls": 0,
+      "provider_reported_calls": 0,
+      "rate_estimated_calls": 0
+    },
+    "latency_ms": {
+      "judge": 0,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "rag": 0,
+      "total": 0
+    },
+    "model_calls": {
+      "embedding": 0,
+      "judge": 0,
+      "rag": 0,
+      "total": 0
+    },
+    "performance": {
+      "cases_checked": 10,
+      "fail": 0,
+      "failed_checks": {},
+      "incomplete": 10,
+      "pass": 0
+    },
+    "tokens": {
+      "input": 0,
+      "known_input": 0,
+      "known_output": 0,
+      "known_total": 0,
+      "output": 0,
+      "reported_calls": 0,
+      "total": 0
+    },
+    "workflow": {
+      "exchanges": 0,
+      "reused_searches": 0,
+      "tool_calls": 0
+    }
+  },
+  "aggregate_scores": {
+    "completeness": null,
+    "context_precision": null,
+    "context_recall": null,
+    "context_utilization": null,
+    "hallucination_rate": null,
+    "relevant_chunk_ranking": null,
+    "semantic_similarity": null
+  },
+  "input_cases": [
+    {
+      "grading_notes": "Category: performance; dimension: single_fact_accuracy; expected_behavior: answer. Pass: Names exactly LeetCode, AtCoder, and Codeforces, and cites DBLP_conf_iclr_JainHGLYZWSSS25.pdf. May add that problems are collected continuously over time to keep the benchmark contamination-free. Fail: Missing or extra platforms, wrong paper, or no citation.",
+      "performance_budget": {
+        "max_rag_latency_ms": 30000.0,
+        "max_retrievals": 3
+      },
+      "question": "Which three competition platforms does LiveCodeBench (Jain et al., ICLR 2025) collect its problems from?",
+      "sources": [
+        "DBLP_conf_iclr_JainHGLYZWSSS25.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: performance; dimension: cross_document_synthesis; expected_behavior: answer. Pass: Counterfeit Conundrum (Gu et al., ACL 2024): when asked to fix counterfeits, the likelihood of a successful repair is often lower than sampling a correct program from scratch. Self-Repair (Olausson et al., ICLR 2024): once the cost of repair is counted, gains from self-repair are often modest and vary across subsets, and self-repair is bottlenecked by the model's ability to give feedback on its own code. Both papers are cited and their findings are attributed correctly. Fail: Attributes a finding to the wrong paper, claims either paper shows repair is universally effective, or cites only one paper.",
+      "performance_budget": {
+        "max_rag_latency_ms": 45000.0
+      },
+      "question": "Compare what 'The Counterfeit Conundrum' and 'Is Self-Repair a Silver Bullet for Code Generation?' conclude about the value of having code models repair their own incorrect programs.",
+      "sources": [
+        "DBLP_conf_acl_GuLJOLSS24.pdf",
+        "DBLP_conf_iclr_OlaussonIW0S24.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: performance; dimension: complete_list_recall; expected_behavior: answer. Pass: Lists all three domains: list functions, text editing, and symbolic regression, citing DBLP_conf_nips_EllisMSST18.pdf. Fail: Omits a domain, adds domains not in the paper, or confuses EC2 with a different Ellis et al. paper.",
+      "performance_budget": {
+        "max_rag_latency_ms": 30000.0,
+        "max_retrievals": 3
+      },
+      "question": "On which three domains do the authors of 'Library Learning for Neurally-Guided Bayesian Program Induction' evaluate EC2?",
+      "sources": [
+        "DBLP_conf_nips_EllisMSST18.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: efficiency; dimension: minimal_budget_lookup; expected_behavior: answer. Pass: States that VIPER produces decision tree policies, learned by imitating a DNN oracle policy and its Q-function, citing DBLP_conf_nips_BastaniPS18.pdf. Efficiency expectation: a simple single-paper lookup should be answered with no follow-up subqueries after the coverage review and should cite only this paper. Fail: Wrong policy type, unnecessary follow-up hops, or citing unrelated papers to pad the answer.",
+      "performance_budget": {
+        "max_followup_queries": 0,
+        "max_rag_model_calls": 6,
+        "max_retrievals": 3
+      },
+      "question": "What kind of policy does VIPER in 'Verifiable Reinforcement Learning via Policy Extraction' produce?",
+      "sources": [
+        "DBLP_conf_nips_BastaniPS18.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: efficiency; dimension: early_stop_on_missing_evidence; expected_behavior: decline. Pass: States that no paper with this title exists in the indexed collection and does not invent results, venues, or numbers. Efficiency expectation: the agent should conclude after the initial retrieval and must not spend the full follow-up budget searching for a source that does not exist. Fail: Fabricated results or citations, attributing the title to a real paper, or using every available follow-up hop without changing the outcome.",
+      "performance_budget": {
+        "max_followup_queries": 0,
+        "max_rag_model_calls": 6,
+        "max_retrievals": 3
+      },
+      "question": "Summarize the benchmark results of 'Neural Ray Sketching: Real-Time Program Synthesis on GPUs' (Gu and Ellis, ICML 2023).",
+      "sources": []
+    },
+    {
+      "grading_notes": "Category: efficiency; dimension: redundant_request_deduplication; expected_behavior: answer. Pass: LINC (Logical Inference via Neurosymbolic Computation; Olausson et al., EMNLP 2023) uses the LLM as a semantic parser that translates natural-language premises and conclusions into first-order logic, which an external theorem prover then evaluates. Cites DBLP_conf_emnlp_OlaussonGLZSTL23.pdf. Efficiency expectation: the repeated phrasing should not produce duplicate subqueries, and the answer should be concise without repeating the same explanation. Fail: Duplicate or near-duplicate hops, repetitive answer text, or an incorrect description of LINC.",
+      "performance_budget": {
+        "max_followup_queries": 0,
+        "max_retrievals": 3
+      },
+      "question": "What is LINC, what does LINC do, and how does the LINC approach work? Please explain LINC.",
+      "sources": [
+        "DBLP_conf_emnlp_OlaussonGLZSTL23.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: reliability; dimension: paraphrase_consistency; expected_behavior: answer. Pass: Identifies StatusQuo (Cheung, Arden, Madden, Solar-Lezama, Myers; CIDR 2013), which makes runtime decisions about where computation runs to reduce data movement between the application server and the database, citing DBLP_conf_cidr_CheungAMSM13.pdf. The answer should match the answer to the curated, differently worded StatusQuo question. Fail: Fails to find StatusQuo because of the paraphrase, names a different paper, or contradicts the curated answer.",
+      "question": "Is there a paper here about letting a system decide at runtime whether code should execute on the app server or in the database to cut data transfer?",
+      "sources": [
+        "DBLP_conf_cidr_CheungAMSM13.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: reliability; dimension: conflicting_versions; expected_behavior: answer. Pass: Notes that the two local versions differ: the June 2024 arXiv version reports over five hundred problems, while the ICLR 2025 version reports over six hundred. Attributes each figure to its version and cites both DBLP_journals_corr_abs-2403-07974.pdf and DBLP_conf_iclr_JainHGLYZWSSS25.pdf. Fail: Reports a single number as definitive without noting the version difference, merges the figures, or invents a third number.",
+      "question": "How many coding problems does LiveCodeBench contain?",
+      "sources": [
+        "DBLP_journals_corr_abs-2403-07974.pdf",
+        "DBLP_conf_iclr_JainHGLYZWSSS25.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: reliability; dimension: false_premise_correction; expected_behavior: answer_safe_part. Pass: Corrects the premise: the paper (Polikarpova, Kuraj, Solar-Lezama; PLDI 2016) does not use reinforcement learning; it synthesizes recursive functions from specifications expressed as polymorphic refinement types, built on a refinement type checking algorithm. Cites DBLP_conf_pldi_PolikarpovaKS16.pdf. Fail: Accepts the premise and invents a reinforcement learning component, or refuses without explaining the actual method.",
+      "question": "Why does 'Program Synthesis from Polymorphic Refinement Types' rely on reinforcement learning to train its synthesizer?",
+      "sources": [
+        "DBLP_conf_pldi_PolikarpovaKS16.pdf"
+      ]
+    },
+    {
+      "grading_notes": "Category: reliability; dimension: noisy_input_robustness; expected_behavior: answer. Pass: Despite the typos, identifies 'Library Learning for Neurally-Guided Bayesian Program Induction' (Ellis et al., NeurIPS 2018) and explains that EC2 learns a domain-specific language (a library of reusable program components) together with a neural model that guides search, instead of relying on a hand-engineered DSL. Cites DBLP_conf_nips_EllisMSST18.pdf. Fail: Fails to retrieve the paper, asks for clarification instead of answering, or describes a different paper.",
+      "question": "wat does teh EC2 algorythm lern in the libary lerning neuraly guided bayesian program induction paper??",
+      "sources": [
+        "DBLP_conf_nips_EllisMSST18.pdf"
+      ]
+    }
+  ],
+  "metadata": {
+    "retrieval_identifier": "multihop-hybrid",
+    "retrieval_strategy": "hybrid"
+  },
+  "results": [
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 1,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: performance; dimension: single_fact_accuracy; expected_behavior: answer. Pass: Names exactly LeetCode, AtCoder, and Codeforces, and cites DBLP_conf_iclr_JainHGLYZWSSS25.pdf. May add that problems are collected continuously over time to keep the benchmark contamination-free. Fail: Missing or extra platforms, wrong paper, or no citation.",
+        "performance_budget": {
+          "max_rag_latency_ms": 30000.0,
+          "max_retrievals": 3
+        },
+        "question": "Which three competition platforms does LiveCodeBench (Jain et al., ICLR 2025) collect its problems from?",
+        "sources": [
+          "DBLP_conf_iclr_JainHGLYZWSSS25.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 30000.0,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 2,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: performance; dimension: cross_document_synthesis; expected_behavior: answer. Pass: Counterfeit Conundrum (Gu et al., ACL 2024): when asked to fix counterfeits, the likelihood of a successful repair is often lower than sampling a correct program from scratch. Self-Repair (Olausson et al., ICLR 2024): once the cost of repair is counted, gains from self-repair are often modest and vary across subsets, and self-repair is bottlenecked by the model's ability to give feedback on its own code. Both papers are cited and their findings are attributed correctly. Fail: Attributes a finding to the wrong paper, claims either paper shows repair is universally effective, or cites only one paper.",
+        "performance_budget": {
+          "max_rag_latency_ms": 45000.0
+        },
+        "question": "Compare what 'The Counterfeit Conundrum' and 'Is Self-Repair a Silver Bullet for Code Generation?' conclude about the value of having code models repair their own incorrect programs.",
+        "sources": [
+          "DBLP_conf_acl_GuLJOLSS24.pdf",
+          "DBLP_conf_iclr_OlaussonIW0S24.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 45000.0,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 3,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: performance; dimension: complete_list_recall; expected_behavior: answer. Pass: Lists all three domains: list functions, text editing, and symbolic regression, citing DBLP_conf_nips_EllisMSST18.pdf. Fail: Omits a domain, adds domains not in the paper, or confuses EC2 with a different Ellis et al. paper.",
+        "performance_budget": {
+          "max_rag_latency_ms": 30000.0,
+          "max_retrievals": 3
+        },
+        "question": "On which three domains do the authors of 'Library Learning for Neurally-Guided Bayesian Program Induction' evaluate EC2?",
+        "sources": [
+          "DBLP_conf_nips_EllisMSST18.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 30000.0,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 4,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: efficiency; dimension: minimal_budget_lookup; expected_behavior: answer. Pass: States that VIPER produces decision tree policies, learned by imitating a DNN oracle policy and its Q-function, citing DBLP_conf_nips_BastaniPS18.pdf. Efficiency expectation: a simple single-paper lookup should be answered with no follow-up subqueries after the coverage review and should cite only this paper. Fail: Wrong policy type, unnecessary follow-up hops, or citing unrelated papers to pad the answer.",
+        "performance_budget": {
+          "max_followup_queries": 0,
+          "max_rag_model_calls": 6,
+          "max_retrievals": 3
+        },
+        "question": "What kind of policy does VIPER in 'Verifiable Reinforcement Learning via Policy Extraction' produce?",
+        "sources": [
+          "DBLP_conf_nips_BastaniPS18.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 0,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 6,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 5,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: efficiency; dimension: early_stop_on_missing_evidence; expected_behavior: decline. Pass: States that no paper with this title exists in the indexed collection and does not invent results, venues, or numbers. Efficiency expectation: the agent should conclude after the initial retrieval and must not spend the full follow-up budget searching for a source that does not exist. Fail: Fabricated results or citations, attributing the title to a real paper, or using every available follow-up hop without changing the outcome.",
+        "performance_budget": {
+          "max_followup_queries": 0,
+          "max_rag_model_calls": 6,
+          "max_retrievals": 3
+        },
+        "question": "Summarize the benchmark results of 'Neural Ray Sketching: Real-Time Program Synthesis on GPUs' (Gu and Ellis, ICML 2023).",
+        "sources": []
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 0,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 6,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 6,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: efficiency; dimension: redundant_request_deduplication; expected_behavior: answer. Pass: LINC (Logical Inference via Neurosymbolic Computation; Olausson et al., EMNLP 2023) uses the LLM as a semantic parser that translates natural-language premises and conclusions into first-order logic, which an external theorem prover then evaluates. Cites DBLP_conf_emnlp_OlaussonGLZSTL23.pdf. Efficiency expectation: the repeated phrasing should not produce duplicate subqueries, and the answer should be concise without repeating the same explanation. Fail: Duplicate or near-duplicate hops, repetitive answer text, or an incorrect description of LINC.",
+        "performance_budget": {
+          "max_followup_queries": 0,
+          "max_retrievals": 3
+        },
+        "question": "What is LINC, what does LINC do, and how does the LINC approach work? Please explain LINC.",
+        "sources": [
+          "DBLP_conf_emnlp_OlaussonGLZSTL23.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 0,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 7,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: reliability; dimension: paraphrase_consistency; expected_behavior: answer. Pass: Identifies StatusQuo (Cheung, Arden, Madden, Solar-Lezama, Myers; CIDR 2013), which makes runtime decisions about where computation runs to reduce data movement between the application server and the database, citing DBLP_conf_cidr_CheungAMSM13.pdf. The answer should match the answer to the curated, differently worded StatusQuo question. Fail: Fails to find StatusQuo because of the paraphrase, names a different paper, or contradicts the curated answer.",
+        "question": "Is there a paper here about letting a system decide at runtime whether code should execute on the app server or in the database to cut data transfer?",
+        "sources": [
+          "DBLP_conf_cidr_CheungAMSM13.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 8,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: reliability; dimension: conflicting_versions; expected_behavior: answer. Pass: Notes that the two local versions differ: the June 2024 arXiv version reports over five hundred problems, while the ICLR 2025 version reports over six hundred. Attributes each figure to its version and cites both DBLP_journals_corr_abs-2403-07974.pdf and DBLP_conf_iclr_JainHGLYZWSSS25.pdf. Fail: Reports a single number as definitive without noting the version difference, merges the figures, or invents a third number.",
+        "question": "How many coding problems does LiveCodeBench contain?",
+        "sources": [
+          "DBLP_journals_corr_abs-2403-07974.pdf",
+          "DBLP_conf_iclr_JainHGLYZWSSS25.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 9,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: reliability; dimension: false_premise_correction; expected_behavior: answer_safe_part. Pass: Corrects the premise: the paper (Polikarpova, Kuraj, Solar-Lezama; PLDI 2016) does not use reinforcement learning; it synthesizes recursive functions from specifications expressed as polymorphic refinement types, built on a refinement type checking algorithm. Cites DBLP_conf_pldi_PolikarpovaKS16.pdf. Fail: Accepts the premise and invents a reinforcement learning component, or refuses without explaining the actual method.",
+        "question": "Why does 'Program Synthesis from Polymorphic Refinement Types' rely on reinforcement learning to train its synthesizer?",
+        "sources": [
+          "DBLP_conf_pldi_PolikarpovaKS16.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    },
+    {
+      "attempt_history": [
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 0,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 1
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 1,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 2
+        },
+        {
+          "category": "safety_withheld",
+          "hop_index": null,
+          "http_status": null,
+          "message": "Content was withheld by the safety policy.",
+          "retry_round": 2,
+          "retryable": false,
+          "stage": "planner",
+          "stage_attempt": 3
+        }
+      ],
+      "case_index": 10,
+      "error": {
+        "category": "safety_withheld",
+        "hop_index": null,
+        "http_status": null,
+        "message": "Content was withheld by the safety policy.",
+        "retry_round": 2,
+        "retryable": false,
+        "stage": "planner",
+        "stage_attempt": 3
+      },
+      "generated_answer": null,
+      "input": {
+        "grading_notes": "Category: reliability; dimension: noisy_input_robustness; expected_behavior: answer. Pass: Despite the typos, identifies 'Library Learning for Neurally-Guided Bayesian Program Induction' (Ellis et al., NeurIPS 2018) and explains that EC2 learns a domain-specific language (a library of reusable program components) together with a neural model that guides search, instead of relying on a hand-engineered DSL. Cites DBLP_conf_nips_EllisMSST18.pdf. Fail: Fails to retrieve the paper, asks for clarification instead of answering, or describes a different paper.",
+        "question": "wat does teh EC2 algorythm lern in the libary lerning neuraly guided bayesian program induction paper??",
+        "sources": [
+          "DBLP_conf_nips_EllisMSST18.pdf"
+        ]
+      },
+      "judge_scores": null,
+      "metrics": {
+        "context": {
+          "characters": 0,
+          "chunks": 0,
+          "duplicate_chunks": 0,
+          "max_characters": 0,
+          "max_chunks": 0,
+          "max_prompt_characters": 0,
+          "prompt_characters": 0,
+          "unique_chunks": 0,
+          "utf8_bytes": 0
+        },
+        "cost": {
+          "estimated_usd": 0,
+          "known_usd": 0,
+          "priced_calls": 0,
+          "provider_reported_calls": 0,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "model_calls": {
+          "embedding": 0,
+          "judge": 0,
+          "rag": 0,
+          "total": 0
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {},
+        "tokens": {
+          "input": 0,
+          "known_input": 0,
+          "known_output": 0,
+          "known_total": 0,
+          "output": 0,
+          "reported_calls": 0,
+          "total": 0
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 0,
+          "reused_searches": 0,
+          "tool_calls": 0
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "unknown",
+            "value": null
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 0
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 0
+          }
+        },
+        "status": "incomplete",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": []
+    }
+  ],
+  "schema": "rag-evaluation-results",
+  "schema_version": 3,
+  "summary": {
+    "failed": 10,
+    "succeeded": 0,
+    "total": 10
+  }
+}

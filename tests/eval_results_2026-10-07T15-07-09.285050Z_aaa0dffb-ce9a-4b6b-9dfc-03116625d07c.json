@@ -1,0 +1,540 @@
+{
+  "aggregate_metrics": {
+    "cases_measured": 1,
+    "cases_total": 1,
+    "context": {
+      "characters": 53693,
+      "chunks": 15,
+      "max_characters": 19621,
+      "max_chunks": 5,
+      "max_prompt_characters": 20123,
+      "prompt_characters": 57817,
+      "unique_chunks": 11,
+      "utf8_bytes": 53857
+    },
+    "cost": {
+      "estimated_usd": 0.020723619999999998,
+      "known_usd": 0.020723619999999998,
+      "priced_calls": 10,
+      "provider_reported_calls": 10,
+      "rate_estimated_calls": 0
+    },
+    "latency_ms": {
+      "judge": 4621.588000096381,
+      "mean": 12860.22391624283,
+      "p50": 12860.22391624283,
+      "p95": 12860.22391624283,
+      "rag": 8238.63591614645,
+      "total": 12860.22391624283
+    },
+    "model_calls": {
+      "embedding": 3,
+      "judge": 1,
+      "rag": 6,
+      "total": 10
+    },
+    "performance": {
+      "cases_checked": 1,
+      "fail": 0,
+      "failed_checks": {},
+      "incomplete": 0,
+      "pass": 1
+    },
+    "tokens": {
+      "input": 23264,
+      "known_input": 23264,
+      "known_output": 737,
+      "known_total": 24001,
+      "output": 737,
+      "reported_calls": 10,
+      "total": 24001
+    },
+    "workflow": {
+      "exchanges": 6,
+      "tool_calls": 3
+    }
+  },
+  "aggregate_scores": {
+    "completeness": 5.0,
+    "context_precision": 5.0,
+    "context_recall": 5.0,
+    "context_utilization": 5.0,
+    "hallucination_rate": 5.0,
+    "relevant_chunk_ranking": 5.0,
+    "semantic_similarity": 5.0
+  },
+  "input_cases": [
+    {
+      "grading_notes": "LeetCode, AtCoder, Codeforces.",
+      "performance_budget": {
+        "max_retrievals": 3
+      },
+      "question": "What three platforms does LiveCodeBench collect problems from?",
+      "sources": []
+    }
+  ],
+  "metadata": {
+    "retrieval_identifier": "multihop-hybrid",
+    "retrieval_strategy": "hybrid"
+  },
+  "results": [
+    {
+      "attempt_history": [],
+      "case_index": 1,
+      "error": null,
+      "generated_answer": "LiveCodeBench collects problems from **LeetCode, AtCoder, and CodeForces**.",
+      "input": {
+        "grading_notes": "LeetCode, AtCoder, Codeforces.",
+        "performance_budget": {
+          "max_retrievals": 3
+        },
+        "question": "What three platforms does LiveCodeBench collect problems from?",
+        "sources": []
+      },
+      "judge_scores": {
+        "completeness": {
+          "confidence": "high",
+          "flags": [],
+          "missing_elements": [],
+          "reasoning": "The user asked for three platforms, and the answer names exactly three: LeetCode, AtCoder, and CodeForces. This fully covers the reference answer.",
+          "score": 5
+        },
+        "context_precision": {
+          "confidence": "high",
+          "flags": [
+            "GROUND_TRUTH_RELEVANT not provided; relevance judged directly from retrieved text."
+          ],
+          "reasoning": "The retrieved chunks explicitly state that LiveCodeBench curates problems from LeetCode, AtCoder, and CodeForces. The generated answer matches that set exactly.",
+          "score": 5
+        },
+        "context_recall": {
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "All information needed to answer the query is present in the retrieved context: the three source platforms are named multiple times in the paper excerpt. Nothing additional is needed beyond those platform names.",
+          "score": 5
+        },
+        "context_utilization": {
+          "chunks_used": [
+            1
+          ],
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The generated answer directly uses the platform names from the retrieved chunk: \"LeetCode, AtCoder, and CodeForces.\" It appears to be a faithful extraction from the context rather than unsupported parametric recall.",
+          "score": 5
+        },
+        "hallucination_rate": {
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The answer contains no unsupported claims beyond the three platform names, and those are directly supported by the retrieved chunks.",
+          "score": 5,
+          "unsupported_claims": []
+        },
+        "relevant_chunk_ranking": {
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The relevant information appears in chunk 1 near the top, and is reinforced later in the same chunk. Since the answer is directly supported there, the relevant content is ranked first.",
+          "relevant_chunk_ranks": [
+            1
+          ],
+          "score": 5
+        },
+        "semantic_similarity": {
+          "confidence": "high",
+          "contradicting_claims": [],
+          "flags": [],
+          "reasoning": "The generated answer conveys the same meaning as the reference answer: the three platforms are LeetCode, AtCoder, and CodeForces. There are no contradictory claims or missing platform names.",
+          "score": 5
+        }
+      },
+      "metrics": {
+        "context": {
+          "characters": 53693,
+          "chunks": 15,
+          "max_characters": 19621,
+          "max_chunks": 5,
+          "max_prompt_characters": 20123,
+          "prompt_characters": 57817,
+          "unique_chunks": 11,
+          "utf8_bytes": 53857
+        },
+        "cost": {
+          "estimated_usd": 0.020723619999999998,
+          "known_usd": 0.020723619999999998,
+          "priced_calls": 10,
+          "provider_reported_calls": 10,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 4621.588000096381,
+          "rag": 8238.63591614645,
+          "total": 12860.22391624283
+        },
+        "model_calls": {
+          "embedding": 3,
+          "judge": 1,
+          "rag": 6,
+          "total": 10
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {
+          "composer": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1126,
+              "prompt_characters": 1126,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.0003,
+              "known_usd": 0.0003,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1112.9570830380544,
+            "model_calls": 1,
+            "tokens": {
+              "input": 256,
+              "known_input": 256,
+              "known_output": 24,
+              "known_total": 280,
+              "output": 24,
+              "reported_calls": 1,
+              "total": 280
+            },
+            "tool_calls": 0
+          },
+          "coverage": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1186,
+              "prompt_characters": 1186,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000264,
+              "known_usd": 0.000264,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 767.0298749580979,
+            "model_calls": 1,
+            "tokens": {
+              "input": 262,
+              "known_input": 262,
+              "known_output": 15,
+              "known_total": 277,
+              "output": 15,
+              "reported_calls": 1,
+              "total": 277
+            },
+            "tool_calls": 0
+          },
+          "judge": {
+            "context": {
+              "characters": 34434,
+              "chunks": 11,
+              "max_characters": 34434,
+              "max_chunks": 11,
+              "max_prompt_characters": 39078,
+              "prompt_characters": 39078,
+              "unique_chunks": 11,
+              "utf8_bytes": 34556
+            },
+            "cost": {
+              "estimated_usd": 0.0094005,
+              "known_usd": 0.0094005,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 4621.588000096381,
+            "model_calls": 1,
+            "tokens": {
+              "input": 9270,
+              "known_input": 9270,
+              "known_output": 544,
+              "known_total": 9814,
+              "output": 544,
+              "reported_calls": 1,
+              "total": 9814
+            },
+            "tool_calls": 0
+          },
+          "planner": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 288,
+              "prompt_characters": 288,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.0003465,
+              "known_usd": 0.0003465,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1515.108208055608,
+            "model_calls": 1,
+            "tokens": {
+              "input": 72,
+              "known_input": 72,
+              "known_output": 65,
+              "known_total": 137,
+              "output": 65,
+              "reported_calls": 1,
+              "total": 137
+            },
+            "tool_calls": 0
+          },
+          "retrieval": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 0,
+              "prompt_characters": 0,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 1.1199999999999999e-06,
+              "known_usd": 1.1199999999999999e-06,
+              "priced_calls": 3,
+              "provider_reported_calls": 3,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 0,
+            "latency_ms": 1458.1693740328774,
+            "model_calls": 3,
+            "tokens": {
+              "input": 56,
+              "known_input": 56,
+              "known_output": 0,
+              "known_total": 56,
+              "output": 0,
+              "reported_calls": 3,
+              "total": 56
+            },
+            "tool_calls": 3
+          },
+          "subanswer": {
+            "context": {
+              "characters": 53693,
+              "chunks": 15,
+              "max_characters": 19621,
+              "max_chunks": 5,
+              "max_prompt_characters": 20123,
+              "prompt_characters": 55217,
+              "unique_chunks": 11,
+              "utf8_bytes": 53857
+            },
+            "cost": {
+              "estimated_usd": 0.0104115,
+              "known_usd": 0.0104115,
+              "priced_calls": 3,
+              "provider_reported_calls": 3,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 3,
+            "latency_ms": 3385.371376061812,
+            "model_calls": 3,
+            "tokens": {
+              "input": 13348,
+              "known_input": 13348,
+              "known_output": 89,
+              "known_total": 13437,
+              "output": 89,
+              "reported_calls": 3,
+              "total": 13437
+            },
+            "tool_calls": 0
+          }
+        },
+        "tokens": {
+          "input": 23264,
+          "known_input": 23264,
+          "known_output": 737,
+          "known_total": 24001,
+          "output": 737,
+          "reported_calls": 10,
+          "total": 24001
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 6,
+          "tool_calls": 3
+        }
+      },
+      "performance": {
+        "checks": {
+          "followup_queries": {
+            "limit": 2,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 8238.63591614645
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 6
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 3
+          }
+        },
+        "status": "pass",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": [
+        {
+          "chunk_index": 23,
+          "filename": "DBLP_conf_iclr_JainHGLYZWSSS25.pdf",
+          "page": 24,
+          "paper_id": "DBLP_conf_iclr_JainHGLYZWSSS25",
+          "rank": 1,
+          "score": 0.7593,
+          "text": "Published as a conference paper at ICLR 2025\nC C URATION\nC.1 P LATFORM SPECIFIC CURATION\nWe describe the curation process for each platform.\nLEET CODE. We collect problems from all weekly and biweekly contests on LEET CODE that have\ntaken place after April’23. For each problem, we collect the problems, public tests, and user solutions.\nThe platform also provides a difficulty label for each problem which we use to tag the problems as\nEASY, MEDIUM , and HARD. Since LEET CODE provides a starter code for each problem, we also collect\nit and provide it to the LLM in the STDIN format. Since the hidden tests are not directly available,\nwe use our generator-based test input generation approach (Section A.2) and also collect the auto\ngrader failing tests for some of the recent problems.\nATCODER . We collect problems from the abc (beginner round) contests on ATCODER that have taken\nplace after April’23. We deliberately avoid the more challenging arc and agc contests which are\ndesigned for more advanced Olympiad participants. The problems are assigned numeric difficulty\nratings, and we exclude abc problems with a rating of more than 500. We also use these numeric\nratings to tag the problems as EASY, MEDIUM , and HARD. Specifically, we use the rating brackets\n[0− 200), [200− 400), and [400− 500] to perform the classification. ATCODER provides public and\nhidden tests for each problem which we directly use in the benchmark.\nCODE FORCES . We have collected problems from the Division 3 and Division 4 contests onCODE -\nFORCES . Notably, we find that even with this filter, the problems are harder than the other two\nplatforms. CODE FORCES also provides difficulty ratings for the problems which we use to tag the prob-\nlems as EASY, MEDIUM , and HARD using the rating brackets{800}, (800− 1000], and (1000− 1300]\nrespectively. Due to the higher difficulty, we only consider a small fraction of problems from CODE -\nFORCES and semi-automatically construct test case generators, as they do not provide complete tests\non the platform (long tests are truncated).\nTable 2 provides various statistics about the problems that we have collected for LIVE CODE BENCH .\nC.2 S CENARIO -SPECIFIC BENCHMARK CONSTRUCTION\nCode Generation and Self-Repair. We use the natural language problem statement as the problem\nstatement for these scenarios. For LEET CODE, as noted above, an additional starter code is provided\nfor the functional input format. For ATCODER and CODE FORCES problems, we use the standard input\nformat (similar to (Hendrycks et al., 2021)). The collected or generated tests are then used to evaluate\nthe correctness of the generated programs. Our final dataset consists of 511 problem instances across\nthe three platforms.\nCode Execution. We draw inspiration from the benchmark creation procedure used in (Gu et al.,\n2024). First, we collect a large pool of ∼ 2000 correct, human-submitted solutions from the\nPlatform Total Count #Easy #Medium #Hard Average Tests\nLCB (May-end) 511 182 206 123 17.0\nLCB (Sep-end) 349 125 136 88 18.0\nATCODER 267 99 91 77 15.6\nLEET CODE 235 79 113 43 19.0\nCODE FORCES 9 4 2 3 11.1\nLCB-Easy 182 182 0 0 16.1\nLCB-Medium 206 0 206 0 17.4\nLCB-Hard 123 0 0 123 18.0\nTable 2: The statistics of problems collected in LIVE CODE BENCH (LCB). We present the number of\nproblems, their difficulty distributions and the average number of tests per problem. We present the\nresults on the following subsets of LIVE CODE BENCH (used throughout this manuscript) - (a) problems\nin the May-Feb and Sep-Feb time windows, (b) problems sourced from the three platforms, and (c)\nproblems in the LCB-Easy, LCB-Medium, and LCB-Hard subsets.\n24",
+          "title": "LiveCodeBench: Holistic and Contamination-Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 0,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 1,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 2,
+          "score": 0.7585,
+          "text": "LiveCodeBench: Holistic and Contamination Free Evaluation of\nLarge Language Models for Code\nNaman Jain † King Han † Alex Gu * $ Wen-Ding Li*‡\nFanjia Yan*† Tianjun Zhang *† Sida I. Wang\nArmando Solar-Lezama $ Koushik Sen † Ion Stoica †\n† UC Berkeley $ MIT ‡ Cornell\nWebsite: https://livecodebench.github.io/\n{naman jain,kingh0730,fanjiayan,tianjunz,ksen,istoica}@berkeley.edu\ngua@mit.edu asolar@csail.mit.edu wl678@cornell.edu\nAbstract\nLarge Language Models ( LLMs) applied to code-related applications have emerged as a promi-\nnent field, attracting significant interest from both academia and industry. However, as new and\nimproved LLMs are developed, existing evaluation benchmarks (e.g.,HumanEval, MBPP) are\nno longer sufficient for assessing their capabilities. In this work, we propose LiveCodeBench,\na comprehensive and contamination-free evaluation of LLMs for code, which collects new prob-\nlems over time from contests across three competition platforms, namelyLeetCode, AtCoder,\nand CodeForces. Notably, our benchmark also focuses on a broader range of code-related ca-\npabilities, such as self-repair, code execution, and test output prediction, beyond just code gener-\nation. Currently, LiveCodeBench hosts over five hundred coding problems that were published\nbetween May 2023 and May 2024. We have evaluated 18 base LLMs and 34 instruction-tuned\nLLMs on LiveCodeBench. We present empirical findings on contamination, holistic per-\nformance comparisons, potential overfitting in existing benchmarks as well as individual model\ncomparisons. We will release all prompts and model completions for further community analysis,\nalong with a general toolkit for adding new scenarios and models.\n1\narXiv:2403.07974v2  [cs.SE]  6 Jun 2024",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 15,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 16,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 3,
+          "score": 0.7464,
+          "text": "recent benchmark measuring the reasoning and execution abilities of code LLMs. We differ from\nCRUXEval in that our benchmark is live, and our functions are more complex and human-produced\n(unlike Code Llama generations in CRUXEval).\nTest Generation. Test generation using LLMs has been explored in (Yuan et al., 2023; Sch¨ afer\net al., 2024; Tufano et al., 2022; Watson et al., 2020). Furthermore, Chen et al. (2022) demonstrated\nthat LLMs can assist in generating test case inputs/outputs for competitive programming problems,\nthereby improving the accuracy of the generated code, thus inspiring our test generation scenario.\nHowever, LiveCodeBench’s test generation scenario is unique in that it decouples the test inputs\nand outputs allowing more proper evaluations.\nFinally, some works have additionally studied other tasks and scenarios like type prediction (Mir\net al., 2022; Wei et al., 2023a; Malik et al., 2019), code summarization (LeClair et al., 2019; Iyer\net al., 2016; Barone and Sennrich, 2017; Hasan et al., 2021; Alon et al., 2018), code security (Liguori\net al., 2022; Pearce et al., 2022; Tony et al., 2023), etc.\n6.3 Contamination\nData contamination and test-case leakage have received considerable attention Oren et al. (2024);\nGolchin and Surdeanu (2023); Weller et al. (2023); Roberts et al. (2024) as LLMs might be getting\ntrained on benchmarks. Sainz et al. (2023) demonstrated contamination by simply prompting the\nmodel to highlight its contamination. Some detection methods have also been built to avoid these\ncases (Shi et al., 2023; Zhou et al., 2023). For code, Riddell et al. (2024) use edit distance and\nAST-based semantic-similarity to detect contamination.\n7 Limitations\nBenchmark Size. LiveCodeBench code generation scenario currently hosts over 400 instances\nfrom problems released between May and February. To account for contamination in DeepSeek,\nwe only perform evaluations on problems released after the model cutoff date. This leads to only\n349 problems used in our final evaluations which might add noise due to problem set samples.\nWe currently estimate 1 − 1.5% performance variations in LiveCodeBench code generation due\nto this issue (measured by bootstrapping 349 sized problem sets from the 511 sized dataset).\nOther scenarios, i.e. self-repair, code execution, and test output prediction comprise 349, 188, and\n254 problems would have similar performance variations. We thus recommend exercising proper\njudgement when comparing models with small performance differences. Note that HumanEval has\n164 problems and would also struggle with similar issues.\nThis issue is also exacerbated for newer models, with more recent cutoff dates, as they might\nonly have access to a smaller evaluation set. We propose two solutions addressing this issue as\nwe evolve LiveCodeBench. First, we will use other competition platforms for problem collection,\nallowing larger number of recent problems to be added to the benchmark. In addition, we also hope\nsupplement this with an unreleased private test set constructed specifically for model evaluation.\nThese problems will use a similar flavor to current problems and will be used when models are\nsubmitted for evaluation to the LiveCodeBench platform. This would reduce the reliance on\npublic accessible problems and provide a more robust evaluation of the models while providing\ncommunity public access to similar problems, similar to strategies employed by popular platforms\nlike Kaggle.\n16",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 2,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 3,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 4,
+          "score": 0.712,
+          "text": "prevent the risk of problem contamination, we use live updates, that is evaluate models on\nnew problems. Particularly, we collect problems from weekly contests on competition plat-\nforms and tag them with a release date. Next, for newer models, we only consider problems\nreleased after the model’s cutoff date to ensure that the model has not encountered the exact\nproblem in the training dataset. In Figure 1, we find that the performance of the DeepSeek\nmodel starkly drops when evaluated on the LeetCode problems released after August 2023.\nSimilarly, GPT-4-O observes a drop in performance on LeetCode problems released since\nNovember 2023, its specified cutoff date. This indicates that these models are likely trained\non the older LeetCode problems and time-segmented evaluations allow fair comparisions.\n2. Holistic Evaluation. Current code evaluations primarily focus on natural language to\ncode generation. However, programming is a multi-faceted task that requires a variety of\ncapabilities beyond those measured by code generation. In LiveCodeBench, we evaluate\ncode LLMs on three additional scenarios, listed below.\n• Self-Repair. Fix an incorrect program from execution information, evaluating the\nability to debug code from feedback. The model is given the natural language problem\ndescription, the incorrect program, the test case it fails on, and the execution feedback\nfrom that failure. The output should be a correct repaired program.\n• Code Execution. “Execute” a program on an input, evaluating code comprehension\nability. The model is given a program and an input, and the output should be the result.\n• Test Output Prediction. Solve the natural language task on a specified input, eval-\nuating the ability to generate testing outputs. The model is given the natural language\nproblem description and an input, and the output should be the output for the problem.\nFigure 2: Left. We propose evaluating LLMs across scenarios capturing various coding-related\ncapabilities. Specifically, we host four different scenarios, namely code generation, self-repair, code\nexecution, and test output prediction. The figure depicts various model performances across the\nfour scenarios available in LiveCodeBench in a radial plot – highlighting how relative differences\nacross models change across the scenarios. Right. Comparison of open access and (closed) API\naccess models on LiveCodeBench-Easy code generation scenario. We find that closed-access models\nconsistently outperform the open models with only strong instruction-tuned variants of > 30B\nmodels (specifically L3-Ins-70B, Mixtral and DS-Ins-33B models) crossing the performance gap.\n3",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 6,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 7,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 5,
+          "score": 0.6434,
+          "text": "Finally, we would like to point out that LiveCodeBench also offers an extensible framework to add\nnew scenarios in the future. So other relevant settings like input generation, program summariza-\ntion, optimization, etc. can be integrated with our setup.\n3 Benchmark Curation\nWe curate our problems from three coding competition websites: LeetCode, AtCoder, and Code-\nForces. These websites periodically host contests containing problems that assess the coding and\nproblem-solving skills of participants. The problems consist of a natural language problem state-\nment along with example input-output examples, and the goal is to write a program that passes\na set of hidden tests. Further, thousands of participants participate, solving these problems thus\nensuring that the problems are vetted for clarity and correctness.\n3.1 Data Collection\nWe have written HTML scrapers for each of the above websites to collect problems and the cor-\nresponding metadata. To ensure quality and consistency, we parse mathematical formulas and\nexclude problems with images. We also exclude problems that are not suitable for grading by\ninput-output examples, such as those that accept multiple correct answers or require the construc-\ntion of data structures. Besides parsing the problem descriptions, we also collect associated ground\ntruth solutions and test cases whenever directly available. Thus for each problem, we collect tu-\nples of natural language problem statement P, test cases T, and ground truth solution S. Finally,\nwe associate the contest date D to mark the release date of each problem and use the collected\nattributes to construct problems for our four scenarios (detailed in Section 3.3 ahead).\nScrolling through time. As noted, we associate the contest date D for each problem. The release\ndate allows us the measure the performance of LLMs over different time windows by filtering\nproblems based on whether the problem release date falls within a time window (referred to as\n“scrolling” through time). This is crucial for evaluating and comparing models trained at different\ntimes. Specifically, for a new model and the corresponding cutoff date (normalized to the release\ndate if the training cutoff date is not published), we can measure the performance of the model on\nbenchmark problems released after the cutoff date. We have developed a UI that allows comparing\nmodels on problems released during different time windows (shown in Figure 9).\nTest collection. Tests are crucial for assessing the correctness of the generated outputs and are\nused in all four scenarios. We collect tests available on platform websites whenever possible and\nuse them for the benchmark. Otherwise, following Liu et al. (2023b), we use a LLM (here GPT-4-\nTurbo) to generate tests for the problems. A key difference between our test generation approach\nis that instead of generating inputs directly using the LLM, we construct generators that sample\ninputs based on the problem specifications using in context learning. Details and examples of such\ninput generators can be found in Section A.2. Finally, we collect a small fraction of failing tests\nfrom the platform for the more recent problems allowing more directed adversarial test collection.\nProblem difficulty. Competition programming has remained a challenge for LLMs, with GPT-\n4 achieving an average CodeForces rating (ELO) of 392, placing it in the bottom 5 percentile\n(OpenAI, 2023). This makes it difficult to compare LLMs, as the variation in performance across\nmodels is low. In LiveCodeBench, we collect problems of diverse difficulties as labeled in compe-\ntition platforms, excluding problems that are rated above a certain threshold that are likely too\n7",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 16,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 17,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 6,
+          "score": 0.8857,
+          "text": "Focus on Python. LiveCodeBench currently only focuses on Python which might not provide\nenough signal about model capabilities in other languages. However, since we collected problem\nstatements and serialized tests, adding new programming languages would be straightforward once\nappropriate evaluation engines are used.\nRobustness to Prompts. Recent works have identified huge performance variances that can\nbe caused due to insufficient prompt. Here, we either do not tune prompts across models or\nmake minor adjustments based on the system prompts and delimiter tokens. This can lead to\nperformance variance in our results. Our findings and model comparison orders generalize across\nLiveCodeBench scenarios and mostly match the performance trends observed on HumanEval\nmaking this a less prominient issue.\nThis issue can be particularly observed open models on the code execution scenario with COT\nprompting. Interestingly, often the open models perform even worse in comparsion to the direct\ncode execution baseline. Note that we used same prompts for the closed models all of which show\nnoticable improvement from COT. While the used prompts might be sub-optimal, this highlights\nhow open-models perform worse against the closed models at performing chain-of-thought.\nProblem Domain. Programming is a vast domain and occurs in various forms such as program-\nming puzzles, competition programming, and real-world software development. Different domains\nmight have individual requirements, constraints, challenges, and difficulty levels. LiveCodeBench\ncurrently focuses on competition problems sourced from three platforms. This might not be repre-\nsentative of the “most general” notion of LLM programming capabilities. Particularly, real-world\nusage of LLMs is drawn upon open-ended and unconstrained problems rasied by users. We there-\nfore recommend using LiveCodeBench as a starting point for evaluating LLMs and further using\ndomain-specific evaluations to measure and compare LLMs in specific settings as required.\n8 Conclusion\nIn this work, we propose LiveCodeBench, a new benchmark for evaluating LLMs for code. Our\nbenchmark mitigates contamination issues in existing benchmarks by introducing live evaluations\nand emphasizing scenarios beyond code generation to account for the broader coding abilities of\nLLMs. LiveCodeBench is an extensible framework, that will keep on updating with new problems,\nscenarios, and models. Our evaluations reveal novel findings such as contamination detection and\npotential overfitting on HumanEval. We hope LiveCodeBench with serve to advance understand-\ning of current code LLMs and also guide future research in this area through our findings.\nAcknowledgements\nThis work was supported in part by NSF grants CCF:1900968, CCF:1908870 and by SKY Lab\nindustrial sponsors and affiliates Astronomer, Google, IBM, Intel, Lacework, Microsoft, Mohamed\nBin Zayed University of Artificial Intelligence, Nexla, Samsung SDS, Uber, and VMware. A. Gu is\nsupported by the NSF Graduate Research Fellowship under Grant No. 2141064. A. Solar-Lezama\nis supported by the NSF and Intel Corporation through NSF Grant CCF:2217064. Any opinions,\nfindings, conclusions, or recommendations in this paper are solely those of the authors and do not\nnecessarily reflect the position of the sponsors.\nFinally, we thank Manish Shetty, Wei-Lin Chiang, Jierui Li, Horace He, Federico Cassano, Pengcheng\n17",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 25,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 26,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 7,
+          "score": 0.849,
+          "text": "A Dataset\nA.1 License\nSimilar to Hendrycks et al. (2021), we scrape only the problem statements, ground-truth solutions,\nand test cases from competition websites – LeetCode, AtCoder, and CodeForces. Further, we\nonly scrape publicly visible portions of websites, avoiding any data collection that might be pay-\nwalled or require login or interaction with the website. Following, Hendrycks et al. (2021) we abide\nby Fair Use §107: “the fair use of a copyrighted work, including such use by ... scholarship, or\nresearch, is not an infringement of copyright”, where fair use is determined by “the purpose and\ncharacter of the use, including whether such use is of a commercial nature or is for nonprofit educa-\ntional purposes”, “the amount and substantiality of the portion used in relation to the copyrighted\nwork as a whole”, and “the effect of the use upon the potential market for or value of the copy-\nrighted work.” Finally, we use the collected problems for academic purposes only and in addition,\ndo not train on the collected problems.\nA.2 Generator Based Test Generation\nWe use GPT-4-Turbo to construct input generators. The following prompts (Figures 6 and 7)\nprovide one-shot prompt templates used for synthesizing random and adversarial input generators.\nThese generators define a function returns the arguments sampled in some distribution. These\ngenerators are then executed to construct inputs which validated on the collected correct programs.\nWe use separate generators for random and adversarial setting since often times programming\nproblems have corner cases which might not be captured by randomly sampling over the inputs.\nWe build 2 random input generators, 4 adversarial input generators and check if the sampled inputs\nwork for the correct programs. Finally, the number of collected inputs is thresholded to 100 for\nefficient grading (using random selection). We find that our generators can already function well\nbut future work can study the design space of constructing such generators.\nNote that for CodeForces, we construct the generators in semi-autonomous manner since only 9\nproblems were used.\nA.3 Code Execution\nThe code execution split of LiveCodeBench consists of 479 samples from 85 distinct problems. To\nencourage diversity in our benchmark while keeping our benchmark small and usable, we place a\nlimit of six samples for each given problem. These sample programs and corresponding test cases\nare chosen uniformly at random from all those passing the filter.\nFiltering Criteria: The specific filtering criteria are as follows:\n• Compile time: length of code is between 100 and 500 characters, no syntax errors, all necessary\nimports are included\n• Runtime: no floating point operations, true division, exp, other integer operations must have\nat least one argument ≤ 3, string and list operations must have at least one argument with\nlength≤ 3, finish running in 2 seconds, “reasonable” number of steps (roughly, under 1000\nPython bytecode operations).\n26",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 1,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 2,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 8,
+          "score": 0.8061,
+          "text": "1 Introduction\nCode has emerged as an important application area for LLMs, with a proliferation of code-specific\nmodels (Chen et al., 2021; Austin et al., 2021; Li et al., 2022; Zhong et al., 2022; Allal et al., 2023; Li\net al., 2023b; Roziere et al., 2023; Guo et al., 2024; Luo et al., 2023; Royzen et al., 2023; Wei et al.,\n2023b; Ridnik et al., 2024; Lozhkov et al., 2024) and their applications across various domains and\ntasks such as program repair (Zheng et al., 2024; Olausson et al., 2023), optimization (Madaan\net al., 2023a), test generation (Steenhoek et al., 2023), documentation generation (Luo et al., 2024),\ntool usage (Patil et al., 2023; Qin et al., 2024), SQL (Sun et al., 2023), and more. In contrast with\nthese rapid advancements, evaluations have remained relatively stagnant, and current benchmarks\nlike HumanEval, MBPP, and APPS may paint a skewed or misleading picture. Firstly, while\ncoding is a multi-faceted skill, these benchmarks only focus on natural language-to-code tasks,\nthus overlooking broader code-related capabilities. Moreover, these benchmarks may be subject to\npotential contamination or overfitting, as benchmark samples are present in the training datasets.\nMotivated by these shortcomings, we introduce LiveCodeBench, a holistic and contamination-free\nbenchmark for evaluating code capabilities. LiveCodeBench is built on the following principles:\n1. Live updates to prevent contamination. LLMs are trained on massive inscrutable cor-\npora, and current benchmarks suffer from the risk of data contamination as they could be\nincluded in those training datasets. While previous works have attempted decontamination\nusing both exact and fuzzy matches (Li et al., 2023b,d), it can be a non-trivial task (Team,\n2024) and can be evaded using simple strategies like rephrasing (Yang et al., 2023). Here, to\nFigure 1: LiveCodeBench comprises problems marked with release dates, allowing evaluations\nover different time windows. For newer models, we can detect and avoid contamination by only\nevaluating on time-windows after the model’s cutoff date. The figures demonstrate the performance\nof models on code generation and test output prediction LiveCodeBench scenarios with LeetCode\nproblems released across the months between May 2023 and February 2024. Notice that DeepSeek-\nInstruct and GPT-4-O perform considerably worse on problems released since September and\nNovember 2023 (their release and cutoff dates respectively!) – indicating potential contamination\nfor the earlier problems. Thus, while performing evaluations, we use the post-September/post-\nNovember time window (green) for fairly comparing these models.\n2",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 7,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 8,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 9,
+          "score": 0.8041,
+          "text": "Platform Total Count #Easy #Medium #Hard Average Tests\nLCB (May-end) 511 182 206 123 17.0\nLCB (Sep-end) 349 125 136 88 18.0\nAtCoder 267 99 91 77 15.6\nLeetCode 235 79 113 43 19.0\nCodeForces 9 4 2 3 11.1\nLCB-Easy 182 182 0 0 16.1\nLCB-Medium 206 0 206 0 17.4\nLCB-Hard 123 0 0 123 18.0\nTable 1: The statistics of problems collected in LiveCodeBench (LCB). We present the number of\nproblems, their difficulty distributions and the average number of tests per problem. We present\nthe results on the following subsets of LiveCodeBench (used throughout this manuscript) - (a)\nproblems in the May’23-May’24 and Sep’23-May’24 time windows, (b) problems sourced from the\nthree platforms, and (c) problems in the LCB-Easy, LCB-Medium, and LCB-Hard subsets.\ndifficult for even the best models 1. Further, we use these ratings to classify problems as Easy,\nMedium, and Hard for more granular model comparisons.\n3.2 Platform Specific Curation\nWe describe the curation process for each platform.\nLeetCode. We collect problems from all weekly and biweekly contests onLeetCode that have taken\nplace after April’23. For each problem, we collect the problems, public tests, and user solutions.\nThe platform also provides a difficulty label for each problem which we use to tag the problems\nas Easy, Medium, and Hard. Since LeetCode provides a starter code for each problem, we also\ncollect it and provide it to the LLM in the STDIN format. Since the hidden tests are not directly\navailable, we use our generator-based test input generation approach (Section A.2) and also collect\nthe auto grader failing tests for some of the recent problems.\nAtCoder. We collect problems from theabc (beginner round) contests on AtCoder that have taken\nplace after April’23. We deliberately avoid the more challenging arc and agc contests which are\ndesigned for more advanced Olympiad participants. The problems are assigned numeric difficulty\nratings, and we exclude abc problems with a rating of more than 500. We also use these numeric\nratings to tag the problems as Easy, Medium, and Hard. Specifically, we use the rating brackets\n[0− 200), [200− 400), and [400− 500] to perform the classification. AtCoder provides public and\nhidden tests for each problem which we directly use in the benchmark.\nCodeForces. We have collected problems from the Division 3 and Division 4 contests on Code-\nForces. Notably, we find that even with this filter, the problems are harder than the other two\nplatforms. CodeForces also provides difficulty ratings for the problems which we use to tag\nthe problems as Easy, Medium, and Hard using the rating brackets {800}, (800 − 1000], and\n(1000− 1300] respectively. Due to the higher difficulty, we only consider a small fraction of prob-\nlems from CodeForces and semi-automatically construct test case generators, as they do not\nprovide complete tests on the platform (long tests are truncated).\n1From our early explorations, we find CodeForces problems being considerably more difficult than AtCoder and\nLeetCode problems and thus focus primarily on the latter platforms.\n8",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 8,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 9,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 10,
+          "score": 0.5648,
+          "text": "Table 1 provides various statistics about the problems that we have collected for LiveCodeBench.\n3.3 Scenario-specific benchmark construction\nCode Generation and Self-Repair. We use the natural language problem statement as the\nproblem statement for these scenarios. For LeetCode, as noted above, an additional starter code\nis provided for the functional input format. For AtCoder and CodeForces problems, we use the\nstandard input format (similar to Hendrycks et al. (2021)). The collected or generated tests are\nthen used to evaluate the correctness of the generated programs. Our final dataset consists of 511\nproblem instances across the three platforms.\nCode Execution. We draw inspiration from the benchmark creation procedure used in Gu\net al. (2024). First, we collect a large pool of ∼ 2000 correct, human-submitted solutions from the\nLeetCode subset. However, many of these programs have multiple nested loops, complex numerical\ncomputations, and a large number of execution steps. Therefore, we apply compile-time and run-\ntime filters to ensure samples are reasonable, and we double-check this with a manual inspection.\nMore details on the filtering criteria and statistics of the dataset can be found in Appendix A.3.\nOur final dataset consists of 479 samples from 85 problems.\nTest Case Output Prediction. We use the natural language problem statement from the Leet-\nCode platform and the example test inputs to construct our test case output prediction dataset.\nSince the example test inputs in the problems are reasonable test cases for humans to reason about\nand understand the problems, they also serve as ideal test inputs for LLMs to process. Our final\ndataset consists of 442 problem instances from a total of 181 LeetCode problems.\n4 Experiment Setup\nWe describe the experimental setup in this section. First, we provide the common setup across the\nscenarios, followed by the scenario-specific setups in Section 4.1.\nModels. We evaluate 52 models across various sizes, ranging from 1 .3B to 70B, including base\nmodels, instruction models, and both open and closed models. Our experiments include models\nfrom different classes, such as GPTs (GPT-3.5-turbo, GPT-4, GPT-4-Turbo,GPT-4-O), Claudes\n(Claude-Ins-1, Claude-2, Claude-3s), Geminis(Gemini-Pro, Gemini-Flash), Mistral among closed-\naccess and LLaMa-3s(L3-Base-{7, 70}B, L3-Ins-{7, 70}B), DeepSeeks (DS-Base-{1.3, 6.7, 33}B,\nDS-Ins-{1.3, 6.7, 33}B), CodeLLaMas (CL-Ins-{7, 13, 34}B, CL-Base-{7, 13, 34}B), StarCoder2\n(SC2-Base-{3,7,15}B), CodeQwen among open. Additionally, we also include fine-tuned models\nPhind-34B from CL-Base-34B, and MagiCoders (MC-{6.7, 7}B) from CL-Base-7B and DS-Base-\n6.7B. See Appendix C.1 for a complete list of models and estimated cutoff dates.\nEvaluation Metrics. We use the Pass@1 (Kulal et al., 2019; Chen et al., 2021) metric for our\nevaluations. Specifically, we generate 10 candidate answers for each problem either using API or\nusing vLLM (Kwon et al., 2023). We use nucleus sampling with temperature 0 .2 and top p 0 .95\nand calculate the fraction of programs or answers that are correct. For the code generation and\nself-repair scenarios, we use tests to verify the correctness of the programs. For these scenarios,\nprograms must pass all tests to be considered correct. For the code execution scenario, we use\nan execution-based correctness metric between the generated output and the ground truth output.\nFor the test output prediction scenario, we parse the generated response to extract the answer and\n9",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 14,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 15,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 11,
+          "score": 0.5561,
+          "text": "6 Related Work\n6.1 Code Generation\nLanguage Models for Code Generation. Starting with Codex (Chen et al., 2021), there are\nover a dozen code LLMs. These include CodeT5 (Wang et al., 2021, 2023), CodeGen (Nijkamp\net al., 2022), SantaCoder (Allal et al., 2023), StarCoder (Li et al., 2023b), AlphaCode (Li et al.,\n2022), InCoder (Fried et al., 2022), and CodeGeeX (Zheng et al., 2023). As of May 2024, L3-\nBase and DeepSeek (Bi et al., 2024), StarCoder Lozhkov et al. (2024); Li et al. (2023b) and\nCodeLLaMa (Roziere et al., 2023) are the most popular open models. Many downstream models\nresulted from fine-tuning them on synthetically generated data, such as WizardCoder (Luo et al.,\n2023), MagiCoders (Wei et al., 2023b), and Phind-34B.\nCode Generation Benchmarks. Many benchmarks have been proposed to compare and evaluate\nthese models. These primarily focus on natural language to Python code generation: HumanEval\n(Chen et al., 2021), HumanEval+ (Liu et al., 2023b), APPS (Hendrycks et al., 2021), Code-\nContests (Li et al., 2022), MBPP (Austin et al., 2021), L2CEval (Ni et al., 2023). Their variants\nhave been proposed to cover more languages, (Wang et al., 2022a; Zheng et al., 2023; Cassano\net al., 2022; Athiwaratkun et al., 2022). Many benchmarks have focused on code generation in\nAPIs. Benchmarks like DS-1000 (Lai et al., 2023), ARCADE (Yin et al., 2022), NumpyEval (Zhang\net al., 2023b), and PandasEval (Jain et al., 2022) focus on data science APIs. Other benchmarks\nmeasure using broader APIs or general software engineering tasks, such as JuICe (Agashe et al.,\n2019), APIBench (Patil et al., 2023), RepoBench (Liu et al., 2023c), ODEX (Wang et al., 2022b),\nSWE-Bench (Jimenez et al., 2023), GoogleCodeRepo (Shrivastava et al., 2023), RepoEval (Zhang\net al., 2023a), and Cocomic-Data (Ding et al., 2022).\nA few benchmarks specifically measure competitive programming, such as APPS (Hendrycks et al.,\n2021), CodeContests (Li et al., 2022), CodeScope (Yan et al., 2023), xCodeEval (Khan et al., 2023),\nand LeetCode-Hard (Shinn et al., 2023), and TACO (Li et al., 2023c). Methods such as AlphaCode\n(Li et al., 2022), AlphaCode 2(Gemini Team et al., 2023), ALGO (Zhang et al., 2023d), Parsel\n(Zelikman et al., 2022), code cleaning (Jain et al., 2023), code explainations (Li et al., 2023a),\nanalogical reasoning (Yasunaga et al., 2023), and AlphaCodium (Ridnik et al., 2024) have been\npushing the boundaries of what is possible with LLMs in this domain. The biggest differentiating\nfactor between LiveCodeBench and these benchmarks is that our benchmark is continuously\nupdated, problem curation with balanced difficulty , higher tests and problem quality ,\nand contains more scenarios such as code repair, code execution, and test output prediction\ncapturing more facets for building agentic coding systems.\n6.2 Holistic Tasks\nLiveCodeBench considers self-repair, test output prediction, and code execution as additional\nscenarios. Below we note pertinent related work for these domains.\nCode Repair. (Chen et al., 2023; Olausson et al., 2023; Madaan et al., 2023b; Peng et al., 2023;\nZhang et al., 2023c) have investigated self-repair for existing code LLM benchmarks. Particularly,\nthese methods use error feedback for models to improve inspiring our code repair scenario.\nCode Execution. Code execution was first studied in Austin et al. (2021); Nye et al. (2021)\nLiveCodeBench’s execution scenario is particularly inspired by CRUXEval (Gu et al., 2024), a\n15",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        }
+      ]
+    }
+  ],
+  "schema": "rag-evaluation-results",
+  "schema_version": 3,
+  "summary": {
+    "failed": 0,
+    "succeeded": 1,
+    "total": 1
+  }
+}

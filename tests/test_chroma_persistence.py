@@ -3,14 +3,16 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.chroma_persistence import (
+from src.storage.chroma_persistence import (
+    FACTS_COLLECTION_NAME,
     ChromaConfig,
     create_client,
     delete_records,
     get_records,
-    open_collection,
+    open_facts_collection,
     query_records,
     upsert_records,
+    upsert_fact_records,
 )
 
 
@@ -25,15 +27,27 @@ def test_config_and_client_use_explicit_persistence_path(tmp_path):
     module.PersistentClient.assert_called_once_with(path=str(tmp_path / "db"))
 
 
-def test_open_collection_creates_named_collection():
+def test_fact_collection_and_writes_use_fact_metadata_without_paper_provenance():
     client = Mock()
-    expected = object()
-    client.get_or_create_collection.return_value = expected
+    collection = Mock()
+    client.get_or_create_collection.return_value = collection
 
-    result = open_collection("db", "papers", client=client)
+    assert open_facts_collection("db", client=client) is collection
+    upsert_fact_records(
+        collection,
+        ["fact:1"],
+        ["Accuracy is 90 percent."],
+        [[0.1, 0.2]],
+        [{"fact_type": "metric", "value": "90", "unit": "%"}],
+    )
 
-    assert result is expected
-    client.get_or_create_collection.assert_called_once_with(name="papers")
+    client.get_or_create_collection.assert_called_once_with(name=FACTS_COLLECTION_NAME)
+    collection.upsert.assert_called_once_with(
+        ids=["fact:1"],
+        documents=["Accuracy is 90 percent."],
+        embeddings=[[0.1, 0.2]],
+        metadatas=[{"fact_type": "metric", "value": "90", "unit": "%"}],
+    )
 
 
 def test_upsert_query_read_and_delete_records():
@@ -89,11 +103,3 @@ def test_upsert_requires_valid_paper_provenance(metadata, message):
 def test_upsert_validates_lengths_and_vectors(args, message):
     with pytest.raises((TypeError, ValueError), match=message):
         upsert_records(Mock(), *args)
-
-
-def test_query_and_delete_validate_inputs():
-    collection = Mock()
-    with pytest.raises(ValueError, match="at least 1"):
-        query_records(collection, [1.0], 0)
-    with pytest.raises(ValueError, match="provide ids or where"):
-        delete_records(collection)

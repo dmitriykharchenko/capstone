@@ -1,20 +1,20 @@
 """Pull-driven, ephemeral indexing and evaluation graphs.
 
-Each invocation advances to exactly one public event. There is no graph worker
-prefetch, retry, checkpoint, or replay across stdout delivery boundaries. The
-existing indexer owns its bounded worker pool; the evaluator stays sequential.
+Each invocation advances to exactly one public event without worker prefetch.
+Evaluation checkpoints are run-local, with deferred rounds driven only by the
+next caller pull. The existing indexer retains its bounded worker pool.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from ..evaluation_runner import JUDGE_CRITERIA, validate_test_cases
-from ..paper_search import EVALUATION_RETRIEVAL_STRATEGIES
-from .runtime import CommandRuntimeError
+from ..evaluation.runner import JUDGE_CRITERIA, _raise_if_terminal, validate_test_cases
+from ..evaluation.metrics import aggregate_metrics
+from ..retrieval.paper_search import EVALUATION_RETRIEVAL_STRATEGIES
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -34,6 +34,17 @@ class StreamState(TypedDict, total=False):
     succeeded: int
     failed: int
     score_totals: dict[str, float]
+    retry_round: int
+    pending: list[int]
+    position: int
+    results: dict[int, dict[str, Any]]
+
+
+class CommandRuntimeError(RuntimeError):
+    """Fixed public failure for stream graph infrastructure."""
+
+    def __init__(self) -> None:
+        super().__init__("Command runtime failed. Check backend logs and retry.")
 
 
 class _OperationFailure(Exception):
@@ -187,6 +198,7 @@ class EvaluationInvocation:
     request: dict[str, Any]
     evaluator: Any
     build_runner: Callable[[Any], Any]
+    checkpoints: dict[int, Any] = field(default_factory=dict)
 
 
 def _evaluation_prepare(
@@ -221,6 +233,10 @@ def _evaluation_prepare(
         "succeeded": 0,
         "failed": 0,
         "score_totals": {criterion: 0.0 for criterion in JUDGE_CRITERIA},
+        "retry_round": 0,
+        "pending": list(range(len(cases))),
+        "position": 0,
+        "results": {},
         "event": {
             "event": "run_start",
             "retrieval_type": retrieval_type,
@@ -230,13 +246,25 @@ def _evaluation_prepare(
 
 
 def _evaluation_start(state: StreamState) -> dict:
-    case_input = state["cases"][state["completed"]].as_dict()
+    index = state["pending"][state["position"]]
+    case_input = state["cases"][index].as_dict()
+    if state["retry_round"]:
+        return {
+            "phase": "case_result",
+            "case_input": case_input,
+            "event": {
+                "event": "case_retry_start",
+                "case_index": index + 1,
+                "total": state["total"],
+                "retry_round": state["retry_round"],
+            },
+        }
     return {
         "phase": "case_result",
         "case_input": case_input,
         "event": {
             "event": "case_start",
-            "case_index": state["completed"] + 1,
+            "case_index": index + 1,
             "total": state["total"],
             "retrieval_type": state["retrieval_type"],
             "input": case_input,
@@ -249,13 +277,27 @@ def _evaluation_result(
 ) -> dict:
     from . import commands
 
-    case_index = state["completed"] + 1
+    index = state["pending"][state["position"]]
+    case_index = index + 1
     case_input = state["case_input"]
     retrieval_type = state["retrieval_type"]
+    context = runtime.context
     try:
-        result = runtime.context.evaluator.run([case_input], retrieval_type)[0]
+        if callable(getattr(context.evaluator, "start_case", None)) and callable(
+            getattr(context.evaluator, "resume_case", None)
+        ):
+            if index not in context.checkpoints:
+                context.checkpoints[index] = context.evaluator.start_case(
+                    case_index, state["cases"][index], retrieval_type
+                )
+            result = context.evaluator.resume_case(
+                context.checkpoints[index], state["retry_round"]
+            )
+        else:
+            result = context.evaluator.run([case_input], retrieval_type)[0]
         result = {**result, "case_index": case_index}
-    except Exception:  # noqa: BLE001 - preserve per-case continuation
+    except Exception as exc:  # noqa: BLE001 - preserve per-case continuation
+        _raise_if_terminal(exc)
         result = {
             "case_index": case_index,
             "input": case_input,
@@ -269,28 +311,69 @@ def _evaluation_result(
             },
         }
     result = commands._sanitize_evaluation_result(result)
-    scores = result.get("judge_scores")
-    succeeded, failed = state["succeeded"], state["failed"]
-    totals = dict(state["score_totals"])
-    if result.get("error") is None and isinstance(scores, Mapping):
-        succeeded += 1
-        for criterion in JUDGE_CRITERIA:
-            totals[criterion] += float(scores[criterion]["score"])
-        event = "case_success"
-    else:
-        failed += 1
-        event = "case_failure"
+    results = {**state["results"], index: result}
+    successful = [
+        item
+        for item in results.values()
+        if item.get("error") is None and isinstance(item.get("judge_scores"), Mapping)
+    ]
+    succeeded = len(successful)
+    failed = len(results) - succeeded
+    totals = {
+        criterion: sum(
+            float(item["judge_scores"][criterion]["score"]) for item in successful
+        )
+        for criterion in JUDGE_CRITERIA
+    }
+    event = "case_success" if result.get("error") is None else "case_failure"
+    completed = len(results)
+    position = state["position"] + 1
+    retryable_failures = [
+        item
+        for item in results.values()
+        if item.get("error") is not None
+    ]
+    more_rounds = bool(retryable_failures) and state["retry_round"] < 2
+    phase = (
+        "case_start"
+        if position < len(state["pending"])
+        else ("retry_round" if more_rounds else "complete")
+    )
     return {
-        "phase": "complete" if case_index == state["total"] else "case_start",
-        "completed": case_index,
+        "phase": phase,
+        "completed": completed,
+        "position": position,
+        "results": results,
         "succeeded": succeeded,
         "failed": failed,
         "score_totals": totals,
         "event": {
-            "event": event,
-            "completed": case_index,
+            "event": "case_retry_result" if state["retry_round"] else event,
+            **({"retry_round": state["retry_round"]} if state["retry_round"] else {}),
+            "completed": completed,
             "total": state["total"],
             "result": result,
+        },
+    }
+
+
+def _evaluation_retry_round(state: StreamState) -> dict:
+    pending = [
+        index
+        for index in range(state["total"])
+        if state["results"][index].get("error") is not None
+    ]
+    retry_round = state["retry_round"] + 1
+    return {
+        "phase": "case_start",
+        "retry_round": retry_round,
+        "pending": pending,
+        "position": 0,
+        "event": {
+            "event": "retry_round_start",
+            "retry_round": retry_round,
+            "total": state["total"],
+            "pending": len(pending),
         },
     }
 
@@ -305,6 +388,7 @@ def _evaluation_complete(state: StreamState) -> dict:
             "total": state["total"],
             "succeeded": state["succeeded"],
             "failed": state["failed"],
+            "aggregate_metrics": aggregate_metrics(list(state["results"].values())),
             "aggregate_scores": {
                 criterion: total / state["succeeded"] if state["succeeded"] else None
                 for criterion, total in state["score_totals"].items()
@@ -322,6 +406,7 @@ def get_evaluation_graph() -> CompiledStateGraph:
         "prepare": _evaluation_prepare,
         "case_start": _evaluation_start,
         "case_result": _evaluation_result,
+        "retry_round": _evaluation_retry_round,
         "complete": _evaluation_complete,
     }
     for name, node in nodes.items():

@@ -3,12 +3,6 @@ import { store } from "../../store";
 export const selectEvaluationRunning = store.createSelector(
   (state) => state.evaluation.running,
 );
-export const selectEvaluationRetrievalType = store.createSelector(
-  (state) => state.evaluation.retrievalType,
-);
-export const selectEvaluationTestCases = store.createSelector(
-  (state) => state.evaluation.testCases,
-);
 export const selectEvaluationTotal = store.createSelector(
   (state) => state.evaluation.total,
 );
@@ -33,3 +27,6 @@ export const selectEvaluationAggregateScores = store.createSelector(
 export const selectEvaluationError = store.createSelector(
   (state) => state.evaluation.error,
 );
+export const selectEvaluationRetryRound = store.createSelector((state) => state.evaluation.retryRound);
+export const selectEvaluationRetryPending = store.createSelector((state) => state.evaluation.retryPending);
+export const selectEvaluationRetryCompleted = store.createSelector((state) => state.evaluation.retryCompleted);

@@ -49,7 +49,7 @@
       navigateTo({
         name: "chat",
         sessionId: match.session_id,
-        exchangeId: String(match.exchange_id),
+        exchangeId: match.exchange_id,
       }),
     );
   }
@@ -63,14 +63,17 @@
 </script>
 
 <div class="relative flex h-full min-h-0 flex-col gap-3 bg-transparent">
-  <form class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-transparent px-4 py-3 backdrop-blur-md" onsubmit={submit}>
+  <form
+    class="absolute inset-x-0 top-0 z-20 flex flex-wrap items-center gap-2 bg-transparent px-4 py-3 backdrop-blur-md sm:flex-nowrap"
+    onsubmit={submit}
+  >
     <Input
-      class="flex-1"
+      class="min-w-0 w-full sm:w-auto sm:flex-1"
       placeholder="Search chat history…"
       bind:value={query}
       disabled={$searching}
     />
-    <Button type="submit" size="lg" disabled={$searching || !query.trim()}>
+    <Button class="shrink-0" type="submit" size="lg" disabled={$searching || !query.trim()}>
       {#if $searching}
         <LoaderCircle class="size-4 animate-spin" />
         Searching…
@@ -79,11 +82,11 @@
       {/if}
     </Button>
     {#if $activeRoute.name === "history" && $activeRoute.query}
-      <Button type="button" variant="ghost" size="lg" onclick={clearResults}>Clear</Button>
+      <Button class="shrink-0" type="button" variant="ghost" size="lg" onclick={clearResults}>Clear</Button>
     {/if}
   </form>
 
-  <div class="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-14">
+  <div class="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-28 sm:pt-14">
     {#if $error}
       <p class="text-sm text-destructive">{$error}</p>
     {/if}

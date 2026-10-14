@@ -9,10 +9,10 @@ from dataclasses import replace
 import json
 import multiprocessing
 
-from ..orchestration_runtime import specialist_steps
-from ..orchestration_store import SQLiteOrchestrationStore
-from ..orchestration_tools import OrchestrationTools
-from ..orchestration_wire import ERROR, validate_type
+from ..orchestration.runtime import specialist_steps
+from ..orchestration.store import SQLiteOrchestrationStore
+from ..orchestration.tools import OrchestrationTools
+from ..orchestration.wire import ERROR, validate_type
 
 
 class StructuredModelAdapter:
@@ -96,7 +96,7 @@ class DisplayRetriever:
 def production_model(config):
     if not config.has_api_key:
         return OfflineStructuredModel()
-    from ..agent_loop import ChatOpenAIConfig, _create_chat_openai
+    from ..chat.agent_loop import ChatOpenAIConfig, _create_chat_openai
 
     return StructuredModelAdapter(
         _create_chat_openai(
@@ -119,7 +119,10 @@ def _worker(pipe, config, dispatch):
             args = (scope.run_id, scope.session_id, scope.graph_version)
             retriever = DisplayRetriever(store, args, build_paper_search_index(config))
             tools = OrchestrationTools(
-                store, scope, retriever, limits=dispatch.tools.limits
+                store,
+                scope,
+                retriever,
+                limits=dispatch.tools.limits,
             )
             steps = specialist_steps(
                 replace(dispatch, tools=tools), production_model(config)

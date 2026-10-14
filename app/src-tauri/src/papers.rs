@@ -2,22 +2,94 @@
 //!
 //! Ported from the retired Python `papers.py`: a paper's id is its filename
 //! stem, which must be a safe token so it can never escape the papers
-//! directory when resolved. Titles are derived heuristically from filenames;
-//! no PDF parsing is performed.
+//! directory when resolved. Indexed title, author, and topic metadata is loaded
+//! read-only through the Python bridge; no PDF parsing is performed.
 
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::CommandError;
+use crate::{bridge, project_root, run_blocking};
+
+fn repository() -> PaperRepository {
+    PaperRepository::new(papers_directory(&project_root()))
+}
+
+#[tauri::command]
+pub(crate) async fn list_papers() -> Result<Vec<PaperInfo>, CommandError> {
+    let root = project_root();
+    run_blocking(move || {
+        let mut papers = repository().list_papers()?;
+        let paper_ids = papers.iter().map(|paper| &paper.id).collect::<Vec<_>>();
+        let request = serde_json::json!({
+            "command": "paper_metadata",
+            "paper_ids": paper_ids,
+        });
+        if let Ok(response) = bridge::call(&root, request) {
+            if let Ok(metadata) = serde_json::from_value::<PaperMetadataResponse>(response) {
+                merge_paper_metadata(&mut papers, metadata);
+            }
+        }
+        Ok(papers)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn read_pdf(paper_id: String) -> Result<PdfData, CommandError> {
+    run_blocking(move || repository().read_pdf(&paper_id)).await
+}
+
+#[tauri::command]
+pub(crate) async fn search_papers(
+    query: String,
+    limit: Option<u32>,
+) -> Result<Value, CommandError> {
+    let root = project_root();
+    run_blocking(move || {
+        let mut request = serde_json::json!({ "command": "search_papers", "query": query });
+        if let Some(limit) = limit {
+            request["limit"] = serde_json::json!(limit);
+        }
+        bridge::call(&root, request)
+    })
+    .await
+}
 
 /// Metadata describing one available paper.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PaperInfo {
     pub id: String,
     pub filename: String,
-    pub title: String,
+    pub title: Option<String>,
+    pub authors: Vec<String>,
+    pub topics: Vec<String>,
+    pub metadata_status: PaperMetadataStatus,
     pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaperMetadataStatus {
+    Available,
+    Missing,
+    Unavailable,
+}
+
+#[derive(Debug, Deserialize)]
+struct PaperMetadataResponse {
+    available: bool,
+    papers: Vec<IndexedPaperMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IndexedPaperMetadata {
+    paper_id: String,
+    title: String,
+    authors: Vec<String>,
+    topics: Vec<String>,
 }
 
 /// PDF bytes plus the metadata a webview needs to render them inline.
@@ -74,31 +146,17 @@ impl PaperRepository {
                 .to_string();
             let size_bytes = std::fs::metadata(&path)?.len();
             papers.push(PaperInfo {
-                title: derive_title(&stem),
                 id: stem,
                 filename,
+                title: None,
+                authors: Vec::new(),
+                topics: Vec::new(),
+                metadata_status: PaperMetadataStatus::Unavailable,
                 size_bytes,
             });
         }
         papers.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(papers)
-    }
-
-    /// Return metadata for `paper_id` or a `PaperNotFound` error.
-    pub fn get_paper(&self, paper_id: &str) -> Result<PaperInfo, CommandError> {
-        let path = self.resolve_pdf_path(paper_id)?;
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let size_bytes = std::fs::metadata(&path)?.len();
-        Ok(PaperInfo {
-            id: paper_id.to_string(),
-            filename,
-            title: derive_title(paper_id),
-            size_bytes,
-        })
     }
 
     /// Read the PDF bytes for `paper_id` for inline rendering in the webview.
@@ -138,6 +196,24 @@ impl PaperRepository {
     }
 }
 
+fn merge_paper_metadata(papers: &mut [PaperInfo], response: PaperMetadataResponse) {
+    if !response.available {
+        return;
+    }
+    for paper in papers.iter_mut() {
+        paper.metadata_status = PaperMetadataStatus::Missing;
+    }
+    for metadata in response.papers {
+        let Some(paper) = papers.iter_mut().find(|paper| paper.id == metadata.paper_id) else {
+            continue;
+        };
+        paper.title = Some(metadata.title);
+        paper.authors = metadata.authors;
+        paper.topics = metadata.topics;
+        paper.metadata_status = PaperMetadataStatus::Available;
+    }
+}
+
 /// Match the Python `_SAFE_ID` regex `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
 fn is_safe_id(id: &str) -> bool {
     let mut chars = id.chars();
@@ -149,30 +225,43 @@ fn is_safe_id(id: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
-/// Produce a human-readable title from a filename stem.
-fn derive_title(paper_id: &str) -> String {
-    let lowered = paper_id.to_ascii_lowercase();
-    let stripped = strip_dblp_prefix(paper_id, &lowered);
-    let cleaned = stripped.replace(['_', '-'], " ");
-    let trimmed = cleaned.trim();
-    if trimmed.is_empty() {
-        paper_id.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Strip a leading `DBLP[_-](conf|journals)[_-]` prefix, case-insensitively.
-fn strip_dblp_prefix(original: &str, lowered: &str) -> String {
-    for kind in ["conf", "journals"] {
-        for sep_a in ["_", "-", ""] {
-            for sep_b in ["_", "-"] {
-                let prefix = format!("dblp{sep_a}{kind}{sep_b}");
-                if lowered.starts_with(&prefix) {
-                    return original[prefix.len()..].to_string();
-                }
-            }
+    #[test]
+    fn merges_real_metadata_and_marks_unindexed_papers_missing() {
+        let mut papers = vec![paper("paper-a"), paper("paper-b")];
+        merge_paper_metadata(
+            &mut papers,
+            PaperMetadataResponse {
+                available: true,
+                papers: vec![IndexedPaperMetadata {
+                    paper_id: "paper-a".to_string(),
+                    title: "Stored title".to_string(),
+                    authors: vec!["Ada".to_string()],
+                    topics: vec!["Verification".to_string()],
+                }],
+            },
+        );
+
+        assert_eq!(papers[0].title.as_deref(), Some("Stored title"));
+        assert_eq!(papers[0].authors, ["Ada"]);
+        assert_eq!(papers[0].topics, ["Verification"]);
+        assert_eq!(papers[0].metadata_status, PaperMetadataStatus::Available);
+        assert_eq!(papers[1].title, None);
+        assert_eq!(papers[1].metadata_status, PaperMetadataStatus::Missing);
+    }
+
+    fn paper(id: &str) -> PaperInfo {
+        PaperInfo {
+            id: id.to_string(),
+            filename: format!("{id}.pdf"),
+            title: None,
+            authors: Vec::new(),
+            topics: Vec::new(),
+            metadata_status: PaperMetadataStatus::Unavailable,
+            size_bytes: 1,
         }
     }
-    original.to_string()
 }

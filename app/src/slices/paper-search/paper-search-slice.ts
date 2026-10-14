@@ -39,7 +39,7 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
         action: StoreAction<[string, PaperMatch[], boolean, string | null]>,
       ) => {
         const id = paperSearchId(action.payload[0]);
-        const collections = upsertItem(state.collections, {
+        const searchResultsCollection = upsertItem(state.searchResultsCollection, {
           id,
           results: action.payload[1],
         });
@@ -47,7 +47,7 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
           ...state,
           searching: false,
           hasSearched: true,
-          collections,
+          searchResultsCollection,
           enabled: action.payload[2],
           reason: action.payload[3],
         };
@@ -64,5 +64,5 @@ export const paperSearchReducer: StoreReducerFunction<PaperSearchState> =
     )
     .with(clearPaperSearch, (state: PaperSearchState) => ({
       ...initialPaperSearchState,
-      collections: state.collections,
+      searchResultsCollection: state.searchResultsCollection,
     }));

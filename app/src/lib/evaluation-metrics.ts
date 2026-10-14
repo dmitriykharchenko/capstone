@@ -37,11 +37,33 @@ function fields(value: unknown, required: string[], nullable: string[] = [], dec
   return Object.fromEntries(entries);
 }
 
+function tokenMetrics(value: unknown) {
+  const source = object(value);
+  const tokens = fields(source, tokenFields, ["input", "output", "total"]);
+  if (!source || !tokens) return null;
+  const cached = source.cached_input;
+  if (cached === undefined) return tokens;
+  if (cached === null) return { ...tokens, cached_input: null };
+  return number(cached) && Number.isSafeInteger(cached)
+    && (tokens.input === null || cached <= tokens.input)
+    ? { ...tokens, cached_input: cached } : null;
+}
+
 function usage(value: Record<string, unknown>) {
-  const tokens = fields(value.tokens, tokenFields, ["input", "output", "total"]);
+  const tokens = tokenMetrics(value.tokens);
   const cost = fields(value.cost, costFields, ["estimated_usd"], ["known_usd", "estimated_usd"]);
   const context = fields(value.context, contextFields);
   return tokens && cost && context ? { tokens, cost, context } : null;
+}
+
+function workflowMetrics(value: unknown) {
+  const source = object(value);
+  const workflow = fields(source, ["exchanges", "tool_calls"]);
+  if (!source || !workflow) return null;
+  const reused = source.reused_searches;
+  if (reused === undefined) return workflow;
+  return number(reused) && Number.isSafeInteger(reused)
+    ? { ...workflow, reused_searches: reused } : null;
 }
 
 // Copy numeric contract fields only; legacy/unsupported metrics remain unavailable.
@@ -51,9 +73,15 @@ export function sanitizeEvaluationMetrics(value: unknown): EvaluationMetrics | n
   const common = usage(source);
   const latency_ms = fields(source.latency_ms, ["total", "rag", "judge"], [], ["total", "rag", "judge"]);
   const model_calls = fields(source.model_calls, ["total", "rag", "judge", "embedding"]);
-  const workflow = fields(source.workflow, ["exchanges", "tool_calls", "reused_searches"]);
+  const workflow = workflowMetrics(source.workflow);
   const pricingFields = ["input_usd_per_million", "output_usd_per_million", "embedding_usd_per_million"];
-  const pricing = fields(source.pricing, [], pricingFields, pricingFields);
+  const basePricing = fields(source.pricing, [], pricingFields, pricingFields);
+  const pricingSource = object(source.pricing);
+  const cachedRate = pricingSource?.cached_input_usd_per_million;
+  const pricing = !basePricing || !pricingSource ? null
+    : cachedRate === undefined ? basePricing
+    : cachedRate === null || number(cachedRate)
+      ? { ...basePricing, cached_input_usd_per_million: cachedRate } : null;
   const rawStages = object(source.stages);
   if (!common || !latency_ms || !model_calls || !workflow || !pricing || !rawStages) return null;
   const stages: Record<string, unknown> = Object.create(null);
@@ -95,6 +123,7 @@ export function evaluationMetricTotals(results: ReadonlyArray<EvaluationCaseResu
     exchanges: sum((m) => m.workflow.exchanges),
     toolCalls: sum((m) => m.workflow.tool_calls),
     tokens: sum((m) => m.tokens.total, (m) => m.tokens.known_total),
+    cachedTokens: sum((m) => m.tokens.cached_input ?? null),
     cost: sum((m) => m.cost.estimated_usd, (m) => m.cost.known_usd),
     chunks: sum((m) => m.context.chunks),
     characters: sum((m) => m.context.characters),

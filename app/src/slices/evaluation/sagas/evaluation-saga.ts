@@ -1,5 +1,6 @@
 import { call, put, take, takeLeading } from "typed-redux-saga";
-import { END, eventChannel, type EventChannel } from "redux-saga";
+import { END, buffers, eventChannel, type EventChannel } from "redux-saga";
+import { evaluationTransportError, sanitizeEvaluationResult } from "../../../lib/evaluation-diagnostics";
 import {
   api,
   type EvaluationStreamEvent,
@@ -11,6 +12,7 @@ import {
   evaluationCaseSucceeded,
   evaluationCompleted,
   evaluationStarted,
+  evaluationRetryRoundStarted,
   evaluationTransportFailed,
   runEvaluation,
 } from "../evaluation-slice";
@@ -23,9 +25,6 @@ const evaluationServices: EvaluationServices = {
   runEvaluation: api.runEvaluation,
 };
 
-const EVALUATION_TRANSPORT_ERROR =
-  "Evaluation transport failed. Check the backend logs and retry.";
-
 function createEvaluationChannel(
   testCases: EvaluationTestCase[],
   services: EvaluationServices,
@@ -34,13 +33,14 @@ function createEvaluationChannel(
     let terminalEventSeen = false;
     services
       .runEvaluation(testCases, (event) => {
+        if (terminalEventSeen) return;
         terminalEventSeen ||= event.event === "complete" || event.event === "error";
-        emit(event);
+        emit("result" in event ? { ...event, result: sanitizeEvaluationResult(event.result) } : event);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!terminalEventSeen) {
           terminalEventSeen = true;
-          emit({ event: "error", message: EVALUATION_TRANSPORT_ERROR });
+          emit({ event: "error", message: String(error) || evaluationTransportError });
         }
       })
       .finally(() => {
@@ -53,7 +53,7 @@ function createEvaluationChannel(
         emit(END);
       });
     return () => {};
-  });
+  }, buffers.expanding());
 }
 
 export function* evaluationSaga(services: EvaluationServices = evaluationServices) {
@@ -71,6 +71,12 @@ export function* evaluationSaga(services: EvaluationServices = evaluationService
           yield* put(evaluationCaseSucceeded(event.result, event.completed, event.total));
         } else if (event.event === "caseFailure") {
           yield* put(evaluationCaseFailed(event.result, event.completed, event.total));
+        } else if (event.event === "retryRoundStart") {
+          yield* put(evaluationRetryRoundStarted(event.retryRound, event.pending));
+        } else if (event.event === "caseRetryStart") {
+          yield* put(evaluationCaseStarted(event.caseIndex));
+        } else if (event.event === "caseRetryResult") {
+          yield* put((event.result.error ? evaluationCaseFailed : evaluationCaseSucceeded)(event.result, event.completed, event.total));
         } else if (event.event === "complete") {
           yield* put(
             evaluationCompleted(
@@ -88,7 +94,7 @@ export function* evaluationSaga(services: EvaluationServices = evaluationService
         }
       }
     } catch {
-      yield* put(evaluationTransportFailed(EVALUATION_TRANSPORT_ERROR));
+      yield* put(evaluationTransportFailed(evaluationTransportError));
     } finally {
       yield* call([channel, channel.close]);
     }

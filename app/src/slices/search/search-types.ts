@@ -17,7 +17,7 @@ export interface SearchCollection {
 
 export interface SearchState {
   query: string;
-  collections: Collection<SearchCollection, "id">;
+  searchResultsCollection: Collection<SearchCollection, "id">;
   searching: boolean;
   enabled: boolean;
   reason: string | null;
@@ -27,7 +27,7 @@ export interface SearchState {
 
 export const initialSearchState: SearchState = {
   query: "",
-  collections: createCollection<SearchCollection, "id">("id"),
+  searchResultsCollection: createCollection<SearchCollection, "id">("id"),
   searching: false,
   enabled: true,
   reason: null,

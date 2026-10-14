@@ -1,0 +1,645 @@
+{
+  "aggregate_metrics": {
+    "cases_measured": 1,
+    "cases_total": 1,
+    "context": {
+      "characters": 77141,
+      "chunks": 15,
+      "duplicate_chunks": 0,
+      "max_characters": 26450,
+      "max_chunks": 5,
+      "max_prompt_characters": 26873,
+      "prompt_characters": 80837,
+      "unique_chunks": 11,
+      "utf8_bytes": 77267
+    },
+    "cost": {
+      "estimated_usd": 0.028733420000000003,
+      "known_usd": 0.028733420000000003,
+      "priced_calls": 10,
+      "provider_reported_calls": 10,
+      "rate_estimated_calls": 0
+    },
+    "latency_ms": {
+      "judge": 8031.124000001,
+      "mean": 17779.764788996545,
+      "p50": 17779.764788996545,
+      "p95": 17779.764788996545,
+      "rag": 9748.640788995544,
+      "total": 17779.764788996545
+    },
+    "model_calls": {
+      "embedding": 3,
+      "judge": 1,
+      "rag": 6,
+      "total": 10
+    },
+    "performance": {
+      "cases_checked": 1,
+      "fail": 0,
+      "failed_checks": {},
+      "incomplete": 0,
+      "pass": 1
+    },
+    "tokens": {
+      "cached_input": null,
+      "input": 30772,
+      "known_input": 30772,
+      "known_output": 1264,
+      "known_total": 32036,
+      "output": 1264,
+      "reported_calls": 10,
+      "total": 32036
+    },
+    "workflow": {
+      "exchanges": 6,
+      "tool_calls": 3
+    }
+  },
+  "aggregate_scores": {
+    "completeness": 4.0,
+    "context_precision": 2.0,
+    "context_recall": 3.0,
+    "context_utilization": 5.0,
+    "hallucination_rate": 4.0,
+    "relevant_chunk_ranking": 3.0,
+    "semantic_similarity": 5.0
+  },
+  "input_cases": [
+    {
+      "grading_notes": "Retrieval augmented generation",
+      "question": "What is RAG?",
+      "sources": []
+    }
+  ],
+  "metadata": {
+    "retrieval_identifier": "multihop-hybrid",
+    "retrieval_strategy": "hybrid"
+  },
+  "results": [
+    {
+      "attempt_history": [],
+      "case_index": 1,
+      "error": null,
+      "generated_answer": "RAG stands for **Retrieval-Augmented Generation**.\n\nIt is an AI method where a system first **retrieves relevant information** from a knowledge source, then uses that retrieved context to **generate a better answer**. In practice, this helps ground the model in external evidence, improving accuracy and reducing hallucinations.",
+      "input": {
+        "grading_notes": "Retrieval augmented generation",
+        "question": "What is RAG?",
+        "sources": []
+      },
+      "judge_scores": {
+        "completeness": {
+          "confidence": "high",
+          "flags": [],
+          "missing_elements": [],
+          "reasoning": "The reference answer is minimal and the generated answer covers it exactly by stating \"RAG stands for Retrieval-Augmented Generation.\" It also adds a brief functional description, so there is no missing key fact relative to the reference answer.",
+          "score": 4
+        },
+        "context_precision": {
+          "confidence": "high",
+          "flags": [
+            "GROUND_TRUTH_RELEVANT not provided; relevance judged manually",
+            "Many retrieved chunks are off-topic for the definition question"
+          ],
+          "reasoning": "Only some retrieved chunks are directly relevant to the query \"What is RAG?\" The chunks about \"Limits of Retrieval-Augmented Generation (RAG)\" and \"Retrieval Augmented Generation (RAG)-based approaches\" are relevant, but many other chunks are about quantum-program analysis and do not define RAG generally. Since the relevance had to be judged from the chunks themselves, this is my own assessment rather than verified ground truth.",
+          "score": 2
+        },
+        "context_recall": {
+          "confidence": "medium",
+          "flags": [
+            "Cannot fully determine completeness of the needed definition from the retrieved context alone",
+            "Context is domain-specific (software/code RAG) rather than general"
+          ],
+          "reasoning": "The retrieved context does contain the key idea that RAG involves retrieval plus generation, e.g. \"First, the retriever retrieves relevant functions. Then, the generator leverages the retrieval to improve generation.\" However, the user asked a broad definitional question, and the chunks mostly discuss code-domain RAG rather than a general definition, so the complete information needed for a full answer is only partially present.",
+          "score": 3
+        },
+        "context_utilization": {
+          "chunks_used": [
+            "Chunk 1: \"First, the retriever retrieves relevant functions. Then, the generator leverages the retrieval to improve generation.\"",
+            "Chunk 2/5/6: passages describing \"Limits of Retrieval-Augmented Generation (RAG)\" and retrieval + generation"
+          ],
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The generated answer directly uses the retrieved explanation that the system \"first retrieves relevant information\" and then uses it to \"generate a better answer.\" This closely matches the wording from the retrieved chunks about the retriever retrieving relevant functions and the generator leveraging the retrieval.",
+          "score": 5
+        },
+        "hallucination_rate": {
+          "confidence": "medium",
+          "flags": [
+            "Some explanatory wording is more general than the retrieved passages",
+            "No clearly unsupported or contradictory claims found"
+          ],
+          "reasoning": "The claim that RAG means Retrieval-Augmented Generation is supported by the retrieved chunks. The extra statement that it \"helps ground the model in external evidence, improving accuracy and reducing hallucinations\" is consistent with the context's discussion of grounding and reducing hallucinations, but that exact general claim is not stated verbatim in the retrieved chunks.",
+          "score": 4,
+          "unsupported_claims": [
+            "\"In practice, this helps ground the model in external evidence, improving accuracy and reducing hallucinations.\""
+          ]
+        },
+        "relevant_chunk_ranking": {
+          "confidence": "high",
+          "flags": [
+            "Relevant chunks are mixed with several unrelated chunks",
+            "Ranked relevance judged from the query and chunk text, not ground truth"
+          ],
+          "reasoning": "The most relevant chunks are ranked near the top, especially chunk 1 and chunk 2, which explicitly describe retrieval followed by generation. Later chunks (7-11) also mention RAG but are farther down and more specialized, so the ranking is decent but not perfect.",
+          "relevant_chunk_ranks": [
+            1,
+            2,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "score": 3
+        },
+        "semantic_similarity": {
+          "confidence": "high",
+          "contradicting_claims": [],
+          "flags": [
+            "This is an LLM judgment of meaning-similarity, not embedding similarity"
+          ],
+          "reasoning": "The generated answer and reference answer express the same meaning: RAG stands for Retrieval-Augmented Generation. The generated answer adds an explanatory definition, but it does not contradict the reference answer.",
+          "score": 5
+        }
+      },
+      "metrics": {
+        "context": {
+          "characters": 77141,
+          "chunks": 15,
+          "duplicate_chunks": 0,
+          "max_characters": 26450,
+          "max_chunks": 5,
+          "max_prompt_characters": 26873,
+          "prompt_characters": 80837,
+          "unique_chunks": 11,
+          "utf8_bytes": 77267
+        },
+        "cost": {
+          "estimated_usd": 0.028733420000000003,
+          "known_usd": 0.028733420000000003,
+          "priced_calls": 10,
+          "provider_reported_calls": 10,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 8031.124000001,
+          "rag": 9748.640788995544,
+          "total": 17779.764788996545
+        },
+        "model_calls": {
+          "embedding": 3,
+          "judge": 1,
+          "rag": 6,
+          "total": 10
+        },
+        "pricing": {
+          "cached_input_usd_per_million": null,
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {
+          "composer": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "duplicate_chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1487,
+              "prompt_characters": 1487,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000552,
+              "known_usd": 0.000552,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1163.856166000187,
+            "model_calls": 1,
+            "tokens": {
+              "cached_input": 0,
+              "input": 328,
+              "known_input": 328,
+              "known_output": 68,
+              "known_total": 396,
+              "output": 68,
+              "reported_calls": 1,
+              "total": 396
+            },
+            "tool_calls": 0
+          },
+          "coverage": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "duplicate_chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 572,
+              "prompt_characters": 572,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000315,
+              "known_usd": 0.000315,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1028.1318749985076,
+            "model_calls": 1,
+            "tokens": {
+              "cached_input": 0,
+              "input": 132,
+              "known_input": 132,
+              "known_output": 48,
+              "known_total": 180,
+              "output": 48,
+              "reported_calls": 1,
+              "total": 180
+            },
+            "tool_calls": 0
+          },
+          "followup_retrieval": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "duplicate_chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 0,
+              "prompt_characters": 0,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 6.4e-07,
+              "known_usd": 6.4e-07,
+              "priced_calls": 2,
+              "provider_reported_calls": 2,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 0,
+            "latency_ms": 962.2600410002633,
+            "model_calls": 2,
+            "tokens": {
+              "cached_input": null,
+              "input": 32,
+              "known_input": 32,
+              "known_output": 0,
+              "known_total": 32,
+              "output": 0,
+              "reported_calls": 2,
+              "total": 32
+            },
+            "tool_calls": 2
+          },
+          "followup_subanswer": {
+            "context": {
+              "characters": 50691,
+              "chunks": 10,
+              "duplicate_chunks": 0,
+              "max_characters": 26300,
+              "max_chunks": 5,
+              "max_prompt_characters": 26713,
+              "prompt_characters": 51533,
+              "unique_chunks": 8,
+              "utf8_bytes": 50787
+            },
+            "cost": {
+              "estimated_usd": 0.009774749999999999,
+              "known_usd": 0.009774749999999999,
+              "priced_calls": 2,
+              "provider_reported_calls": 2,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 2,
+            "latency_ms": 3538.8302079954883,
+            "model_calls": 2,
+            "tokens": {
+              "cached_input": 0,
+              "input": 12091,
+              "known_input": 12091,
+              "known_output": 157,
+              "known_total": 12248,
+              "output": 157,
+              "reported_calls": 2,
+              "total": 12248
+            },
+            "tool_calls": 0
+          },
+          "judge": {
+            "context": {
+              "characters": 49170,
+              "chunks": 11,
+              "duplicate_chunks": 0,
+              "max_characters": 49170,
+              "max_chunks": 11,
+              "max_prompt_characters": 54017,
+              "prompt_characters": 54017,
+              "unique_chunks": 11,
+              "utf8_bytes": 49258
+            },
+            "cost": {
+              "estimated_usd": 0.01341075,
+              "known_usd": 0.01341075,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 8031.124000001,
+            "model_calls": 1,
+            "tokens": {
+              "cached_input": 0,
+              "input": 12175,
+              "known_input": 12175,
+              "known_output": 951,
+              "known_total": 13126,
+              "output": 951,
+              "reported_calls": 1,
+              "total": 13126
+            },
+            "tool_calls": 0
+          },
+          "planner": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "duplicate_chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 372,
+              "prompt_characters": 372,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.0001785,
+              "known_usd": 0.0001785,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1379.475583002204,
+            "model_calls": 1,
+            "tokens": {
+              "cached_input": 0,
+              "input": 94,
+              "known_input": 94,
+              "known_output": 24,
+              "known_total": 118,
+              "output": 24,
+              "reported_calls": 1,
+              "total": 118
+            },
+            "tool_calls": 0
+          },
+          "retrieval": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "duplicate_chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 0,
+              "prompt_characters": 0,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 2.8e-07,
+              "known_usd": 2.8e-07,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 0,
+            "latency_ms": 750.3968749952037,
+            "model_calls": 1,
+            "tokens": {
+              "cached_input": null,
+              "input": 14,
+              "known_input": 14,
+              "known_output": 0,
+              "known_total": 14,
+              "output": 0,
+              "reported_calls": 1,
+              "total": 14
+            },
+            "tool_calls": 1
+          },
+          "subanswer": {
+            "context": {
+              "characters": 26450,
+              "chunks": 5,
+              "duplicate_chunks": 0,
+              "max_characters": 26450,
+              "max_chunks": 5,
+              "max_prompt_characters": 26873,
+              "prompt_characters": 26873,
+              "unique_chunks": 5,
+              "utf8_bytes": 26480
+            },
+            "cost": {
+              "estimated_usd": 0.0045015,
+              "known_usd": 0.0045015,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 925.6900410036906,
+            "model_calls": 1,
+            "tokens": {
+              "cached_input": 0,
+              "input": 5906,
+              "known_input": 5906,
+              "known_output": 16,
+              "known_total": 5922,
+              "output": 16,
+              "reported_calls": 1,
+              "total": 5922
+            },
+            "tool_calls": 0
+          }
+        },
+        "tokens": {
+          "cached_input": null,
+          "input": 30772,
+          "known_input": 30772,
+          "known_output": 1264,
+          "known_total": 32036,
+          "output": 1264,
+          "reported_calls": 10,
+          "total": 32036
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 6,
+          "tool_calls": 3
+        }
+      },
+      "performance": {
+        "checks": {
+          "duplicate_chunks": {
+            "limit": 0,
+            "status": "pass",
+            "value": 0
+          },
+          "followup_queries": {
+            "limit": 2,
+            "status": "pass",
+            "value": 2
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 9748.640788995544
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 6
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 3
+          }
+        },
+        "status": "pass",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": [
+        {
+          "chunk_index": 39,
+          "filename": "DBLP_conf_icml_GuJLSESS25.pdf",
+          "page": 40,
+          "paper_id": "DBLP_conf_icml_GuJLSESS25",
+          "rank": 1,
+          "score": 0.8948,
+          "text": "Position: Future Research and Challenges Remain Towards AI for Software Engineering\nLLMs in coding and formal math domains.\nC.5. Large Scope and Long Contexts\nCoding is a domain where required context lengths can be very long, as codebases can consist of millions of lines of\ncode, posing challenges to today’s models. In addition, today’s retrieval-based methods are still limited: models\noften retrieve incorrect information and can still struggle with leveraging retrievals effectively due to the difficulty of\ncode reuse.\nPotential solutions: D.3.1, D.3.2\nLarge Scopes: At the repository level, the tasks in Sec. B become significantly more difficult and require many steps. In\ncode generation, user alignment can be an issue because there are many decision points and tradeoffs that can compound.\nIn code refactoring, modifications will touch multiple parts of the codebase, and it can be tricky to keep the repository\nconsistent. In code debugging, functions can be large and bugs can be nested deeply within stacks of function calls. In code\nnavigation, because there are so many functions interacting in various ways, it can be difficult to know where each piece of\nfunctionality is implemented and how the code is pieced together.\nAnother issue with large scopes is large context lengths. Software engineering often requires dealing with very large\ncodebases–for example, Google has repositories with over a billion lines of code (Potvin & Levenberg, 2016). As this is far\ntoo large for modern-day LLMs, choosing the correct context to include when using LLMs is important.\nExample: Debugging Cloud Applications: Organizations often rely on monitoring and observability tools to track the\nperformance of their applications. One such tool is Datadog, an observability service for cloud applications that can\nmonitor infrastructure, detect security anomalies, and track database performance. For larger applications with more\nmoving parts, these logs can consist of thousands of lines of JSON payloads. For humans, sifting through these logs\nis usually a matter of searching for certain keywords that they know will appear in the logs. However, LLMs often\nhave a hard time interpreting large amounts of logs like these.\nLimits of Retrieval-Augmented Generation (RAG): Retrieval-based algorithms have been the predominant way to deal\nwith long-context coding issues. First, the retriever retrieves relevant functions. Then, the generator leverages the retrieval to\nimprove generation. While RAG has proven effective in many NLP tasks such as question answering (Gao et al., 2023;\nLewis et al., 2020), the code domain provides new challenges for these methods.\nRetrieval: In most NLP tasks, the retrieval step can be done relatively well because keywords that are in the query are often\nkeywords that need to be retrieved. Unlike answering NL questions, writing code often requires drawing inspiration from\ncode snippets that may be completely different syntactically. This can include programs with similar semantics, algorithms,\nor API calls, all of which potentially have very little in common when it comes to syntax. For example, the implementation\nof Dijkstra’s algorithm in a GPS navigation application can guide the implementation of a shortest-path algorithm in a social\nmedia application. Because retrievers often rely on syntactic matching, these relevant programs can be hard to retrieve (Ma\net al., 2024; Utpala et al., 2023).\nWhen deciding what to retrieve, it is also necessary to have a sufficient awareness of other parts of the codebase so that you\nknow which building blocks are necessary to construct the new function. This can make the retrieval task relatively tricky,\nas shown by failure modes on two benchmarks, CodeRAGBench (Wang et al., 2024i) and BRIGHT (Su et al., 2024).\n40",
+          "title": "Position: Future Research and Challenges Remain Towards AI for Software Engineering"
+        },
+        {
+          "chunk_index": 50,
+          "filename": "DBLP_conf_icml_GuJLSESS25.pdf",
+          "page": 51,
+          "paper_id": "DBLP_conf_icml_GuJLSESS25",
+          "rank": 2,
+          "score": 0.8618,
+          "text": "Position: Future Research and Challenges Remain Towards AI for Software Engineering\nExample: For instance, in a release of AI CUDA Engineer by Sakana AI, an AI-generated CUDA kernel for\nlower triangular matrix multiplication—purportedly achieving significant speedups—was later found to exploit\nout-of-bounds memory access to bypass correctness checksa. Advancing research on frameworks that facilitate test\ngeneration and automated adversarial testing represents an important direction.\naThe full LLM-generated kernel code can be found in Listing 3, pg. 46-47 of (Lange et al., 2025)\nLearning to Quantify Uncertainty and Communicate Proactively: As AI coding systems are increasingly deployed\nto complex software engineering tasks, they encounter more ambiguous and uncertain scenarios compared to traditional\nbenchmarks for coding models. Ideally, in such situations, these systems should proactively communicate with users\nto clarify tasks and acknowledge its own limitations rather than becoming stuck in endless failure loops or generating\nbuggy code. A key challenge is enabling models to distinguish between well-specified and ambiguous instructions while\nquantifying uncertainty in a robust manner. While early studies, such as Vijayvargiya et al. (2025) and the example\nbelow, demonstrate that interactive LLMs can improve performance through clarification-seeking behavior, current models\nstill struggle with uncertainty estimation. Equipping models with the ability to quantify uncertainty will likely require\nincorporating corresponding reasoning data into the post-training stage.\nBesides uncertainty quantification, Shao et al. (2024b) identify communication as a primary challenge in human-agent\ncollaboration, highlighting the need for improving models’ proactive communication capability. Current models often fail to\nask meaningful questions when user input is ambiguous or insufficient, and they struggle to provide progress updates or\nverify plans in interactive settings. Enhancing models’ proactive communication abilities requires innovative approaches to\nreward behaviors that yield benefits over multiple steps. Since communication with users does not immediately resolve the\ntask at hand but may improve long-term outcomes, effective strategies must account for delayed rewards in training.\nExample: Discussion Helps Coding Agents Resolve Github Issues: In SWE-bench (Jimenez et al., 2024)\npydata xarray-4750, the original issue description requests limiting the number of data rows displayed\nin repr. While it suggests a maximum of 25 rows, it does not specify whether this number should be config-\nurable—a key requirement that emerged during the issue discussion. When SWE-Agent (Yang et al., 2024b), powered\nby GPT-4o, uses only the issue description as the problem statement, it generates a function that hardcodes the\nmaximum at 25, causing the solution to fail the test. However, incorporating the issue discussion allows the agent to\nproduce a correct, test-passing implementation (see Listing 2). This suggests that enabling coding agents to engage\nin discussions with users could potentially improve the issue solving rate.\nD.3. Inference Time Approaches\nD.3.1. S EMANTIC -AWARE EMBEDDINGS AND RETRIEVAL\nIn contrast to text, embeddings for code should incorporate execution and semantic information, improving retrieval.\nRAG benefits from both context-aware retrievals and explicit training on how to use them, enhancing code reuse\nacross languages and APIs. Beyond static retrieval, AI agents could also dynamically navigate codebases using\ncommand-line tools and IDE functions.\nChallenges addressed: C.5\nSemantic and execution aware code embeddings: When training LLMs, code is often treated as pure tokens (just like\ntext) rather than explicitly incorporating code-specific information such as program execution and semantics. As a result,\ncode that is close in embedding space is more often syntactically similar than semantically similar (Utpala et al., 2023; Zhao\net al., 2023), and there are few reliable methods today to retrieve semantically similar code. However, before the LLM era,\nthere were a variety of efforts to incorporate code properties when training embeddings. For example, Nye et al. (2020)\ntrain neural modules to represent program operations, leading to compositional program representations that encode the\nsemantics of the underlying programming language. Many other works (Zohar & Wolf, 2018; Ellis et al., 2019; Chen et al.,\n2021b) attempt to learn execution-aware latent representations for partial and full programs, taking semantics into account.\nWe speculate that incorporating these techniques to train models to have better and more semantically aware representations\n51",
+          "title": "Position: Future Research and Challenges Remain Towards AI for Software Engineering"
+        },
+        {
+          "chunk_index": 3,
+          "filename": "DBLP_conf_icml_GuJLSESS25.pdf",
+          "page": 4,
+          "paper_id": "DBLP_conf_icml_GuJLSESS25",
+          "rank": 3,
+          "score": 0.6505,
+          "text": "Position: Future Research and Challenges Remain Towards AI for Software Engineering\nsection.\n3.1. Data\nLow-Resource Languages and Specialized Libraries: As\nwe adapt code LLMs to individual codebases, generating\ncorrect code in out of distribution (OOD) scenarios becomes\ncrucial. Much of software development in business contexts\nrevolves around proprietary codebases, which is a distribu-\ntion shift from the open-source code that dominates LLM\ntraining data (Ahmed et al., 2024a). These OOD scenarios\ninclude domain-specific languages (DSLs), custom internal\nlibraries, low-resource APIs, and company-specific coding\nstyles and conventions.\nIn low-resource languages, models have a weaker semantic\nunderstanding of the language. Due to the lack of training\ndata in these OOD domains, models may struggle to write\ncommon primitives or piece together functionality coher-\nently. On HumanEval, Qwen-2.5 has an accuracy of 83% in\nPython but 27% in D (Hui et al., 2024). In OOD scenarios,\nLLMs lack awareness of the libraries and functions avail-\nable for use. In new codebases using custom libraries, many\nfunctions appear only a few times, providing limited train-\ning data for AI models to learn their usage. This scarcity\ncan lead to overfitting, where models fail to recognize an\neffective use-case of these functions. Models also frequently\nhallucinate non-existent functions based on patterns that it\ninfers.\nLibrary and API Version Updates: Continual learning,\nthe idea of training an AI system to take in new information\ncontinually, has been a long-standing challenge in AI and\nNLP (Wu et al., 2024; Wang et al., 2024d). In software\nengineering, codebases are continuously changing as new\nfeatures are supported and awkward design patterns are re-\nworked. While backwards compatibility is often prioritized\nin software design, it inevitably becomes broken as code-\nbases evolve further. Therefore, programming libraries have\nversion releases, each release supporting and deprecating\nfeatures in the last version.\nEven identifying which version of a library is being used\ncan be quite difficult, because versioning information can\nbe hidden deeply within a codebase. Sometimes, it can be\nfound in comments or configuration files, but in the worst\ncase, it must be inferred from the library calls being used.\nTo make things worse, some code may be compatible across\nmultiple versions, while other code will cause errors only\nin specific versions. On the other hand, writing code for\na specific version can also be challenging, because it can\nbe difficult for LLMs to implicitly keep track of which\nconstructs and patterns are associated with each version.\nFor example, when asking LLMs to write code in Lean 4, it\noften uses constructs from Lean 3, an older version that is\nmuch more prevalent across GitHub.\nHigh Logical Complexity and OOD Domains: Some pro-\ngramming tasks are challenging for even the best human\nprogrammers, requiring approaches with a very high logical\ncomplexity. Examples of tasks that fall into this category\ninclude superoptimizing programs, discovering attacks for\npurportedly secure code, writing performant compilers, op-\ntimizing GPU kernels (Ouyang et al., 2025), and writing\nconcurrent programs.\nBecause they are hard for humans, these tasks are very\nrarely in the training data of today’s language models. They\nhave unique, domain-specific, challenges that making gen-\neralizing from existing data difficult. For these problems,\nlanguage models rely heavily on feedback-driven search\nalgorithms (Mankowitz et al., 2023b), and it can be difficult\nto navigate the search space effectively.\n3.2. Scale\nLarge Scope and Long Contexts: At the repository level,\nthe tasks in Sec. 2 become significantly more difficult and\nrequire many steps. In code generation, user alignment\ncan be an issue because there are many decision points and\ntradeoffs that can compound. In code refactoring, modifica-\ntions will touch multiple parts of the codebase, and it can be\ntricky to keep the repository consistent. In code debugging,\nfunctions can be large and bugs can be nested deeply within\nstacks of function calls. Another issue with large scopes is\nlarge context lengths. Software engineering often requires\ndealing with very large codebases–for example, Google has\nrepositories with over a billion lines of code (Potvin & Lev-\nenberg, 2016). As this is far too large for modern-day LLMs,\nchoosing the correct context to include when using LLMs is\nimportant.\nLimits of Retrieval-Augmented Generation (RAG): Retrieval-\nbased algorithms have been the predominant way to deal\nwith long-context coding issues. First, the retriever retrieves\nrelevant functions. Then, the generator leverages the re-\ntrieval to improve generation. While RAG has proven ef-\nfective in many NLP tasks, the code domain provides new\nchallenges for these methods.\nRetrieval: In most NLP tasks, the retrieval step can be done\nrelatively well because keywords that are in the query are\noften keywords that need to be retrieved. Unlike answering\nNL questions, writing code often requires drawing inspira-\ntion from code snippets that may be completely different\nsyntactically. This can include programs with similar se-\nmantics, algorithms, or API calls, all of which potentially\nhave very little in common when it comes to syntax. Pre-\nvious work such as Ma et al. (2024); Utpala et al. (2023)\nhave found that code in the same language is, on average,\nfar closer in embedding space compared to semantically\nequivalent code.\n4",
+          "title": "Position: Future Research and Challenges Remain Towards AI for Software Engineering"
+        },
+        {
+          "chunk_index": 0,
+          "filename": "DBLP_conf_icml_GuJLSESS25.pdf",
+          "page": 1,
+          "paper_id": "DBLP_conf_icml_GuJLSESS25",
+          "rank": 4,
+          "score": 0.5683,
+          "text": "Position: Future Research and Challenges Remain Towards AI for Software\nEngineering\nAlex Gu 1 Naman Jain 2 * Wen-Ding Li 3 * Manish Shetty 2 * Kevin Ellis 3 Koushik Sen 2\nArmando Solar-Lezama 1\nAbstract\nAI for software engineering has made remark-\nable progress, becoming a notable success within\ngenerative AI. Despite this, there are still many\nchallenges that need to be addressed before au-\ntomated software engineering reaches its full po-\ntential. In this paper, our goal is threefold. First,\nwe provide a taxonomy of measures and tasks to\ncategorize work towards AI software engineering.\nSecond, we outline key bottlenecks permeating to-\nday’s approaches. Finally, we call for large open-\nsource community efforts and lay out a collection\nof promising research directions to address these\nchallenges, hoping that we can all come together\nto advance and shape the future of AI for code.\n1. Introduction\nAI for software engineering has made remarkable progress\nrecently, becoming a notable success within generative AI.\nDespite this, there are still many challenges that need to be\naddressed before automated software engineering reaches\nits full potential. With additional efforts, it should be pos-\nsible to reach high levels of automation where humans can\nfocus on the critical decisions of what to build and how to\nbalance difficult tradeoffs while most routine development\neffort is automated away. Reaching this level of automation,\nhowever, will require substantial research and engineering\nefforts across academia and industry. This paper provides\nan opinionated view of the tasks, challenges, and promis-\ning directions towards achieving this goal.\nMany existing surveys overlap with the topics that are dis-\ncussed in this paper, such as AI for programming assis-\ntants (Liang et al., 2024; Sergeyuk et al., 2025), LLMs for\nsoftware testing (Wang et al., 2024c), using LLMs in low-\nresource and domain-specific languages (Joel et al., 2024),\n*Equal contribution 1MIT 2UC Berkeley 3Cornell. Correspon-\ndence to: Alex Gu <gua@mit.edu>.\nProceedings of the 42 nd International Conference on Machine\nLearning, Vancouver, Canada. PMLR 267, 2025. Copyright 2025\nby the author(s).\nautomated program repair (Zhang et al., 2023c) focus on\nautomated program repair, and formal mathematical reason-\ning (Yang et al., 2024d). In addition, many papers discuss\nthe current state, challenges, and future of AI for software\nengineering (Fan et al., 2023; Ozkaya, 2023; Wong et al.,\n2023; Zheng et al., 2023; Hou et al., 2024; Jin et al., 2024;\nWan et al., 2024b; Roychoudhury et al., 2025a). Our work\ndraws inspiration from them, and we recommend that the\nreader consult with them for alternative perspectives.\nIn this paper, our goal is threefold. In Sec. 2, we provide\na structured taxonomy of concrete tasks in AI for software\nengineering. In particular, we emphasize that there are\nmany other tasks in SWE beyond code generation and code\ncompletion, encouraging research in these areas. Moving\nforward to Sec. 3, we highlight four main challenges that\ntoday’s models face, each cross-cutting and applicable to\nseveral tasks. In Sec. 4, we call for large open-source\ncommunity efforts in the field and lay out a collection of\npromising research directions to address these challenges.\nThe main text contains a summary of highlights, with a full\nversion in the Appendix. We hope that after reading our\npaper, the reader can appreciate the progress AI for code\nhas made, understand the shortcomings of today’s state-of-\nthe-art models, and come together to advance and shape the\nfuture of the field.\n2. Tasks in AI Software Engineering\nWe first provide a taxonomy of tasks in AI software engi-\nneering. To provide a structured way to consider each task,\nwe define three measures that apply across them: scope,\nlogical complexity, and level of human intervention. To\nachieve an AI software engineer, we strive for AI to be\ncapable across the board for all three measures.\nScope Measure: We define three levels of scope, the extent\nof changes that the AI makes to the codebase. Function-\nlevel scope refers to single, self-contained functions such\nas in HumanEval (Chen et al., 2021a) and MBPP (Austin\net al., 2021). Self-contained unit scope goes beyond singular\nfunctions and to larger chunks of code such as entire files\nand classes. Project-level scope refers to larger codebases\n1",
+          "title": "Position: Future Research and Challenges Remain Towards AI for Software Engineering"
+        },
+        {
+          "chunk_index": 7,
+          "filename": "DBLP_conf_icml_GuJLSESS25.pdf",
+          "page": 8,
+          "paper_id": "DBLP_conf_icml_GuJLSESS25",
+          "rank": 5,
+          "score": 0.5506,
+          "text": "Position: Future Research and Challenges Remain Towards AI for Software Engineering\nto speed and productively work on the task with few sam-\nples? On toy domains, an example of this is DreamCoder\n(Ellis et al., 2021), a system that learns to solve problems\nby writing programs and automatically discovering domain\nconcepts and composing concepts together. Designing such\napproaches for more practical applications is an exciting\nresearch direction that will have drastic implications for\ncoding and reasoning.\nTraining Code LLMs to Collaborate with Humans: As\nwe collaborate with AI more to write code, it is crucial\nthat these models have capabilities that allow for effective\ncollaboration.\nSpecifications Beyond Natural Language: While natural lan-\nguage prompts offer intuitive and flexible ways to express\nrequirements, they are often ambiguous and incomplete. To\naddress this, we can train models to use more precise and\nverifiable representations such as formal specifications and\ntest-based specifications. Formal specifications allow an AI\nsystem to precisely verify correctness. Test-based specifi-\ncations range from input-output examples and assertions to\nproperty-based tests. However, hand-crafted test suites can\nbe incomplete, leading to misalignment where AI-generated\ncode passes tests but does not genuinely meet functional\nrequirements. Moving forward, we should train models to\ngenerate high-quality test cases based on the user’s initial\nquery, ensuring more comprehensive specification coverage.\nLearning to Quantify Uncertainty and Communicate Proac-\ntively: As AI coding systems are increasingly deployed to\ncomplex SWE tasks, they encounter more ambiguous and\nuncertain scenarios compared to traditional benchmarks for\ncoding models. Ideally, in such situations, these systems\nshould proactively communicate with users to clarify tasks\nand acknowledge its own limitations rather than becoming\nstuck in endless failure loops or generating buggy code. A\nkey challenge is enabling models to distinguish between\nwell-specified and ambiguous instructions while quantify-\ning uncertainty in a robust manner, which will require in-\ncorporating corresponding reasoning data into post-training.\nAnother challenge in human-agent collaboration is com-\nmunication (Shao et al., 2024b), highlighting the need to\nimprove the proactive communication capability of the mod-\nels. Current models often fail to ask meaningful questions\nwhen user input is ambiguous or insufficient and struggle\nto provide progress updates or verify plans in interactive\nsettings. Enhancing the proactive communication skills of\nmodels requires innovative approaches to reward behaviors\nthat yield benefits over multiple steps. Since communication\nwith users does not immediately resolve the task at hand,\nbut may improve long-term results, effective strategies must\naccount for delayed rewards in training.\n4.3. Inference Time Approaches\nIn this section, we advocate for several inference-time re-\nsearch thrusts that have currently been underexplored. Mak-\ning progress on these fundamental directions can unblock\nmany of the challenges previously mentioned.\nSemantic-Aware Embeddings and Retrieval: We saw that\ncode that is close in embedding space is more often syntac-\ntically similar than semantically similar (Zhao et al., 2023),\nmaking it hard to retrieve semantically similar code. How-\never, before the LLM era, there were a variety of efforts to\nincorporate code properties when training embeddings. For\nexample, Nye et al. (2020) train neural modules to repre-\nsent program operations, leading to compositional program\nrepresentations that encode the semantics of the underlying\nprogramming language. Many other works (Zohar & Wolf,\n2018; Ellis et al., 2019; Chen et al., 2021b) attempt to learn\nexecution-aware latent representations for partial and full\nprograms, taking semantics into account.\nIncorporating these techniques to train models to have better\nand more semantically aware representations can lead to\nmodels with a more general understanding of code (Sec.\nC.6). For example, if correct and buggy programs could\nhypothetically be separated in embedding space, then mod-\nels could be steered away from the incorrect program space.\nWhile a complete separation might not be possible, hav-\ning semantics-aware embeddings could lead to downstream\nimprovements on SWE tasks.\nRetrieving via on-the-fly navigation : Instead of keeping\ntrack of embeddings, another approach is to find retrievals\non-the-fly by navigating the codebase. This prevents the\nhigh cost of continuously maintaining and updating the re-\ntrieval bank. An agent can learn to use command line func-\ntions such as cd, ls, and grep, and IDE functions such\nas jumping to function definitions or finding all references\nof a function. Static analysis tools can also be paired with\nthe agent to improve code navigation, such as providing the\nabstract syntax tree (AST) or file structure of a codebase.\nIntegration with SWE Development Frameworks : As\nAI improves at SWE, there are increasingly more opportu-\nnities to incorporate it into the continuous integration and\ncontinuous deployment (CI/CD) process. In CI/CD, auto-\nmated pipelines are the backbone for building, testing, and\ndeploying code changes. CI/CD accelerates feedback cy-\ncles and minimizes integration issues. AI could contribute\nin many ways. First, AI-powered code review tools can\nbe incorporated into CI pipelines to automatically identify\nand flag style violations, potential security vulnerabilities,\nand code smells before human reviewers are involved. Sec-\nond, AI can provide intelligent deployment risk assessments.\nBy analyzing code changes, test outcomes, and historical\ndeployment data, AI can predict the likelihood of deploy-\n8",
+          "title": "Position: Future Research and Challenges Remain Towards AI for Software Engineering"
+        },
+        {
+          "chunk_index": 19,
+          "filename": "DBLP_journals_corr_abs-2503-22625.pdf",
+          "page": 20,
+          "paper_id": "DBLP_journals_corr_abs-2503-22625",
+          "rank": 6,
+          "score": 0.925,
+          "text": "of code ( Potvin and Levenberg , 2016). As this is far too large for modern-day LLMs, choosing the\ncorrect context to include when using LLMs is important.\nExample: Debugging Cloud Applications : Organizations often rely on monitoring and observ-\nability tools to track the performance of their application s. One such tool is Datadog, an\nobservability service for cloud applications that can moni tor infrastructure, detect security\nanomalies, and track database performance. For larger appl ications with more moving\nparts, these logs can consist of thousands of lines of JSON pa yloads. For humans, sifting\nthrough these logs is usually a matter of searching for certa in keywords that they know will\nappear in the logs. However, LLMs often have a hard time inter preting large amounts of\nlogs like these.\nLimits of Retrieval-Augmented Generation (RAG) : Retrieval-based algorithms have been the\npredominant way to deal with long-context coding issues. Fi rst, the retriever retrieves relevant\nfunctions. Then, the generator leverages the retrieval to i mprove generation. While RAG has\nproven effective in many NLP tasks such as question answerin g ( Gao et al. , 2023; Lewis et al. ,\n2020), the code domain provides new challenges for these methods .\nRetrieval: In most NLP tasks, the retrieval step can be done relatively well because keywords that\nare in the query are often keywords that need to be retrieved. Unlike answering NL questions,\nwriting code often requires drawing inspiration from code s nippets that may be completely dif-\nferent syntactically . This can include programs with simil ar semantics, algorithms, or API calls,\nall of which potentially have very little in common when it co mes to syntax. For example, the\nimplementation of Dijkstra’s algorithm in a GPS navigation application can guide the implemen-\ntation of a shortest-path algorithm in a social media applic ation. Because retrievers often rely on\nsyntactic matching, these relevant programs can be hard to r etrieve (Ma et al. , 2024; Utpala et al. ,\n2023).\nWhen deciding what to retrieve, it is also necessary to have a sufﬁcient awareness of other parts of\nthe codebase so that you know which building blocks are neces sary to construct the new function.\nThis can make the retrieval task relatively tricky , as shown by failure modes on two benchmarks,\nCodeRAGBench (W ang et al., 2024i) and BRIGHT ( Su et al. , 2024).\nExample: Failure Case of Finding Relevant Files When Resolv ing Issues: BM25, despite its\nwidespread use in code retrieval, demonstrates limitation s in scenarios that involve large\nand complex codebases. For instance, in chartjs Chart.js-7951 from SWE-bench Multi-\nmodal ( Y ang et al., 2024c), BM25 retrieval using the issue description returns subop timal\nresults. The top-3 retrieved ﬁles from src/ are src/scales/scale.radialLinear.js,\nsrc/scales/scale.linearbase.js, and src/helpers/helpers.canvas.js. How-\never, the critical modiﬁcations required to resolve the iss ue should occur in\nsrc/elements/element.bar.js and src/controllers/controller.bar.js. This re-\ntrieval failure impedes the effectiveness of coding agents , many of which are augmented\nwith code retrieval systems. When agents focus their attent ion on irrelevant ﬁles, their\nability to resolve the issue successfully becomes substant ially compromised.\nGeneration: In NLP tasks, the generation step often is a straightforwar d application of the retrieved\ninformation. However, in code, writing a new function requi res more than copy and paste. This\nis closely tied to the problem of code reuse: piecing togethe r relevant snippets of code in a precise\nand productive way to ﬁt the current context. Depending on wh at is retrieved, each piece of re-\n20",
+          "title": "Challenges and Paths Towards AI for Software Engineering"
+        },
+        {
+          "chunk_index": 30,
+          "filename": "DBLP_conf_fmcad_AlurBJMRSSSTU13.pdf",
+          "page": 2,
+          "paper_id": "DBLP_conf_fmcad_AlurBJMRSSSTU13",
+          "rank": 7,
+          "score": 0.6319,
+          "text": "In contrast, RTL-driven approaches use static analysis of implementation artifacts to guide assertion generation, improving signal relevance but risking intent drift without explicit code links [8], [9]. Hybrid approaches connect intent and implementation more explicitly: AssertionForge [6] constructs a KG linking specification artifacts to the RTL hierarchy and signals for structured context. Retrieval augmentation and structured prompting further focus models on relevant context: Retrieval Augmented Generation (RAG)-based approaches retrieve targeted fragments to reduce hallucinations [10], and LISA [11] combines retrieval with structured reasoning to improve temporal correctness and reduce retries. While effective, these methods rely on complete cross-artifact links between requirements, signals, and behaviors.",
+          "title": "Knowledge Graphs, the Missing Link in Agentic AI-based Formal Verification"
+        },
+        {
+          "chunk_index": 3,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 4,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 8,
+          "score": 0.6151,
+          "text": "that the response must be a single JSON object. While LintQ-\nLLM demonstrated the foundational feasibility of employing\nLLMs for quantum code analysis, the single-prompt mecha-\nnism structurally can limit the reasoning depth and context\nawareness of the model, occasionally resulting in FPs when\nanalyzing complex quantum circuits. This represents the main\nmotivation behind the definition of LintQ-LLM+CoT and\nLintQ-LLM+RAG, both introduced in the next section.\nIII. LINTQ-LLM+COTANDLINTQ-LLM+RAG\nTo enhance the performance of LintQ-LLM, we propose\nLintQ-LLM+CoT and LintQ-LLM+RAG, which significantly\nevolve the LLM interaction mechanism through CoT and\nincorporate RAG.\n1) Multi-prompt Chain-of-Thought Pipeline:The problem\ndetection strategy is implemented through a multi-prompt CoT\ninteraction, which consists of one system prompt and two\nsequential user prompts (note that despite being called user\nprompts, their generation is automated by our approach). To\nensure optimal structural layout and instruction clarity, these\nprompts were systematically generated and refined during\ndevelopment, leveraging the OpenAI Prompt Optimizer [16].\nThe overall structure of our prompting mechanism is shown\nin Figure 3 and summarized below.\nThe system prompt instructs the model to act as a source\ncode linter with expert knowledge in quantum software and\nmandates that its response must be a single JSON object.\nThe first automated user prompt provides a comprehen-\nsive task definition: it specifies the exact problem to detect,\nincluding its name, a detailed description, and a concrete\ncode example of the quantum programming problem (dynam-\nically provided by the RAG module in LintQ-LLM+RAG).\nSpecifically, this prompt guides the LLM through a multi-step\nreasoning process:\n1)Strategic Planning:Formulate a “Detection Strategy”\noutlining the conceptual plan to identify the problem,\nincluding primary API elements and logical checks.\n2)Code Understanding:Create a “Code Summary” to\nbriefly describe the essential components and operations\nwithin the source code.\n3)Problem Detection Logic:Apply the strategy to inspect\nthe code and identify all instances of the problem.\n4)Report Results:For each detected case, generate a JSON\nobject containing the exact code “snippet”, an array\nof “lines” numbers, and a detailed explanation. If no\nproblems are found, an empty JSON object is returned.\nThe second automated user prompt delivers the line-\nnumbered source code, instructing the model to perform the\nanalysis based on the strategy established in the previous turn.\n2) Knowledge base creation:LintQ-LLM+RAG incorpo-\nrates a RAG system, leveraging a specialized vector database\nas its knowledge retrieval backend. The creation of this knowl-\nedge base followed a rigorous inclusion and exclusion protocol\noperating on the dataset previously evaluated by the original\nLintQ authors [2]. Figure 4 depicts the process responsible for\nbuilding and indexing this knowledge base.\nTABLE II\nCOMPOSITION OF THERAG KNOWLEDGEBASE BY NUMBER OF\nEXAMPLES PERQUANTUM PROBLEMTYPE.\nQuantum problem Count Quantum problem Count\nOpAfterMeas 38 DoubleMeas 15\nConstClasBit 25 CondWoMeas 14\nOversizedCircuit 20 OldIdenGate 10\nInsuffClasReg 18 GhostCompose 6\nMeasAllAbuse 16 OpAfterTransp 4\nThe foundation for the valid context injections is composed\nof manually verified True Positives (TPs). From a set of\n7568 Qiskit files, Paltenghi et al. obtained 4699 warnings of\nquantum-related problem detection [2]. Of this 4699 warn-\nings, they manually analyzed 345 warnings and annotated the\nwarnings as TPs (True Positives), FPs (False Positives), or NW\n(Noteworthy, used for borderline cases). Although the meaning\nof TP and FP is well recognized, please note that they are\nformally defined in Section IV-C. At the end of the manual\nlabeling, they obtained 165 TP instances [2]. We excluded\nFPs and NW cases from our knowledge base to ensure that the\nretrieval system grounds its reasoning strictly on unambiguous\nexamples. We programmatically annotated the 165 files with\nthe TP selected for our knowledge base: the lines explicitly\ncausing the warning were commented with a standardized\nlabel# Problem: <Problem Description>.\nAfter preparing the source files, we systematically\nembedded all candidate examples using OpenAI’s\ntext-embedding-3-largemodel [17]. This model\nensures optimal semantic compatibility with the GPT-5\nmodel family ultimately responsible for the reasoning step.\nTo avoid exceeding the strict context window limit during\nexecution, we filtered the selected files using thetiktoken\nlibrary [18]: examples with more than 8192 tokens were\nexcluded, resulting in the removal of eight files. The\nremaining subset corresponds to a knowledge base of 157\nfiles. These files were sequentially vectorized and stored in a\nFacebook AI Similarity Search (FAISS) index [19] capable\nof determining similarity through Euclidean distance. The\nultimate composition of the RAG database varies in available\nexamples per problem type, distributed as reported in Table II.\n3) Retrieval mechanism:In the LintQ-LLM+RAG execu-\ntion phase, dynamically analyzing a target file translates into\na comprehensive nearest-neighbor search paired with one-shot\nlearning. As depicted in Figure 5, this approach evolves the\nLintQ-LLM architecture from an ungrounded inference model\nto a dynamically parameterized static analyzer. The integration\nof RAG into LintQ-LLM+RAG augments each LLM query\nwith a retrieved example selected from the indexed knowledge\nbase. Given the input Qiskit file, a preprocessing step annotates\nthe code (e.g., with line numbers) and prepares it for analysis,\nwhile in parallel the system retrieves the most relevant problem\nexample based on similarity with the current input.\nWhen processing an incoming Qiskit program, its source\ncode is initially tokenized to verify its bounds against the em-",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 7,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 8,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 9,
+          "score": 0.9327,
+          "text": "variant, to the one-shot learning examples that help ground the\nLLM’s reasoning and reduce hallucinations.\nFinally, in terms of completeness, LintQ-LLM+CoT demon-\nstrates an outstanding capability of retrieving almost every\nquantum programming problem in the corpus, reaching a peak\nrecall value of 0.96 with only 3 FNs. In comparison, LintQ-\nLLM+RAG achieves a recall value of 0.86, and the baseline\nfalls short at 0.43. While RAG slightly penalizes recall by\nintroducing stricter semantic constraints from the retrieved\nsnippets, both LintQ-LLM+CoT and LintQ-LLM+RAG are\nevidently far superior to the baseline in comprehensively\nidentifying quantum programming problems.\nSummary of RQ1\nBoth LintQ-LLM+CoT and LintQ-LLM+RAG sub-\nstantially outperform the rule-based LintQ base-\nline across all evaluated metrics. LintQ-LLM+CoT\nachieves the highest effectiveness (F1-score of 0.70)\nand completeness (Recall of 0.96), while LintQ-\nLLM+RAG provides the highest correctness (Precision\nof 0.56) by minimizing FPs.\nB. RQ2: To what extent does LintQ-LLM+RAG enhance\nLintQ-LLM+CoT’s ability to detect quantum programming\nproblems with respect to correctness, completeness, and ef-\nfectiveness?\nTo answer RQ2, we compare the performance of LintQ-\nLLM+CoT with its RAG augmented counterpart, LintQ-\nLLM+RAG, both shown in Table IV. As for the correctness\nof the detected quantum program problems, the introduction\nof the RAG architecture yielded an improvement, even if it\ndoes not seem significant. Indeed, the precision value increased\nfrom 0.55 to 0.56, actively reducing the aggregate number\nof FPs from 54 down to 47. By grounding the reasoning on\nmanually verified data, it seems that the LLM becomes more\ncalibrated. However, this gain in correctness incurs a penalty\nin completeness. The recall metric dropped from a near-perfect\n0.96 in the LintQ-LLM+CoT configuration down to 0.86 for\nLintQ-LLM+RAG, with FNs increasing from 3 to 10. A\nplausible explanation is that the explicit nature of the retrieved\none-shot snippets acts as an overly rigid template. In other\nwords, the strict semantic constraints introduced by RAG blind\nthe model to valid, yet structurally diverse, implementations\nof the same quantum programming problem.\nIn terms of effectiveness, the RAG integration marginally\nunderperformed LintQ-LLM+CoT. The decrease in Recall\noutweighed the slight improvement in Precision, resulting in\na minor decline in the overall F1-score from 0.70 to 0.68.\nSummary of RQ2\nThe use of RAG introduces a trade-off between cor-\nrectness and completeness in the detection of quantum\nprogramming problems. Its use slightly improves cor-\nrectness (Precision increases from 0.55 to 0.56) at the\ncost of a reduced completeness of the detected program\nproblems (Recall drops from 0.96 to 0.86). As a\nresult, the overall effectiveness (0.68 vs. 0.70) slightly\ndecreases, indicating that the gain in precision does\nnot compensate for the loss in recall. Therefore, RAG\nenhances reliability but limits generalization, making\nit beneficial in scenarios where precision is prioritized,\nbut less suitable when comprehensive detection is\nstrongly required.\nC. Additional Analyses\n1) On the Impact of Multi-prompt and CoT :For complete-\nness, we performed a comparative analysis between LintQ-\nLLM+CoT and LintQ-LLM introduced in prior work [3].\nLintQ-LLM achieved a high completeness with a recall value\nof 0.99 (TP = 69, FN = 1). However, this result comes at the\nexpense of correctness, as the precision value is only 0.32 due\nto an exceptionally high number of FPs (145). This outcome\nsuggests that while single-prompt strategies are effective at\nidentifying potential problems, they lack the necessary capa-\nbility to distinguish between correct quantum programming\ncode and quantum programming problems, resulting in an F1-\nscore of 0.49.\nThe transition to a multi-prompt CoT pipeline (LintQ-\nLLM+CoT) marks a performance milestone. By guiding the\nLLM, we achieved an increase in Precision to 0.55, effectively\nreducing the number of FPs by 62.76% (from 145 to 54). Re-\nmarkably, this refinement in correctness does not significantly\ncompromise completeness, as the Recall remains high at 0.96.\nConsequently, the overall effectiveness (F1-score) rises to 0.70,\nrepresenting a 30% improvement over LintQ-LLM. Based on\nthe achieved results, similar results and considerations can also\nbe done when comparing LintQ-LLM and LintQ-LLM+RAG.\n2) Obfuscation and Data Leakage:A significant validity\nthreat in LLM-based software engineering research is data\nleakage—the possibility that the underlying model may have\nencountered our test corpus during its pre-training phase. To\nempirically address this, we conducted a preliminary exper-\niment using a custom obfuscator, structurally mapping user-\ndefined identifiers to random strings while preserving syntactic\nintegrity and Qiskit API interactions. Testing a sample of 14\nfiles under both obfuscated and clear conditions (as detailed\nin Table V) revealed that LintQ-LLM+CoT maintained com-\nparable problem detection capability regardless of identifier\nobfuscation. This suggests the model anchors its reasoning on\nthe topological properties of the quantum circuit construction\nrather than memorized sequences due to data leakages. Con-\nversely, the semantic representations within the RAG solution\nproved highly sensitive to obfuscation, disjointing the retrieval",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 6,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 7,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 10,
+          "score": 0.6319,
+          "text": "LintQ Analyzed \nCorpus \n(7568 files)\nRAG Knowledge Base\n157 files\nRag \nInitialization\nReal-World Subset\n (43 files)\nEvaluation \nCorpus\n55 files\nManual Evaluation\nLintQ Analysis\nLintQLLM+COT Analysis\nLintQLLM+RAG Analysis\nFile Analysis\nGround Truth\nLintQ Warnings\nLintQLLM+COT Warnings\nLintQLLM+RAG Warnings\nRemaining Files\n(7411 files)\nQuantum Problem \nbased Stratified \nSampling\nSynthetic Problem Injected \nCorpus (12 files)\nQuantum Problem \nInjection\nMerge\nUsed in\nFig. 6. Experimental design for the construction and validation of the Evaluation Corpus.\n•True Positive (TP): The tool correctly generates a warn-\ning for a line of code containing the specific quantum\nprogramming problem.\n•False Positive (FP): The tool generates a warning for a\nline of code that does not contain that specific quantum\nprogramming problem.\n•False Negative (FN): The tool fails to generate a warning\nfor a line that contains a quantum programming problem,\nas confirmed by the ground truth.\nWe used TP, FP, and FN to calculate the following metrics:\nPrecision= TP\nTP+FP (1)\nIt estimates the correctness/reliability of the warnings issued\nby a given approach. A high precision value implies that\ndevelopers will waste less time investigating false alarms.\nRecall= TP\nTP+FN (2)\nIt assesses the approach’s completeness (i.e., sensitivity). A\nhigh recall value indicates the tool misses very few real bugs.\nF1-score= 2· Precision·Recall\nPrecision+Recall (3)\nIt provides a single, balanced assessment of the approach’s\noverall effectiveness by computing the harmonic mean of\nprecision and recall. It accounts for the inherent trade-off\nbetween overwhelming the developer with false warnings\n(low precision) and missing critical quantum programming\nproblems entirely (low recall). The higher its value, the better.\nV. RESULTS\nThis section presents the results of our empirical assessment\nand some complementary results to better understand the\ncontribution of our research. Specifically, Table IV summarizes\nthe findings across the 55 files forming our Evaluation Corpus.\nThe results suggest that both LintQ-LLM+CoT and LintQ-\nLLM+RAG substantially outperform the LintQ baseline in\nTABLE IV\nOVERALLPERFORMANCECOMPARISON ACROSS ALLPROBLEMTYPES.\nApproach TP FP FN Precision Recall F1-Score\nLintQ (Baseline) 30 47 40 0.39 0.43 0.41\nLintQ-LLM+CoT 67 54 3 0.550.96 0.70\nLintQ-LLM+RAG 60 47 100.560.86 0.68\nidentifying quantum programming problems. In detail, LintQ-\nLLM+CoT achieved the highest recall value (0.96) and overall\nF1-score (0.70), demonstrating its capacity to identify almost\nevery injected and real quantum programming problem in our\ncorpus, keeping FNs to a minimum (3). Meanwhile, the inte-\ngration of the semantic knowledge base in LintQ-LLM+RAG\nled to the highest precision value (0.56), minimizing the\nnumber of FPs reported compared to the base LLM approach,\nalbeit at a cost in recall.\nA. RQ1: How do LintQ-LLM+CoT and LintQ-LLM+RAG\ncompare to LintQ in terms of effectiveness, correctness, and\ncompleteness in detecting quantum programming problems?\nAs far as the effectiveness is concerned, both LLM-based\napproaches outperform the baseline LintQ (see Table IV).\nLintQ-LLM+CoT achieves the highest F1-score of 0.70, and\nLintQ-LLM+RAG closely follows with 0.68, whereas the\nrule-based LintQ baseline only reaches 0.41. This suggests\nthat transitioning from static, manually crafted queries to the\nflexible reasoning capabilities of LLMs provides a massive\nuplift in overall detection capability.\nIn terms of correctness, the integration of the seman-\ntic knowledge base in LintQ-LLM+RAG proves beneficial,\nachieving the highest overall precision value of 0.56. This\nmeans the RAG-enhanced approach minimizes the number of\nFPs reported. LintQ-LLM+CoT achieves a similar precision\nvalue of 0.55, but both represent a substantial improvement\nover the 0.39 precision value of LintQ. We attribute this\nincreased correctness to the CoT prompting and, for the RAG",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 5,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 6,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 11,
+          "score": 0.5721,
+          "text": "retrieving a known, mathematically comparable instance con-\ntaining the explicit problem, the LintQ-LLM+RAG architec-\nture dynamically structures a reference snippet. This snippet,\ncoupled with its embedded description of the problem’s exact\nlocation, is then injected into the prompt. Consequently, this\nguides the final LLM validation by grounding its judgment\nin a high-quality, context-aware reference example retrieved\nfrom the FAISS knowledge base.\nIV. EMPIRICALSTUDYDESIGN\nOur overarching goal is to assess whether shifting from\nrule-based static analysis to LLM-driven reasoning provides\nbenefits in the detection of quantum problems in Qiskit\nprograms. Given this goal, we formulate the following two\nresearch questions (RQs):\n•RQ1:How do LintQ-LLM+CoT and LintQ-LLM+RAG\ncompare to LintQ in terms of effectiveness, correctness,\nand completeness in detecting quantum programming\nproblems?\nIt focuses on a comparative evaluation against the current\nstate of the art, aiming to determine whether the proposed\nLLM-based techniques represent a meaningful advance-\nment over traditional rule-based static analysis.\n•RQ2:To what extent does LintQ-LLM+RAG enhance\nLintQ-LLM+CoT’s ability to detect quantum program-\nming problems with respect to correctness, completeness,\nand effectiveness?\nThis RQ narrows the focus to the individual LLM-based\napproaches, specifically investigating the contribution of\nRAG (if any) in improving detection performance (cor-\nrectness, completeness, and effectiveness).\nThe rest of this section describes the experimental setup,\nthe construction of the evaluation corpus, and the protocol\nfollowed to assess the efficacy of LintQ-LLM+CoT and LintQ-\nLLM+RAG. Figure 6 provides an overview of the used design.\nA. Evaluation Corpus Construction\nTo address our RQs, we constructed a balanced stratified\nevaluation corpus. The process began with the original LintQ\ncorpus consisting of 7568 Qiskit files. We first excluded the\n157 files manually verified by Paltenghi et al. [2] and already\nincorporated into the RAG knowledge base. The remaining\nsubset, consisting of 7411 files, was further filtered to include\nonly those with a token count within the 8192 limit of the\nchosen embedding model, ensuring that the RAG retrieval\nmechanism could operate on the entire file content.\nFrom this filtered subset, we performed a stratified selection\nfocused on potential quantum problems identified by unveri-\nfied LintQ reports. Our objective was to curate a balanced\ndataset of 55 files: up to five files for each of the ten supported\nquantum problem categories and five files flagged as clean\n(zero warnings) to serve as a control group. At this stage, the\nactual presence of the problems was unknown, as the selection\nrelied on the original tool’s unverified output.\nFor categories where the filtered subset contained fewer\nthan five eligible files (i.e., extremely rare problem types),\nTABLE III\nCOMPOSITION OF THEEVALUATIONCORPUS ACROSS ALL QUANTUM\nPROBLEM CATEGORIES.\nQuantum Problem Real Files Injected Files Total\nClean Files 5 0 5\nCondWoMeas 3 2 5\nConstClasBit 5 0 5\nDoubleMeas 5 0 5\nGhostCompose 1 4 5\nInsuffClasReg 5 0 5\nMeasAllAbuse 4 1 5\nOldIdenGate 5 0 5\nOpAfterMeas 5 0 5\nOversizedCircuit 5 0 5\nOpAfterTransp 0 5 5\nTotal 43 12 55\nwe utilized problem injection [20]. We manually introduced\nspecific quantum problems into verified clean files following\nthe patterns documented by Paltenghi et al. [2]. Concretely,\nwe first analyzed the formal definitions and example instances\nof each problem provided in the LintQ work [2], and then\nreproduced those patterns by modifying existing circuits that\ndid not originally exhibit the problem. This process resulted\nin a final Evaluation Corpus composed of 43 real-world files\nand 12 synthetic (injected) files, as detailed in Table III. Some\nof the files selected had multiple instances of different LintQ\nwarnings; in fact, at the end of the sampling, and after the\nanalysis of the synthetic files with LintQ, we had a total of\n77 warnings across the 55 files.\nB. Experimental Procedure\nThe effectiveness of the proposed approaches was evaluated\nthrough four parallel identification actions performed on the\nEvaluation Corpus:\n1)Manual Validation: A human annotator (the first author)\nconducted a line-by-line analysis of all 55 files to identify\nevery occurrence of each quantum problem, establishing\nthe Ground Truth for the study.\n2)Baseline Tool Execution: We retrieved the original LintQ\nwarnings for the 43 real-world files from the primary re-\nports. For the 12 synthetic files, we executed the original\nrule-based LintQ to generate the baseline warnings.\n3)LintQ-LLM+CoT Inference: The 55 files were analyzed\nby LintQ-LLM+CoT to generate warnings.\n4)LintQ-LLM+RAG Inference: The Evaluation Corpus\nwas processed by the retrieval-enhanced approach to\ngenerate warnings.\nFinally, the outputs from LintQ, LintQ-LLM+CoT, and LintQ-\nLLM+RAG were compared against the established Ground\nTruth to calculate classification metrics.\nC. Evaluation Metrics\nTo compute the metrics needed to study our RQs, we had\nto determine:",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        }
+      ]
+    }
+  ],
+  "schema": "rag-evaluation-results",
+  "schema_version": 3,
+  "summary": {
+    "failed": 0,
+    "succeeded": 1,
+    "total": 1
+  }
+}

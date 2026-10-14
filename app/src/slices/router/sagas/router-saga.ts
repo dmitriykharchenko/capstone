@@ -1,6 +1,6 @@
 import { call, put, race, take } from "typed-redux-saga";
 import { eventChannel, type EventChannel } from "redux-saga";
-import { navigateTo, routeChanged } from "../router-slice";
+import { navigateTo, replaceWith, routeChanged } from "../router-slice";
 import {
   parseRoute,
   serializeRoute,
@@ -56,6 +56,15 @@ function* navigate(navigation: RouteNavigation, route: AppRoute) {
   yield* put(routeChanged(route));
 }
 
+function* replace(navigation: RouteNavigation, route: AppRoute) {
+  const url = serializeRoute(route);
+  const location = yield* call(navigation.readLocation);
+  if (`${location.pathname}${location.search}` !== url) {
+    yield* call(navigation.replace, url);
+  }
+  yield* put(routeChanged(route));
+}
+
 export function* routerSaga(
   navigation: RouteNavigation = browserRouteNavigation,
 ) {
@@ -65,12 +74,15 @@ export function* routerSaga(
     yield* call(synchronizeLocation, navigation, initialLocation);
 
     while (true) {
-      const { intent, popstate } = yield* race({
+      const { intent, replacement, popstate } = yield* race({
         intent: take(navigateTo),
+        replacement: take(replaceWith),
         popstate: take(channel),
       });
       if (intent) {
         yield* call(navigate, navigation, intent.payload[0]);
+      } else if (replacement) {
+        yield* call(replace, navigation, replacement.payload[0]);
       } else if (popstate) {
         yield* call(synchronizeLocation, navigation, popstate);
       }

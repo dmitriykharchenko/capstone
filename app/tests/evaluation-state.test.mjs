@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { before, after } from "node:test";
+import { createServer } from "vite";
+import { fileURLToPath } from "node:url";
 
-import {
+let vite,
   beginEvaluation,
   completeEvaluation,
   failEvaluation,
   initialEvaluationState,
   recordEvaluationCase,
-  startEvaluationCase,
-} from "../src/slices/evaluation/evaluation-types.ts";
+  startEvaluationCase;
+before(async () => {
+  vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  ({ beginEvaluation, completeEvaluation, failEvaluation, initialEvaluationState, recordEvaluationCase, startEvaluationCase } = await vite.ssrLoadModule("/src/slices/evaluation/evaluation-types.ts"));
+});
+after(async () => vite?.close());
 
 const cases = [
   { question: "first", grading_notes: "one", sources: ["a.pdf"] },
@@ -77,6 +83,10 @@ test("transport failure terminates cleanly and remains retryable", () => {
 
   assert.equal(failed.running, false);
   assert.equal(failed.error, "bridge disconnected");
+  assert.equal(
+    failEvaluation(initialEvaluationState, " ").error,
+    "Evaluation transport failed. Check the backend logs and retry.",
+  );
   assert.equal(retry.running, true);
   assert.equal(retry.error, null);
 });

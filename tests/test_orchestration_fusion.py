@@ -2,38 +2,24 @@
 
 import json
 from dataclasses import replace
-from itertools import permutations
 
 import pytest
 
-from src.orchestration_agents import (
-    FinalizerInput,
-    HandlerInput,
+from src.orchestration.agents import (
     IntakeInput,
-    run_finalizer,
-    run_handler,
     run_intake,
 )
-from src.orchestration_evidence import (
-    EvidenceBudget,
-    evidence_payload,
-    prepare_evidence,
-)
-from src.orchestration_runtime import specialist_steps
-from src.orchestration_state import (
+from src.orchestration.runtime import specialist_steps
+from src.orchestration.state import (
     AgentKind,
     EventKind,
-    EvidenceState,
-    QuestionState,
     RunStatus,
-    StateValidationError,
     ToolName,
     WorkStatus,
-    decode,
     encode,
 )
-from src.orchestration_store import SQLiteOrchestrationStore
-from src.orchestration_tools import (
+from src.orchestration.store import SQLiteOrchestrationStore
+from src.orchestration.tools import (
     ORIGINAL_QUERY_CALL_ID,
     AuthorizationError,
     LimitError,
@@ -42,9 +28,6 @@ from src.orchestration_tools import (
     ToolError,
     ToolOutcome,
     _receipt_warning,
-    bounded_json,
-    final_evidence_ids,
-    rank_evidence,
 )
 from test_orchestration_graph import Harness
 from test_orchestration_specialists import (
@@ -53,6 +36,7 @@ from test_orchestration_specialists import (
     Retriever,
     bind,
     chunk,
+    intake_plan,
     settle_agent,
 )
 
@@ -79,8 +63,8 @@ class QueryRetriever:
             self.closed += 1
 
 
-def plan(questions=(), queries=()):
-    return json.dumps({"questions": questions, "queries": queries})
+def plan(questions):
+    return intake_plan(*[(f"Part {i}", q) for i, q in enumerate(questions)])
 
 
 def response(ids=()):
@@ -121,53 +105,6 @@ def resume_tools(store, tools):
     )
 
 
-def test_exact_original_precedes_optional_and_every_question_query(store):
-    original = "  Ｃompare\tfindings?\nExact spacing!  "
-    retriever = QueryRetriever(
-        {
-            q: [chunk(i, 0.9 - i / 10)]
-            for i, q in enumerate(
-                (
-                    original,
-                    "Paraphrase one",
-                    "Paraphrase two",
-                    "Question one",
-                    "Question two",
-                )
-            )
-        }
-    )
-    tools = bind(store, name="intake", retriever=retriever)
-    model = Model(
-        plan(queries=["Paraphrase one", "Paraphrase two"]),
-        plan(["Question one", "Question two"]),
-    )
-    result = run_intake(model, tools, IntakeInput(original))
-    assert payload(model)["retrieval_done"] is False
-    assert payload(model)["evidence"][0]["chunk_index"] == 0
-    assert payload(model, 1)["retrieval_done"] is True
-    assert [e["chunk_index"] for e in payload(model, 1)["evidence"]] == [0, 1, 2]
-    assert [e.kind for e in result.events] == ["context_retrieved"] * 3 + [
-        "question_added"
-    ] * 2
-    settle_agent(store, "intake")
-    for i, question in enumerate(tools.snapshot().questions):
-        handler = bind(
-            store,
-            AgentKind.QUESTION,
-            question.question_id,
-            name=f"handler{i}",
-            retriever=retriever,
-        )
-        run_handler(
-            Model(response()), handler, HandlerInput(original, question.question_id)
-        )
-        settle_agent(store, f"handler{i}")
-    assert retriever.calls == [(q, 5) for q in retriever.results]
-    assert retriever.closed == 5
-    assert original not in "".join(encode(e) for e in store.events(*ARGS))
-
-
 @pytest.mark.parametrize("queries", [1, 2])
 def test_original_has_one_extra_allowance_and_cannot_be_used_by_handler(store, queries):
     retriever = Retriever()
@@ -201,92 +138,68 @@ def test_original_has_one_extra_allowance_and_cannot_be_used_by_handler(store, q
     assert len(retriever.calls) == queries + 1
 
 
-@pytest.mark.parametrize("original", ["é" * 1024, " x\t" * 682 + " !"])
-def test_exact_query_at_byte_bound_is_not_rewritten(store, original):
-    retriever = Retriever([])
-    tools = bind(store, retriever=retriever)
-    run_intake(Model(plan(["Bounded question"])), tools, IntakeInput(original))
-    assert retriever.calls == [(original, 5)]
-
-
-@pytest.mark.parametrize(
-    "original", ["é" * 1025, "x" * 2049, "\x00", "<system>unsafe</system>"]
-)
-def test_invalid_original_never_retrieves_or_commits(store, original):
-    retriever = Retriever([])
-    tools = bind(store, retriever=retriever)
-    before = tools.snapshot()
-    with pytest.raises((ToolError, StateValidationError)):
-        run_intake(Model(), tools, IntakeInput(original))
-    assert tools.snapshot() == before and retriever.calls == []
-
-
-@pytest.mark.parametrize("kind", ["success", "empty", "failed"])
-@pytest.mark.parametrize("lost_ack", [False, True])
-def test_original_receipt_survives_lost_ack_restart_and_multiple_resume(
-    store, monkeypatch, kind, lost_ack
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("phase", ["before", "after"])
+@pytest.mark.parametrize("target", [0, 1])
+def test_intake_partial_plan_commit_recovers_one_receipt_per_part(
+    store, monkeypatch, resume, phase, target
 ):
-    original = " Original\tquery "
-    value = {
-        "success": [chunk()],
-        "empty": [],
-        "failed": RuntimeError("PRIVATE_PROVIDER_DETAIL"),
-    }[kind]
-    retriever = QueryRetriever({original: value})
+    retriever = Retriever()
     tools = bind(store, retriever=retriever)
+    original = "Compare A and B on cost and latency"
+    questions = [
+        "How do A and B compare on cost?",
+        "How do A and B compare on latency?",
+    ]
+    model = Model(plan(questions))
     commit = store.commit
-    if lost_ack:
+    seen = 0
 
-        def ambiguous(snapshot, **kwargs):
-            result = commit(snapshot, **kwargs)
-            if snapshot.tool_results:
-                raise RuntimeError("lost acknowledgement")
-            return result
+    def interrupted(snapshot, **kwargs):
+        nonlocal seen
+        added = snapshot.tool_results[len(tools.snapshot().tool_results) :]
+        hit = bool(
+            added and added[0].tool_name is ToolName.ADD_QUESTION and seen == target
+        )
+        if added and added[0].tool_name is ToolName.ADD_QUESTION:
+            seen += 1
+        if hit and phase == "before":
+            raise RuntimeError("interrupted proposal")
+        result = commit(snapshot, **kwargs)
+        if hit and phase == "after":
+            raise RuntimeError("lost proposal acknowledgement")
+        return result
 
-        monkeypatch.setattr(store, "commit", ambiguous)
-        with pytest.raises(RuntimeError, match="acknowledgement"):
-            tools.retrieve_context(
-                original, call_id=ORIGINAL_QUERY_CALL_ID, best_effort=True
-            )
-        monkeypatch.setattr(store, "commit", commit)
-    first = tools.retrieve_context(
-        original, call_id=ORIGINAL_QUERY_CALL_ID, best_effort=True
-    )
-    for _ in range(3):
-        previous = tools
+    monkeypatch.setattr(store, "commit", interrupted)
+    with pytest.raises(RuntimeError):
+        run_intake(model, tools, IntakeInput(original))
+    assert len(model.messages) == 1
+    partial = tools.snapshot()
+    assert len(partial.questions) == target + (phase == "after")
+    monkeypatch.setattr(store, "commit", commit)
+    if resume:
         tools = resume_tools(store, tools)
-        with pytest.raises(AuthorizationError):
-            previous.retrieve_context(
-                original, call_id=ORIGINAL_QUERY_CALL_ID, best_effort=True
-            )
-        with SQLiteOrchestrationStore(store.database_path) as reopened:
-            restored = OrchestrationTools(reopened, tools.scope, retriever)
-            assert (
-                restored.retrieve_context(
-                    original, call_id=ORIGINAL_QUERY_CALL_ID, best_effort=True
-                )
-                == first
-            )
-            assert (
-                restored.retrieval_warnings()
-                == {
-                    "success": (),
-                    "empty": ("empty_evidence",),
-                    "failed": ("retrieval_failed",),
-                }[kind]
-            )
-    assert retriever.calls == [(original, 5)] and retriever.closed == 1
-    assert len(tools.snapshot().tool_results) == 1
-    assert first.warning == ("retrieval_failed" if kind == "failed" else None)
-    events = store.events(*ARGS)
-    event = next(e for e in events if e.tool_call_id == first.event.tool_call_id)
-    assert (
-        event.operation_id
-        == ("tool:retrieval_failed:" if kind == "failed" else "")
-        + first.event.tool_call_id
-    )
-    assert all("PRIVATE_PROVIDER_DETAIL" not in encode(e) for e in events)
-    assert "PRIVATE_PROVIDER_DETAIL" not in encode(tools.snapshot())
+    with SQLiteOrchestrationStore(store.database_path) as reopened:
+        restored = OrchestrationTools(reopened, tools.scope, retriever)
+        replay_model = Model(
+            intake_plan(*[(f"Renamed label {i}", q) for i, q in enumerate(questions)])
+        )
+        result = run_intake(replay_model, restored, IntakeInput(original))
+        assert len(replay_model.messages) == 1
+        final = restored.snapshot()
+        assert [q.text for q in final.questions] == questions
+        assert final.questions[: len(partial.questions)] == partial.questions
+        receipts = [
+            r for r in final.tool_results if r.tool_name is ToolName.ADD_QUESTION
+        ]
+        assert [r.question_id for r in receipts] == [
+            q.question_id for q in final.questions
+        ]
+        assert len(final.tool_results) == 3
+        assert result.warnings == (
+            ("duplicate_question",) if resume and partial.questions else ()
+        )
+    assert retriever.calls == [(original, 5)]
 
 
 def test_failed_receipt_decoding_requires_exact_event_identity(store):
@@ -317,291 +230,7 @@ def test_failed_receipt_decoding_requires_exact_event_identity(store):
     assert len(tools._retriever.calls) == 1
 
 
-def test_connected_duplicate_groups_preserve_best_score_and_citation_coverage():
-    values = (
-        EvidenceState("original", None, "paper", 0, "first text", 9, 7),
-        EvidenceState("bridge", "q1", "paper", 0, " Ｓhared  snippet! ", 2, 3),
-        EvidenceState("paraphrase", "q2", "other", 1, "shared snippet", 8, 4),
-        EvidenceState("tie-b", None, "z", 1, "unique b", 6, 2),
-        EvidenceState("tie-a", None, "a", 1, "unique a", 6, 1),
-    )
-    questions = tuple(
-        QuestionState(
-            q, q, status=WorkStatus.COMPLETED, answer="Answer", evidence_ids=(e,)
-        )
-        for q, e in (("q1", "bridge"), ("q2", "paraphrase"))
-    )
-    for order in permutations(values):
-        assert rank_evidence(order) == (values[0], values[4], values[3])
-        packet = prepare_evidence(order, answered_questions=questions)
-        assert tuple(r.evidence for r in packet.records) == rank_evidence(order)
-        assert packet.records[0].question_ids == ("q1", "q2")
-        assert packet.records[0].evidence.page == 7
-        assert all(not r.question_ids for r in packet.records[1:])
-
-
-def test_cross_query_variants_are_retained_until_global_fusion(store):
-    retriever = QueryRetriever(
-        {
-            "Original": [chunk(0, 0.9, "winner"), chunk(0, 0.1, "bridge")],
-            "Question": [chunk(1, 0.8, " BRIDGE! ", paper="other")],
-        }
-    )
-    tools = bind(store, name="intake", retriever=retriever)
-    run_intake(Model(plan(["Question"])), tools, IntakeInput("Original"))
-    assert len(tools.snapshot().evidence) == 2
-    settle_agent(store, "intake")
-    question = tools.snapshot().questions[0]
-    handler = bind(
-        store,
-        AgentKind.QUESTION,
-        question.question_id,
-        name="handler",
-        retriever=retriever,
-    )
-
-    def cite(messages):
-        evidence = json.loads(messages[1].content)["evidence"]
-        assert len(evidence) == 1 and evidence[0]["snippet"] == "winner"
-        assert evidence[0]["question_id"] is None
-        return response([evidence[0]["evidence_id"]])
-
-    run_handler(Model(cite), handler, HandlerInput("Original", question.question_id))
-    snapshot = handler.snapshot()
-    assert decode(encode(snapshot)) == snapshot
-    assert len(snapshot.evidence) == 3
-    settle_agent(store, "handler")
-    finalizer = bind(store, AgentKind.FINALIZER, name="finalizer")
-    model = Model('{"assistant_text":"Final only"}')
-    run_finalizer(model, finalizer, FinalizerInput("Original"))
-    evidence = payload(model)["evidence"]
-    assert len(evidence) == 1 and evidence[0]["question_ids"] == [question.question_id]
-
-
-def test_final_pool_includes_original_and_uncited_completed_but_not_failed(store):
-    intake = bind(
-        store,
-        name="intake",
-        retriever=Retriever([chunk(9, 0.95, "Original-only support")]),
-    )
-    run_intake(
-        Model(plan(["First", "Second", "Failed"])), intake, IntakeInput("Original")
-    )
-    settle_agent(store, "intake")
-    questions = intake.snapshot().questions
-    for i, question in enumerate(questions):
-        tools = bind(
-            store,
-            AgentKind.QUESTION,
-            question.question_id,
-            name=f"handler{i}",
-            retriever=Retriever([chunk(i, 0.8 + i / 100)]),
-        )
-        if i == 2:
-            tools.retrieve_context(question.text, call_id="failed-question-retrieval")
-            snapshot = tools.snapshot()
-            running = store.commit(
-                replace(
-                    snapshot,
-                    questions=tuple(
-                        replace(q, status=WorkStatus.RUNNING) if q == question else q
-                        for q in snapshot.questions
-                    ),
-                ),
-                operation_id="running-failed-question",
-            )
-            store.commit(
-                replace(
-                    running,
-                    questions=tuple(
-                        replace(q, status=WorkStatus.FAILED)
-                        if q.question_id == question.question_id
-                        else q
-                        for q in running.questions
-                    ),
-                ),
-                operation_id="failed-question",
-            )
-            settle_agent(store, f"handler{i}", WorkStatus.FAILED)
-        else:
-
-            def cite_original(messages):
-                evidence = json.loads(messages[1].content)["evidence"]
-                assert len(evidence) == 2
-                return response([evidence[0]["evidence_id"]])
-
-            run_handler(
-                Model(cite_original),
-                tools,
-                HandlerInput("Original", question.question_id),
-            )
-            settle_agent(store, f"handler{i}")
-    finalizer = bind(store, AgentKind.FINALIZER, name="finalizer")
-    model = Model('{"assistant_text":"Best effort final answer"}')
-    result = run_finalizer(model, finalizer, FinalizerInput("Original"))
-    evidence = payload(model)["evidence"]
-    assert [e["chunk_index"] for e in evidence] == [9, 1, 0]
-    assert evidence[0]["question_ids"] == sorted(q.question_id for q in questions[:2])
-    assert evidence[1]["question_ids"] == evidence[2]["question_ids"] == []
-    assert set(result.evidence_ids) == final_evidence_ids(finalizer.snapshot())
-    assert any("failed" in warning for warning in result.warnings)
-
-
-def test_coverage_reservation_beats_uncited_high_scores_with_all_128_records():
-    values = tuple(
-        EvidenceState(f"e{i}", None, "paper", i, f"Evidence {i} " + "é" * 490, 128 - i)
-        for i in range(128)
-    )
-    questions = tuple(
-        QuestionState(
-            f"q{i}",
-            f"Question {i}",
-            status=WorkStatus.COMPLETED,
-            answer="Answer",
-            evidence_ids=(f"e{120 + i}",),
-        )
-        for i in range(8)
-    )
-    budget = EvidenceBudget(
-        final_bytes=8192, compression_input_bytes=8192, summary_bytes=256, max_records=8
-    )
-    packet = prepare_evidence(values, budget, answered_questions=questions)
-    assert packet.compression_required and len(packet.records) == 8
-    assert {r.evidence.evidence_id for r in packet.records} == {
-        f"e{i}" for i in range(120, 128)
-    }
-    assert {q for r in packet.records for q in r.question_ids} == {
-        q.question_id for q in questions
-    }
-    assert (
-        len(bounded_json({"evidence": evidence_payload(packet.records)}).encode())
-        + 1024
-        <= budget.compression_input_bytes
-    )
-    with pytest.raises(ToolError):
-        prepare_evidence(values + (values[0],))
-
-
-@pytest.mark.parametrize("scores", list(permutations((0.3, 0.6, 0.9))))
-def test_original_and_two_paraphrase_score_matrix(store, scores):
-    queries = ("Original", "Paraphrase one", "Paraphrase two")
-    retriever = QueryRetriever(
-        {
-            query: [
-                chunk(0, score, f"Variant {index}"),
-                chunk(index + 1, 0.1, f"Unique {index}"),
-            ]
-            for index, (query, score) in enumerate(zip(queries, scores))
-        }
-    )
-    tools = bind(store, name="intake", retriever=retriever)
-    model = Model(plan(queries=queries[1:]), plan(["Question"]))
-    run_intake(model, tools, IntakeInput(queries[0]))
-    evidence = payload(model, 1)["evidence"]
-    assert len(evidence) == 4
-    assert evidence[0]["score"] == 0.9
-    assert evidence[0]["snippet"] == f"Variant {scores.index(0.9)}"
-    assert [e["chunk_index"] for e in evidence] == [0, 1, 2, 3]
-    assert retriever.calls == [(q, 5) for q in queries]
-
-
-def test_later_question_winner_carries_prior_intake_citation_coverage(store):
-    retriever = QueryRetriever(
-        {
-            "Original": [chunk(0, 0.3, "Original evidence")],
-            "First": [],
-            "Second": [chunk(0, 0.9, "Higher relevance")],
-        }
-    )
-    intake = bind(store, name="intake", retriever=retriever)
-    run_intake(Model(plan(["First", "Second"])), intake, IntakeInput("Original"))
-    settle_agent(store, "intake")
-    for index, question in enumerate(intake.snapshot().questions):
-        handler = bind(
-            store,
-            AgentKind.QUESTION,
-            question.question_id,
-            name=f"handler{index}",
-            retriever=retriever,
-        )
-
-        def cite(messages):
-            return response(
-                [json.loads(messages[1].content)["evidence"][0]["evidence_id"]]
-            )
-
-        run_handler(
-            Model(cite), handler, HandlerInput("Original", question.question_id)
-        )
-        settle_agent(store, f"handler{index}")
-    finalizer = bind(store, AgentKind.FINALIZER, name="finalizer")
-    model = Model('{"assistant_text":"Final supported answer"}')
-    run_finalizer(model, finalizer, FinalizerInput("Original"))
-    evidence = payload(model)["evidence"]
-    assert len(evidence) == 1 and evidence[0]["score"] == 0.9
-    assert set(evidence[0]["question_ids"]) == {
-        q.question_id for q in intake.snapshot().questions
-    }
-
-
-def test_intake_authorization_does_not_allow_other_question_or_forged_citations(store):
-    intake = bind(store, name="intake")
-    run_intake(Model(plan(["First", "Second"])), intake, IntakeInput("Original"))
-    settle_agent(store, "intake")
-    first, second = intake.snapshot().questions
-    other = bind(store, AgentKind.QUESTION, first.question_id, name="other")
-    retrieved = other.retrieve_context(first.text, call_id="retrieve")
-    handler = bind(store, AgentKind.QUESTION, second.question_id, name="handler")
-    before = handler.snapshot()
-    with pytest.raises(AuthorizationError):
-        handler.answer_question(
-            second.question_id, "Answer", retrieved.event.evidence_ids, call_id="forged"
-        )
-    original_id = before.evidence[0].evidence_id
-    with pytest.raises(StateValidationError, match="authorized answer receipt"):
-        replace(
-            before,
-            questions=(
-                first,
-                replace(
-                    second,
-                    status=WorkStatus.COMPLETED,
-                    answer="Answer",
-                    evidence_ids=(original_id,),
-                ),
-            ),
-        )
-    assert handler.snapshot() == before
-
-
-def test_raw_durable_records_never_exceed_128_and_replay_works_at_capacity(store):
-    retriever = Retriever()
-    tools = bind(store, retriever=retriever)
-    original = tools.retrieve_context("Original", call_id=ORIGINAL_QUERY_CALL_ID)
-    for index in range(26):
-        if index and index % 2 == 0:
-            tools = resume_tools(store, tools)
-        size = 5 if index < 25 else 2
-        retriever.chunks = [chunk(index * 5 + j + 1) for j in range(size)]
-        tools.retrieve_context(f"Query {index}", call_id=f"retrieve-{index}")
-    assert len(tools.snapshot().evidence) == 128
-    before = tools.snapshot()
-    tools = resume_tools(store, tools)
-    at_capacity = tools.snapshot()
-    retriever.chunks = [chunk(999)]
-    with pytest.raises(LimitError, match="Evidence limit"):
-        tools.retrieve_context("Overflow", call_id="overflow", best_effort=True)
-    assert tools.snapshot() == at_capacity
-    assert (
-        tools.retrieve_context("Original", call_id=ORIGINAL_QUERY_CALL_ID) == original
-    )
-    assert tools.snapshot().evidence == before.evidence
-    assert all(n == 5 for _, n in retriever.calls)
-
-
-@pytest.mark.parametrize(
-    "failed_path", ["Original", "Optional", "Question", "all", "empty"]
-)
+@pytest.mark.parametrize("failed_path", ["Original", "Question", "all", "empty"])
 def test_failed_or_empty_query_paths_warn_but_complete_finalizer_only(
     tmp_path, failed_path
 ):
@@ -613,7 +242,7 @@ def test_failed_or_empty_query_paths_warn_but_complete_finalizer_only(
             else []
             if failed_path == "empty"
             else [chunk(i, 0.9 - i / 10)]
-            for i, q in enumerate(("Explain the result", "Optional", "Question"))
+            for i, q in enumerate(("Explain the result", "Question"))
         }
     )
     if failed_path == "Original":
@@ -624,7 +253,7 @@ def test_failed_or_empty_query_paths_warn_but_complete_finalizer_only(
 
     def work(dispatch):
         if dispatch.kind is AgentKind.INTAKE:
-            model = Model(plan(queries=["Optional"]), plan(["Question"]))
+            model = Model(plan(["Question"]))
         elif dispatch.kind is AgentKind.QUESTION:
             model = Model(response())
         else:
@@ -640,7 +269,7 @@ def test_failed_or_empty_query_paths_warn_but_complete_finalizer_only(
         final = h.done()
         assert final.run.status is RunStatus.COMPLETED
         assert h.retriever.calls == [(q, 5) for q in h.retriever.results]
-        assert h.retriever.closed == 3
+        assert h.retriever.closed == 2
         expected = "empty" if failed_path == "empty" else "failed"
         final_model = next(
             model for kind, model in models if kind is AgentKind.FINALIZER

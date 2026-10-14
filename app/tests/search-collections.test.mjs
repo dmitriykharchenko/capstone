@@ -35,7 +35,7 @@ test("chat-history search retains and replaces query-keyed collections", () => {
   const second = [{ exchange_id: 2 }];
   let state = search.searchReducer(undefined, search.searchSucceeded("first", first, true, null));
   state = search.searchReducer(state, search.searchSucceeded("second", second, true, null));
-  assert.deepEqual(state.collections, {
+  assert.deepEqual(state.searchResultsCollection, {
     idField: "id",
     ids: ["CHAT_HISTORY_SEARCH:first", "CHAT_HISTORY_SEARCH:second"],
     map: {
@@ -45,7 +45,7 @@ test("chat-history search retains and replaces query-keyed collections", () => {
     refsCount: {},
   });
   state = search.searchReducer(state, search.searchSucceeded("first", [{ exchange_id: 3 }], true, null));
-  assert.deepEqual(state.collections.map["CHAT_HISTORY_SEARCH:first"].results, [{ exchange_id: 3 }]);
+  assert.deepEqual(state.searchResultsCollection.map["CHAT_HISTORY_SEARCH:first"].results, [{ exchange_id: 3 }]);
   assert.deepEqual(
     searchSelectors.selectSearchCollections.select({ search: state }),
     [
@@ -68,7 +68,7 @@ test("chat-history search retains and replaces query-keyed collections", () => {
     [],
   );
   const cleared = search.searchReducer(state, search.clearSearch());
-  assert.deepEqual(cleared.collections, state.collections);
+  assert.deepEqual(cleared.searchResultsCollection, state.searchResultsCollection);
 });
 
 test("paper search retains and replaces query-keyed collections", () => {
@@ -82,7 +82,7 @@ test("paper search retains and replaces query-keyed collections", () => {
     state,
     paperSearch.paperSearchSucceeded("second", second, true, null),
   );
-  assert.deepEqual(state.collections, {
+  assert.deepEqual(state.searchResultsCollection, {
     idField: "id",
     ids: ["PAPERS_SEARCH:first", "PAPERS_SEARCH:second"],
     map: {
@@ -116,9 +116,9 @@ test("paper search retains and replaces query-keyed collections", () => {
     state,
     paperSearch.paperSearchSucceeded("first", [{ paper_id: "paper-3" }], true, null),
   );
-  assert.deepEqual(state.collections.map["PAPERS_SEARCH:first"].results, [
+  assert.deepEqual(state.searchResultsCollection.map["PAPERS_SEARCH:first"].results, [
     { paper_id: "paper-3" },
   ]);
   const cleared = paperSearch.paperSearchReducer(state, paperSearch.clearPaperSearch());
-  assert.deepEqual(cleared.collections, state.collections);
+  assert.deepEqual(cleared.searchResultsCollection, state.searchResultsCollection);
 });

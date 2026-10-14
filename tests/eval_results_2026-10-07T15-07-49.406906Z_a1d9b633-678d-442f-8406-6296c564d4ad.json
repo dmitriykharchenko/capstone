@@ -1,0 +1,974 @@
+{
+  "aggregate_metrics": {
+    "cases_measured": 2,
+    "cases_total": 2,
+    "context": {
+      "characters": 134685,
+      "chunks": 30,
+      "max_characters": 26597,
+      "max_chunks": 5,
+      "max_prompt_characters": 27111,
+      "prompt_characters": 143992,
+      "unique_chunks": 18,
+      "utf8_bytes": 135254
+    },
+    "cost": {
+      "estimated_usd": 0.04904054,
+      "known_usd": 0.04904054,
+      "priced_calls": 20,
+      "provider_reported_calls": 20,
+      "rate_estimated_calls": 0
+    },
+    "latency_ms": {
+      "judge": 10970.985250081867,
+      "mean": 13985.84725172259,
+      "p50": 13985.84725172259,
+      "p95": 15266.699164977763,
+      "rag": 17000.70925336331,
+      "total": 27971.69450344518
+    },
+    "model_calls": {
+      "embedding": 6,
+      "judge": 2,
+      "rag": 12,
+      "total": 20
+    },
+    "performance": {
+      "cases_checked": 2,
+      "fail": 0,
+      "failed_checks": {},
+      "incomplete": 0,
+      "pass": 2
+    },
+    "tokens": {
+      "input": 53559,
+      "known_input": 53559,
+      "known_output": 1992,
+      "known_total": 55551,
+      "output": 1992,
+      "reported_calls": 20,
+      "total": 55551
+    },
+    "workflow": {
+      "exchanges": 12,
+      "tool_calls": 6
+    }
+  },
+  "aggregate_scores": {
+    "completeness": 5.0,
+    "context_precision": 5.0,
+    "context_recall": 4.5,
+    "context_utilization": 3.5,
+    "hallucination_rate": 4.5,
+    "relevant_chunk_ranking": 5.0,
+    "semantic_similarity": 5.0
+  },
+  "input_cases": [
+    {
+      "grading_notes": "LeetCode, AtCoder, Codeforces.",
+      "performance_budget": {
+        "max_retrievals": 3
+      },
+      "question": "What three platforms does LiveCodeBench collect problems from?",
+      "sources": []
+    },
+    {
+      "grading_notes": "No such paper; should say not found.",
+      "question": "Does the paper Quantum Llamas exist in the corpus?",
+      "sources": []
+    }
+  ],
+  "metadata": {
+    "retrieval_identifier": "multihop-hybrid",
+    "retrieval_strategy": "hybrid"
+  },
+  "results": [
+    {
+      "attempt_history": [],
+      "case_index": 1,
+      "error": null,
+      "generated_answer": "LiveCodeBench collects problems from **LeetCode, AtCoder, and CodeForces**.",
+      "input": {
+        "grading_notes": "LeetCode, AtCoder, Codeforces.",
+        "performance_budget": {
+          "max_retrievals": 3
+        },
+        "question": "What three platforms does LiveCodeBench collect problems from?",
+        "sources": []
+      },
+      "judge_scores": {
+        "completeness": {
+          "confidence": "high",
+          "flags": [],
+          "missing_elements": [],
+          "reasoning": "The user asks for exactly three platforms, and the generated answer lists all three. Nothing from the reference answer is missing.",
+          "score": 5
+        },
+        "context_precision": {
+          "confidence": "high",
+          "flags": [
+            "GROUND_TRUTH_RELEVANT not provided; relevance judged from retrieved text"
+          ],
+          "reasoning": "The retrieved chunks explicitly state that LiveCodeBench curates problems from three coding competition websites: LeetCode, AtCoder, and CodeForces. This directly answers the user query.",
+          "score": 5
+        },
+        "context_recall": {
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "All information needed to answer the question is present in the retrieved chunks: the three source platforms are named clearly. No additional context is needed beyond the list.",
+          "score": 5
+        },
+        "context_utilization": {
+          "chunks_used": [
+            1
+          ],
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The generated answer matches the retrieved text directly, using the same three platform names found in chunk 1: \"LeetCode, AtCoder, and CodeForces.\"",
+          "score": 5
+        },
+        "hallucination_rate": {
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The answer contains no unsupported claims beyond the three platform names, and those are directly supported by the retrieved chunks. No hallucinated details are present.",
+          "score": 5,
+          "unsupported_claims": []
+        },
+        "relevant_chunk_ranking": {
+          "confidence": "high",
+          "flags": [],
+          "reasoning": "The relevant information appears in chunk 1 near the top of the retrieved set, where the benchmark curation section names the three platforms. Since the only needed fact is in the first chunk, the ranking is excellent.",
+          "relevant_chunk_ranks": [
+            1
+          ],
+          "score": 5
+        },
+        "semantic_similarity": {
+          "confidence": "high",
+          "contradicting_claims": [],
+          "flags": [],
+          "reasoning": "The generated answer and reference answer convey the same meaning: the three platforms are LeetCode, AtCoder, and CodeForces/Codeforces. This is an LLM judgment of meaning-similarity, not an embedding cosine similarity score.",
+          "score": 5
+        }
+      },
+      "metrics": {
+        "context": {
+          "characters": 56996,
+          "chunks": 15,
+          "max_characters": 19624,
+          "max_chunks": 5,
+          "max_prompt_characters": 20138,
+          "prompt_characters": 61380,
+          "unique_chunks": 10,
+          "utf8_bytes": 57169
+        },
+        "cost": {
+          "estimated_usd": 0.020865389999999998,
+          "known_usd": 0.020865389999999998,
+          "priced_calls": 10,
+          "provider_reported_calls": 10,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 4030.426875106059,
+          "rag": 8532.251584110782,
+          "total": 12562.67845921684
+        },
+        "model_calls": {
+          "embedding": 3,
+          "judge": 1,
+          "rag": 6,
+          "total": 10
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {
+          "composer": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1254,
+              "prompt_characters": 1254,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000321,
+              "known_usd": 0.000321,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 813.0233340198174,
+            "model_calls": 1,
+            "tokens": {
+              "input": 284,
+              "known_input": 284,
+              "known_output": 24,
+              "known_total": 308,
+              "output": 24,
+              "reported_calls": 1,
+              "total": 308
+            },
+            "tool_calls": 0
+          },
+          "coverage": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1314,
+              "prompt_characters": 1314,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000312,
+              "known_usd": 0.000312,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 970.3902920009568,
+            "model_calls": 1,
+            "tokens": {
+              "input": 290,
+              "known_input": 290,
+              "known_output": 21,
+              "known_total": 311,
+              "output": 21,
+              "reported_calls": 1,
+              "total": 311
+            },
+            "tool_calls": 0
+          },
+          "judge": {
+            "context": {
+              "characters": 32509,
+              "chunks": 10,
+              "max_characters": 32509,
+              "max_chunks": 10,
+              "max_prompt_characters": 37153,
+              "prompt_characters": 37153,
+              "unique_chunks": 10,
+              "utf8_bytes": 32649
+            },
+            "cost": {
+              "estimated_usd": 0.008919,
+              "known_usd": 0.008919,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 4030.426875106059,
+            "model_calls": 1,
+            "tokens": {
+              "input": 8592,
+              "known_input": 8592,
+              "known_output": 550,
+              "known_total": 9142,
+              "output": 550,
+              "reported_calls": 1,
+              "total": 9142
+            },
+            "tool_calls": 0
+          },
+          "planner": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 288,
+              "prompt_characters": 288,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000351,
+              "known_usd": 0.000351,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1437.8752920310944,
+            "model_calls": 1,
+            "tokens": {
+              "input": 72,
+              "known_input": 72,
+              "known_output": 66,
+              "known_total": 138,
+              "output": 66,
+              "reported_calls": 1,
+              "total": 138
+            },
+            "tool_calls": 0
+          },
+          "retrieval": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 0,
+              "prompt_characters": 0,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 1.14e-06,
+              "known_usd": 1.14e-06,
+              "priced_calls": 3,
+              "provider_reported_calls": 3,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 0,
+            "latency_ms": 2086.7269159061834,
+            "model_calls": 3,
+            "tokens": {
+              "input": 57,
+              "known_input": 57,
+              "known_output": 0,
+              "known_total": 57,
+              "output": 0,
+              "reported_calls": 3,
+              "total": 57
+            },
+            "tool_calls": 3
+          },
+          "subanswer": {
+            "context": {
+              "characters": 56996,
+              "chunks": 15,
+              "max_characters": 19624,
+              "max_chunks": 5,
+              "max_prompt_characters": 20138,
+              "prompt_characters": 58524,
+              "unique_chunks": 10,
+              "utf8_bytes": 57169
+            },
+            "cost": {
+              "estimated_usd": 0.01096125,
+              "known_usd": 0.01096125,
+              "priced_calls": 3,
+              "provider_reported_calls": 3,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 3,
+            "latency_ms": 3224.2357501527295,
+            "model_calls": 3,
+            "tokens": {
+              "input": 13919,
+              "known_input": 13919,
+              "known_output": 116,
+              "known_total": 14035,
+              "output": 116,
+              "reported_calls": 3,
+              "total": 14035
+            },
+            "tool_calls": 0
+          }
+        },
+        "tokens": {
+          "input": 23214,
+          "known_input": 23214,
+          "known_output": 777,
+          "known_total": 23991,
+          "output": 777,
+          "reported_calls": 10,
+          "total": 23991
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 6,
+          "tool_calls": 3
+        }
+      },
+      "performance": {
+        "checks": {
+          "followup_queries": {
+            "limit": 2,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 8532.251584110782
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 6
+          },
+          "retrievals": {
+            "limit": 3,
+            "status": "pass",
+            "value": 3
+          }
+        },
+        "status": "pass",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": [
+        {
+          "chunk_index": 6,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 7,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 1,
+          "score": 0.8046,
+          "text": "Finally, we would like to point out that LiveCodeBench also offers an extensible framework to add\nnew scenarios in the future. So other relevant settings like input generation, program summariza-\ntion, optimization, etc. can be integrated with our setup.\n3 Benchmark Curation\nWe curate our problems from three coding competition websites: LeetCode, AtCoder, and Code-\nForces. These websites periodically host contests containing problems that assess the coding and\nproblem-solving skills of participants. The problems consist of a natural language problem state-\nment along with example input-output examples, and the goal is to write a program that passes\na set of hidden tests. Further, thousands of participants participate, solving these problems thus\nensuring that the problems are vetted for clarity and correctness.\n3.1 Data Collection\nWe have written HTML scrapers for each of the above websites to collect problems and the cor-\nresponding metadata. To ensure quality and consistency, we parse mathematical formulas and\nexclude problems with images. We also exclude problems that are not suitable for grading by\ninput-output examples, such as those that accept multiple correct answers or require the construc-\ntion of data structures. Besides parsing the problem descriptions, we also collect associated ground\ntruth solutions and test cases whenever directly available. Thus for each problem, we collect tu-\nples of natural language problem statement P, test cases T, and ground truth solution S. Finally,\nwe associate the contest date D to mark the release date of each problem and use the collected\nattributes to construct problems for our four scenarios (detailed in Section 3.3 ahead).\nScrolling through time. As noted, we associate the contest date D for each problem. The release\ndate allows us the measure the performance of LLMs over different time windows by filtering\nproblems based on whether the problem release date falls within a time window (referred to as\n“scrolling” through time). This is crucial for evaluating and comparing models trained at different\ntimes. Specifically, for a new model and the corresponding cutoff date (normalized to the release\ndate if the training cutoff date is not published), we can measure the performance of the model on\nbenchmark problems released after the cutoff date. We have developed a UI that allows comparing\nmodels on problems released during different time windows (shown in Figure 9).\nTest collection. Tests are crucial for assessing the correctness of the generated outputs and are\nused in all four scenarios. We collect tests available on platform websites whenever possible and\nuse them for the benchmark. Otherwise, following Liu et al. (2023b), we use a LLM (here GPT-4-\nTurbo) to generate tests for the problems. A key difference between our test generation approach\nis that instead of generating inputs directly using the LLM, we construct generators that sample\ninputs based on the problem specifications using in context learning. Details and examples of such\ninput generators can be found in Section A.2. Finally, we collect a small fraction of failing tests\nfrom the platform for the more recent problems allowing more directed adversarial test collection.\nProblem difficulty. Competition programming has remained a challenge for LLMs, with GPT-\n4 achieving an average CodeForces rating (ELO) of 392, placing it in the bottom 5 percentile\n(OpenAI, 2023). This makes it difficult to compare LLMs, as the variation in performance across\nmodels is low. In LiveCodeBench, we collect problems of diverse difficulties as labeled in compe-\ntition platforms, excluding problems that are rated above a certain threshold that are likely too\n7",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 0,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 1,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 2,
+          "score": 0.801,
+          "text": "LiveCodeBench: Holistic and Contamination Free Evaluation of\nLarge Language Models for Code\nNaman Jain † King Han † Alex Gu * $ Wen-Ding Li*‡\nFanjia Yan*† Tianjun Zhang *† Sida I. Wang\nArmando Solar-Lezama $ Koushik Sen † Ion Stoica †\n† UC Berkeley $ MIT ‡ Cornell\nWebsite: https://livecodebench.github.io/\n{naman jain,kingh0730,fanjiayan,tianjunz,ksen,istoica}@berkeley.edu\ngua@mit.edu asolar@csail.mit.edu wl678@cornell.edu\nAbstract\nLarge Language Models ( LLMs) applied to code-related applications have emerged as a promi-\nnent field, attracting significant interest from both academia and industry. However, as new and\nimproved LLMs are developed, existing evaluation benchmarks (e.g.,HumanEval, MBPP) are\nno longer sufficient for assessing their capabilities. In this work, we propose LiveCodeBench,\na comprehensive and contamination-free evaluation of LLMs for code, which collects new prob-\nlems over time from contests across three competition platforms, namelyLeetCode, AtCoder,\nand CodeForces. Notably, our benchmark also focuses on a broader range of code-related ca-\npabilities, such as self-repair, code execution, and test output prediction, beyond just code gener-\nation. Currently, LiveCodeBench hosts over five hundred coding problems that were published\nbetween May 2023 and May 2024. We have evaluated 18 base LLMs and 34 instruction-tuned\nLLMs on LiveCodeBench. We present empirical findings on contamination, holistic per-\nformance comparisons, potential overfitting in existing benchmarks as well as individual model\ncomparisons. We will release all prompts and model completions for further community analysis,\nalong with a general toolkit for adding new scenarios and models.\n1\narXiv:2403.07974v2  [cs.SE]  6 Jun 2024",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 23,
+          "filename": "DBLP_conf_iclr_JainHGLYZWSSS25.pdf",
+          "page": 24,
+          "paper_id": "DBLP_conf_iclr_JainHGLYZWSSS25",
+          "rank": 3,
+          "score": 0.7824,
+          "text": "Published as a conference paper at ICLR 2025\nC C URATION\nC.1 P LATFORM SPECIFIC CURATION\nWe describe the curation process for each platform.\nLEET CODE. We collect problems from all weekly and biweekly contests on LEET CODE that have\ntaken place after April’23. For each problem, we collect the problems, public tests, and user solutions.\nThe platform also provides a difficulty label for each problem which we use to tag the problems as\nEASY, MEDIUM , and HARD. Since LEET CODE provides a starter code for each problem, we also collect\nit and provide it to the LLM in the STDIN format. Since the hidden tests are not directly available,\nwe use our generator-based test input generation approach (Section A.2) and also collect the auto\ngrader failing tests for some of the recent problems.\nATCODER . We collect problems from the abc (beginner round) contests on ATCODER that have taken\nplace after April’23. We deliberately avoid the more challenging arc and agc contests which are\ndesigned for more advanced Olympiad participants. The problems are assigned numeric difficulty\nratings, and we exclude abc problems with a rating of more than 500. We also use these numeric\nratings to tag the problems as EASY, MEDIUM , and HARD. Specifically, we use the rating brackets\n[0− 200), [200− 400), and [400− 500] to perform the classification. ATCODER provides public and\nhidden tests for each problem which we directly use in the benchmark.\nCODE FORCES . We have collected problems from the Division 3 and Division 4 contests onCODE -\nFORCES . Notably, we find that even with this filter, the problems are harder than the other two\nplatforms. CODE FORCES also provides difficulty ratings for the problems which we use to tag the prob-\nlems as EASY, MEDIUM , and HARD using the rating brackets{800}, (800− 1000], and (1000− 1300]\nrespectively. Due to the higher difficulty, we only consider a small fraction of problems from CODE -\nFORCES and semi-automatically construct test case generators, as they do not provide complete tests\non the platform (long tests are truncated).\nTable 2 provides various statistics about the problems that we have collected for LIVE CODE BENCH .\nC.2 S CENARIO -SPECIFIC BENCHMARK CONSTRUCTION\nCode Generation and Self-Repair. We use the natural language problem statement as the problem\nstatement for these scenarios. For LEET CODE, as noted above, an additional starter code is provided\nfor the functional input format. For ATCODER and CODE FORCES problems, we use the standard input\nformat (similar to (Hendrycks et al., 2021)). The collected or generated tests are then used to evaluate\nthe correctness of the generated programs. Our final dataset consists of 511 problem instances across\nthe three platforms.\nCode Execution. We draw inspiration from the benchmark creation procedure used in (Gu et al.,\n2024). First, we collect a large pool of ∼ 2000 correct, human-submitted solutions from the\nPlatform Total Count #Easy #Medium #Hard Average Tests\nLCB (May-end) 511 182 206 123 17.0\nLCB (Sep-end) 349 125 136 88 18.0\nATCODER 267 99 91 77 15.6\nLEET CODE 235 79 113 43 19.0\nCODE FORCES 9 4 2 3 11.1\nLCB-Easy 182 182 0 0 16.1\nLCB-Medium 206 0 206 0 17.4\nLCB-Hard 123 0 0 123 18.0\nTable 2: The statistics of problems collected in LIVE CODE BENCH (LCB). We present the number of\nproblems, their difficulty distributions and the average number of tests per problem. We present the\nresults on the following subsets of LIVE CODE BENCH (used throughout this manuscript) - (a) problems\nin the May-Feb and Sep-Feb time windows, (b) problems sourced from the three platforms, and (c)\nproblems in the LCB-Easy, LCB-Medium, and LCB-Hard subsets.\n24",
+          "title": "LiveCodeBench: Holistic and Contamination-Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 17,
+          "filename": "DBLP_conf_iclr_JainHGLYZWSSS25.pdf",
+          "page": 18,
+          "paper_id": "DBLP_conf_iclr_JainHGLYZWSSS25",
+          "rank": 4,
+          "score": 0.7409,
+          "text": "Published as a conference paper at ICLR 2025\nA D ATASET\nA.1 L EGAL COMPLIANCE AND LICENSE\nOur benchmark does not comprise and personal identifiable information or offensive content.\nSimilar to (Hendrycks et al., 2021), we scrape only the problem statements, ground-truth solutions,\nand test cases from competition websites – LEET CODE, ATCODER , and CODE FORCES . Further, we\nprimarily scrape publicly visible portions of websites, avoiding any data collection that might be\npay-walled or require login or interaction with the website. Following, (Hendrycks et al., 2021) we\nabide by Fair Use §107: “the fair use of a copyrighted work, including such use by ... scholarship,\nor research, is not an infringement of copyright”, where fair use is determined by “the purpose\nand character of the use, including whether such use is of a commercial nature or is for nonprofit\neducational purposes”, “the amount and substantiality of the portion used in relation to the copyrighted\nwork as a whole”, and “the effect of the use upon the potential market for or value of the copyrighted\nwork.” Finally, we use the collected problems for academic purposes only and in addition, do not\ntrain on the collected problems.\nA.2 G ENERATOR BASED TEST GENERATION\nWe use GPT-4-T URBO to construct input generators. The following prompts (Figures 6 and 7) provide\none-shot prompt templates used for synthesizing random and adversarial input generators. These\ngenerators define a function returns the arguments sampled in some distribution. These generators\nare then executed to construct inputs which validated on the collected correct programs. We use\nseparate generators for random and adversarial setting since often times programming problems have\ncorner cases which might not be captured by randomly sampling over the inputs. We build 2 random\ninput generators, 4 adversarial input generators and check if the sampled inputs work for the correct\nprograms. Finally, the number of collected inputs is thresholded to 100 for efficient grading (using\nrandom selection). We find that our generators can already function well but future work can study\nthe design space of constructing such generators.\nNote that for CODE FORCES , we construct the generators in semi-autonomous manner since only 9\nproblems were used.\nA.3 C ODE EXECUTION\nThe code execution split of LiveCodeBench consists of 479 samples from 85 distinct problems. To\nencourage diversity in our benchmark while keeping our benchmark small and usable, we place a\nlimit of six samples for each given problem. These sample programs and corresponding test cases are\nchosen uniformly at random from all those passing the filter.\nFiltering Criteria: The specific filtering criteria are as follows:\n• Compile time: length of code is between 100 and 500 characters, no syntax errors, all\nnecessary imports are included\n• Runtime: no floating point operations, true division, exp, other integer operations must have\nat least one argument≤ 3, string and list operations must have at least one argument with\nlength≤ 3, finish running in 2 seconds, “reasonable” number of steps (roughly, under 1000\nPython bytecode operations).\nWe give two examples of two programs that are filtered out in the Listings below. Our final benchmark\nconsists of 479 samples from 85 problems, but will increase in size due to its live nature.\nDataset Statistics: As mentioned, we filter for codes between 100 and 500 characters, as well as\nbelow 1000 steps. The statistics for programs in our dataset are shown in Fig. 8.\nA.4 N UMBER OF TESTS\nWe can sample large amounts of diverse inputs using our generator-based input sampling approach.\nHowever, the number of inputs produces a tradeoff in terms of the usability of the benchmark, slowing\n18",
+          "title": "LiveCodeBench: Holistic and Contamination-Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 8,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 9,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 5,
+          "score": 0.7352,
+          "text": "Table 1 provides various statistics about the problems that we have collected for LiveCodeBench.\n3.3 Scenario-specific benchmark construction\nCode Generation and Self-Repair. We use the natural language problem statement as the\nproblem statement for these scenarios. For LeetCode, as noted above, an additional starter code\nis provided for the functional input format. For AtCoder and CodeForces problems, we use the\nstandard input format (similar to Hendrycks et al. (2021)). The collected or generated tests are\nthen used to evaluate the correctness of the generated programs. Our final dataset consists of 511\nproblem instances across the three platforms.\nCode Execution. We draw inspiration from the benchmark creation procedure used in Gu\net al. (2024). First, we collect a large pool of ∼ 2000 correct, human-submitted solutions from the\nLeetCode subset. However, many of these programs have multiple nested loops, complex numerical\ncomputations, and a large number of execution steps. Therefore, we apply compile-time and run-\ntime filters to ensure samples are reasonable, and we double-check this with a manual inspection.\nMore details on the filtering criteria and statistics of the dataset can be found in Appendix A.3.\nOur final dataset consists of 479 samples from 85 problems.\nTest Case Output Prediction. We use the natural language problem statement from the Leet-\nCode platform and the example test inputs to construct our test case output prediction dataset.\nSince the example test inputs in the problems are reasonable test cases for humans to reason about\nand understand the problems, they also serve as ideal test inputs for LLMs to process. Our final\ndataset consists of 442 problem instances from a total of 181 LeetCode problems.\n4 Experiment Setup\nWe describe the experimental setup in this section. First, we provide the common setup across the\nscenarios, followed by the scenario-specific setups in Section 4.1.\nModels. We evaluate 52 models across various sizes, ranging from 1 .3B to 70B, including base\nmodels, instruction models, and both open and closed models. Our experiments include models\nfrom different classes, such as GPTs (GPT-3.5-turbo, GPT-4, GPT-4-Turbo,GPT-4-O), Claudes\n(Claude-Ins-1, Claude-2, Claude-3s), Geminis(Gemini-Pro, Gemini-Flash), Mistral among closed-\naccess and LLaMa-3s(L3-Base-{7, 70}B, L3-Ins-{7, 70}B), DeepSeeks (DS-Base-{1.3, 6.7, 33}B,\nDS-Ins-{1.3, 6.7, 33}B), CodeLLaMas (CL-Ins-{7, 13, 34}B, CL-Base-{7, 13, 34}B), StarCoder2\n(SC2-Base-{3,7,15}B), CodeQwen among open. Additionally, we also include fine-tuned models\nPhind-34B from CL-Base-34B, and MagiCoders (MC-{6.7, 7}B) from CL-Base-7B and DS-Base-\n6.7B. See Appendix C.1 for a complete list of models and estimated cutoff dates.\nEvaluation Metrics. We use the Pass@1 (Kulal et al., 2019; Chen et al., 2021) metric for our\nevaluations. Specifically, we generate 10 candidate answers for each problem either using API or\nusing vLLM (Kwon et al., 2023). We use nucleus sampling with temperature 0 .2 and top p 0 .95\nand calculate the fraction of programs or answers that are correct. For the code generation and\nself-repair scenarios, we use tests to verify the correctness of the programs. For these scenarios,\nprograms must pass all tests to be considered correct. For the code execution scenario, we use\nan execution-based correctness metric between the generated output and the ground truth output.\nFor the test output prediction scenario, we parse the generated response to extract the answer and\n9",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 1,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 2,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 6,
+          "score": 0.8794,
+          "text": "1 Introduction\nCode has emerged as an important application area for LLMs, with a proliferation of code-specific\nmodels (Chen et al., 2021; Austin et al., 2021; Li et al., 2022; Zhong et al., 2022; Allal et al., 2023; Li\net al., 2023b; Roziere et al., 2023; Guo et al., 2024; Luo et al., 2023; Royzen et al., 2023; Wei et al.,\n2023b; Ridnik et al., 2024; Lozhkov et al., 2024) and their applications across various domains and\ntasks such as program repair (Zheng et al., 2024; Olausson et al., 2023), optimization (Madaan\net al., 2023a), test generation (Steenhoek et al., 2023), documentation generation (Luo et al., 2024),\ntool usage (Patil et al., 2023; Qin et al., 2024), SQL (Sun et al., 2023), and more. In contrast with\nthese rapid advancements, evaluations have remained relatively stagnant, and current benchmarks\nlike HumanEval, MBPP, and APPS may paint a skewed or misleading picture. Firstly, while\ncoding is a multi-faceted skill, these benchmarks only focus on natural language-to-code tasks,\nthus overlooking broader code-related capabilities. Moreover, these benchmarks may be subject to\npotential contamination or overfitting, as benchmark samples are present in the training datasets.\nMotivated by these shortcomings, we introduce LiveCodeBench, a holistic and contamination-free\nbenchmark for evaluating code capabilities. LiveCodeBench is built on the following principles:\n1. Live updates to prevent contamination. LLMs are trained on massive inscrutable cor-\npora, and current benchmarks suffer from the risk of data contamination as they could be\nincluded in those training datasets. While previous works have attempted decontamination\nusing both exact and fuzzy matches (Li et al., 2023b,d), it can be a non-trivial task (Team,\n2024) and can be evaded using simple strategies like rephrasing (Yang et al., 2023). Here, to\nFigure 1: LiveCodeBench comprises problems marked with release dates, allowing evaluations\nover different time windows. For newer models, we can detect and avoid contamination by only\nevaluating on time-windows after the model’s cutoff date. The figures demonstrate the performance\nof models on code generation and test output prediction LiveCodeBench scenarios with LeetCode\nproblems released across the months between May 2023 and February 2024. Notice that DeepSeek-\nInstruct and GPT-4-O perform considerably worse on problems released since September and\nNovember 2023 (their release and cutoff dates respectively!) – indicating potential contamination\nfor the earlier problems. Thus, while performing evaluations, we use the post-September/post-\nNovember time window (green) for fairly comparing these models.\n2",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 16,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 17,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 7,
+          "score": 0.7738,
+          "text": "Focus on Python. LiveCodeBench currently only focuses on Python which might not provide\nenough signal about model capabilities in other languages. However, since we collected problem\nstatements and serialized tests, adding new programming languages would be straightforward once\nappropriate evaluation engines are used.\nRobustness to Prompts. Recent works have identified huge performance variances that can\nbe caused due to insufficient prompt. Here, we either do not tune prompts across models or\nmake minor adjustments based on the system prompts and delimiter tokens. This can lead to\nperformance variance in our results. Our findings and model comparison orders generalize across\nLiveCodeBench scenarios and mostly match the performance trends observed on HumanEval\nmaking this a less prominient issue.\nThis issue can be particularly observed open models on the code execution scenario with COT\nprompting. Interestingly, often the open models perform even worse in comparsion to the direct\ncode execution baseline. Note that we used same prompts for the closed models all of which show\nnoticable improvement from COT. While the used prompts might be sub-optimal, this highlights\nhow open-models perform worse against the closed models at performing chain-of-thought.\nProblem Domain. Programming is a vast domain and occurs in various forms such as program-\nming puzzles, competition programming, and real-world software development. Different domains\nmight have individual requirements, constraints, challenges, and difficulty levels. LiveCodeBench\ncurrently focuses on competition problems sourced from three platforms. This might not be repre-\nsentative of the “most general” notion of LLM programming capabilities. Particularly, real-world\nusage of LLMs is drawn upon open-ended and unconstrained problems rasied by users. We there-\nfore recommend using LiveCodeBench as a starting point for evaluating LLMs and further using\ndomain-specific evaluations to measure and compare LLMs in specific settings as required.\n8 Conclusion\nIn this work, we propose LiveCodeBench, a new benchmark for evaluating LLMs for code. Our\nbenchmark mitigates contamination issues in existing benchmarks by introducing live evaluations\nand emphasizing scenarios beyond code generation to account for the broader coding abilities of\nLLMs. LiveCodeBench is an extensible framework, that will keep on updating with new problems,\nscenarios, and models. Our evaluations reveal novel findings such as contamination detection and\npotential overfitting on HumanEval. We hope LiveCodeBench with serve to advance understand-\ning of current code LLMs and also guide future research in this area through our findings.\nAcknowledgements\nThis work was supported in part by NSF grants CCF:1900968, CCF:1908870 and by SKY Lab\nindustrial sponsors and affiliates Astronomer, Google, IBM, Intel, Lacework, Microsoft, Mohamed\nBin Zayed University of Artificial Intelligence, Nexla, Samsung SDS, Uber, and VMware. A. Gu is\nsupported by the NSF Graduate Research Fellowship under Grant No. 2141064. A. Solar-Lezama\nis supported by the NSF and Intel Corporation through NSF Grant CCF:2217064. Any opinions,\nfindings, conclusions, or recommendations in this paper are solely those of the authors and do not\nnecessarily reflect the position of the sponsors.\nFinally, we thank Manish Shetty, Wei-Lin Chiang, Jierui Li, Horace He, Federico Cassano, Pengcheng\n17",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 15,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 16,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 8,
+          "score": 0.7449,
+          "text": "recent benchmark measuring the reasoning and execution abilities of code LLMs. We differ from\nCRUXEval in that our benchmark is live, and our functions are more complex and human-produced\n(unlike Code Llama generations in CRUXEval).\nTest Generation. Test generation using LLMs has been explored in (Yuan et al., 2023; Sch¨ afer\net al., 2024; Tufano et al., 2022; Watson et al., 2020). Furthermore, Chen et al. (2022) demonstrated\nthat LLMs can assist in generating test case inputs/outputs for competitive programming problems,\nthereby improving the accuracy of the generated code, thus inspiring our test generation scenario.\nHowever, LiveCodeBench’s test generation scenario is unique in that it decouples the test inputs\nand outputs allowing more proper evaluations.\nFinally, some works have additionally studied other tasks and scenarios like type prediction (Mir\net al., 2022; Wei et al., 2023a; Malik et al., 2019), code summarization (LeClair et al., 2019; Iyer\net al., 2016; Barone and Sennrich, 2017; Hasan et al., 2021; Alon et al., 2018), code security (Liguori\net al., 2022; Pearce et al., 2022; Tony et al., 2023), etc.\n6.3 Contamination\nData contamination and test-case leakage have received considerable attention Oren et al. (2024);\nGolchin and Surdeanu (2023); Weller et al. (2023); Roberts et al. (2024) as LLMs might be getting\ntrained on benchmarks. Sainz et al. (2023) demonstrated contamination by simply prompting the\nmodel to highlight its contamination. Some detection methods have also been built to avoid these\ncases (Shi et al., 2023; Zhou et al., 2023). For code, Riddell et al. (2024) use edit distance and\nAST-based semantic-similarity to detect contamination.\n7 Limitations\nBenchmark Size. LiveCodeBench code generation scenario currently hosts over 400 instances\nfrom problems released between May and February. To account for contamination in DeepSeek,\nwe only perform evaluations on problems released after the model cutoff date. This leads to only\n349 problems used in our final evaluations which might add noise due to problem set samples.\nWe currently estimate 1 − 1.5% performance variations in LiveCodeBench code generation due\nto this issue (measured by bootstrapping 349 sized problem sets from the 511 sized dataset).\nOther scenarios, i.e. self-repair, code execution, and test output prediction comprise 349, 188, and\n254 problems would have similar performance variations. We thus recommend exercising proper\njudgement when comparing models with small performance differences. Note that HumanEval has\n164 problems and would also struggle with similar issues.\nThis issue is also exacerbated for newer models, with more recent cutoff dates, as they might\nonly have access to a smaller evaluation set. We propose two solutions addressing this issue as\nwe evolve LiveCodeBench. First, we will use other competition platforms for problem collection,\nallowing larger number of recent problems to be added to the benchmark. In addition, we also hope\nsupplement this with an unreleased private test set constructed specifically for model evaluation.\nThese problems will use a similar flavor to current problems and will be used when models are\nsubmitted for evaluation to the LiveCodeBench platform. This would reduce the reliance on\npublic accessible problems and provide a more robust evaluation of the models while providing\ncommunity public access to similar problems, similar to strategies employed by popular platforms\nlike Kaggle.\n16",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        },
+        {
+          "chunk_index": 4,
+          "filename": "DBLP_journals_corr_AlurFSS16.pdf",
+          "page": 5,
+          "paper_id": "DBLP_journals_corr_AlurFSS16",
+          "rank": 9,
+          "score": 0.7052,
+          "text": "R. Alur, D. Fisman, R. Singh & A. Solar-Lezama 7\ncompetition, the solution approaches used by each of the participants and the results of the competition\non each of the different categories of benchmarks.\n2 Competition Settings\n2.1 Participating Benchmarks\nWe collected several benchmarks from various sources using an open call for benchmarks, from which\nwe sampled 309 benchmarks for the General Track, 73 benchmarks for the Invariant Synthesis Track, and\n67 benchmarks for the Conditional Linear Arithmetic track. These benchmarks can broadly be classiﬁed\ninto following 13 categories (11 categories for the General Track). The number of benchmarks in each\nof these categories and the contributors for the new set of benchmarks is shown in Table 1.\n• Array Benchmarks: This category consists of benchmarks that involve synthesizing a function\nover an integer array of a bounded size. Since the current SyGuS-IF format does not support\narrays, we represent them using an ordered sequence of integer variables. One major class of\nbenchmarks in this category is array-search, which requires to synthesize a loop-free function\nto ﬁnd an appropriate index for insertion of a given value into a sorted array of size n. Another\nmajor class of benchmark is array-sum-m-n, which requires to synthesize a function to ﬁnd ﬁrst\ntwo elements in an array of size n whose sum is greater than m.\n• Let Benchmarks : The benchmarks in this category use the let construct as speciﬁed in the\nSyGuS-IF format. The let expressions allow synthesizers to represent multiple occurrences of\ncommon subexpressions succinctly, which helps in improving the scalability. The let expressions\nin speciﬁcation constraints can be desugared, but they can not be desugared when used in gram-\nmar productions. For example, the production T := (let [z=U] z + z) denotes sum of two\nidentical subexpressions built using addition operator, but the same can not be speciﬁed using a\ncontext-free grammar.\n• Invariant Generation Benchmarks (Bounded and Unbounded Integers) : This category of\nbenchmarks consists of loop invariant synthesis problems from the domain of program veriﬁca-\ntion. Some of these benchmarks are obtained from the Competition of Software Veriﬁcation (SV-\nCOMP) and others are from the literature on invariant synthesis. It involves two sub-categories:\none that uses unbounded integers and second that bounds the range of integers that can be used for\nthe invariant expression.\n• ICFP Benchmarks: This benchmarks in this category are some of the challenging problems taken\nfrom the 2013 ICFP Programming Competition on program synthesis. These benchmarks in-\nvolve synthesizing bit-vector functions from a domain-speciﬁc language of bit-vectors consisting\nof primitive bitwise operators such as shift, not, add, or, xor etc. The language also consists of\na constrained comparison operator and a fold operator. The correctness speciﬁcation for these\nbenchmarks is provided using 64-bit input-output bit-vector examples.\n• Hacker’s Delight Benchmarks: This category involves benchmarks that are derived from 20 dif-\nferent bit-manipulation problems from the Hackers Delight book. For these benchmarks, there are\n3 increasingly challenging levels of grammars (d0, d1, and d5) that are provided for the unknown\nfunction, where the leveld0 consists of only operators that are necessary for the unknown function\nand the level d5 consists of complete bit-vector grammar.",
+          "title": "Results and Analysis of SyGuS-Comp’15"
+        },
+        {
+          "chunk_index": 7,
+          "filename": "DBLP_journals_corr_abs-2403-07974.pdf",
+          "page": 8,
+          "paper_id": "DBLP_journals_corr_abs-2403-07974",
+          "rank": 10,
+          "score": 0.8286,
+          "text": "Platform Total Count #Easy #Medium #Hard Average Tests\nLCB (May-end) 511 182 206 123 17.0\nLCB (Sep-end) 349 125 136 88 18.0\nAtCoder 267 99 91 77 15.6\nLeetCode 235 79 113 43 19.0\nCodeForces 9 4 2 3 11.1\nLCB-Easy 182 182 0 0 16.1\nLCB-Medium 206 0 206 0 17.4\nLCB-Hard 123 0 0 123 18.0\nTable 1: The statistics of problems collected in LiveCodeBench (LCB). We present the number of\nproblems, their difficulty distributions and the average number of tests per problem. We present\nthe results on the following subsets of LiveCodeBench (used throughout this manuscript) - (a)\nproblems in the May’23-May’24 and Sep’23-May’24 time windows, (b) problems sourced from the\nthree platforms, and (c) problems in the LCB-Easy, LCB-Medium, and LCB-Hard subsets.\ndifficult for even the best models 1. Further, we use these ratings to classify problems as Easy,\nMedium, and Hard for more granular model comparisons.\n3.2 Platform Specific Curation\nWe describe the curation process for each platform.\nLeetCode. We collect problems from all weekly and biweekly contests onLeetCode that have taken\nplace after April’23. For each problem, we collect the problems, public tests, and user solutions.\nThe platform also provides a difficulty label for each problem which we use to tag the problems\nas Easy, Medium, and Hard. Since LeetCode provides a starter code for each problem, we also\ncollect it and provide it to the LLM in the STDIN format. Since the hidden tests are not directly\navailable, we use our generator-based test input generation approach (Section A.2) and also collect\nthe auto grader failing tests for some of the recent problems.\nAtCoder. We collect problems from theabc (beginner round) contests on AtCoder that have taken\nplace after April’23. We deliberately avoid the more challenging arc and agc contests which are\ndesigned for more advanced Olympiad participants. The problems are assigned numeric difficulty\nratings, and we exclude abc problems with a rating of more than 500. We also use these numeric\nratings to tag the problems as Easy, Medium, and Hard. Specifically, we use the rating brackets\n[0− 200), [200− 400), and [400− 500] to perform the classification. AtCoder provides public and\nhidden tests for each problem which we directly use in the benchmark.\nCodeForces. We have collected problems from the Division 3 and Division 4 contests on Code-\nForces. Notably, we find that even with this filter, the problems are harder than the other two\nplatforms. CodeForces also provides difficulty ratings for the problems which we use to tag\nthe problems as Easy, Medium, and Hard using the rating brackets {800}, (800 − 1000], and\n(1000− 1300] respectively. Due to the higher difficulty, we only consider a small fraction of prob-\nlems from CodeForces and semi-automatically construct test case generators, as they do not\nprovide complete tests on the platform (long tests are truncated).\n1From our early explorations, we find CodeForces problems being considerably more difficult than AtCoder and\nLeetCode problems and thus focus primarily on the latter platforms.\n8",
+          "title": "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code"
+        }
+      ]
+    },
+    {
+      "attempt_history": [],
+      "case_index": 2,
+      "error": null,
+      "generated_answer": "No. The corpus evidence does not show a paper titled **“Quantum Llamas”**, nor does it show that phrase in titles, abstracts, keywords, or as an alternate reference for any paper.",
+      "input": {
+        "grading_notes": "No such paper; should say not found.",
+        "question": "Does the paper Quantum Llamas exist in the corpus?",
+        "sources": []
+      },
+      "judge_scores": {
+        "completeness": {
+          "confidence": "high",
+          "flags": [],
+          "missing_elements": [],
+          "reasoning": "The user asked whether the paper exists in the corpus, and the answer directly states no and that it is not shown in the corpus evidence. The reference answer only requires a negative response, which is fully covered.",
+          "score": 5
+        },
+        "context_precision": {
+          "confidence": "high",
+          "flags": [
+            "GROUND_TRUTH_RELEVANT not provided; relevance judged from retrieved text itself"
+          ],
+          "reasoning": "The retrieved chunks are all about LintQ, LintQ-LLM, quantum programming problems, and topic modeling corpora; none contain a paper titled or mentioning \"Quantum Llamas.\" Based on the retrieved context, they are relevant only insofar as they discuss corpora in general and help answer whether a paper is present.",
+          "score": 5
+        },
+        "context_recall": {
+          "confidence": "medium",
+          "flags": [
+            "Cannot verify the entire corpus, only the provided retrieved chunks",
+            "Completeness of 'all papers in corpus' cannot be fully determined from snippets"
+          ],
+          "reasoning": "The retrieved context includes corpus descriptions and explicit counts of files/papers in the evaluated corpora, which is sufficient to support a negative answer that no such paper is shown in the provided corpus evidence. However, because the full corpus is not available here, I cannot definitively prove absence beyond the retrieved snippets.",
+          "score": 4
+        },
+        "context_utilization": {
+          "chunks_used": [
+            "Chunk 1: corpus construction and document counts",
+            "Chunk 4/8: evaluation corpus and LintQ corpus descriptions"
+          ],
+          "confidence": "medium",
+          "flags": [
+            "No specific chunk is quoted in the answer",
+            "Negative-answer grounding is implicit rather than explicit"
+          ],
+          "reasoning": "The answer says, \"The corpus evidence does not show a paper titled 'Quantum Llamas'\" which is consistent with the retrieved corpus-related passages, but it does not cite any specific chunk or explicit corpus listing showing absence. It appears to rely more on the absence of a match than on direct use of a particular retrieved statement.",
+          "score": 2
+        },
+        "hallucination_rate": {
+          "confidence": "medium",
+          "flags": [
+            "Unsupported specifics about 'keywords' and 'alternate reference'",
+            "Negative absence claim is difficult to fully ground from snippets"
+          ],
+          "reasoning": "The answer includes the claim that the corpus evidence does not show the paper \"in titles, abstracts, keywords, or as an alternate reference for any paper.\" The retrieved chunks do not provide explicit evidence about keywords or alternate references, so that part is unsupported. The core negative conclusion itself is not contradicted by the context.",
+          "score": 4,
+          "unsupported_claims": [
+            "\"nor does it show that phrase in titles, abstracts, keywords, or as an alternate reference for any paper.\""
+          ]
+        },
+        "relevant_chunk_ranking": {
+          "confidence": "high",
+          "flags": [
+            "No chunk explicitly mentions the queried paper"
+          ],
+          "reasoning": "The relevant information appears in the top-ranked chunk(s) that describe what papers are in the corpus and corpus construction. Since no chunk contains \"Quantum Llamas,\" the most relevant evidence is effectively concentrated at the top because the retrieval is about corpus membership rather than a specific hit.",
+          "relevant_chunk_ranks": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "score": 5
+        },
+        "semantic_similarity": {
+          "confidence": "high",
+          "contradicting_claims": [],
+          "flags": [],
+          "reasoning": "The GENERATED_ANSWER and REFERENCE_ANSWER both convey the same meaning: the paper is not present / should be reported as not found. There are no contradictory factual claims relative to the reference.",
+          "score": 5
+        }
+      },
+      "metrics": {
+        "context": {
+          "characters": 77689,
+          "chunks": 15,
+          "max_characters": 26597,
+          "max_chunks": 5,
+          "max_prompt_characters": 27111,
+          "prompt_characters": 82612,
+          "unique_chunks": 8,
+          "utf8_bytes": 78085
+        },
+        "cost": {
+          "estimated_usd": 0.028175150000000003,
+          "known_usd": 0.028175150000000003,
+          "priced_calls": 10,
+          "provider_reported_calls": 10,
+          "rate_estimated_calls": 0
+        },
+        "latency_ms": {
+          "judge": 6940.558374975808,
+          "rag": 8468.45766925253,
+          "total": 15409.016044228338
+        },
+        "model_calls": {
+          "embedding": 3,
+          "judge": 1,
+          "rag": 6,
+          "total": 10
+        },
+        "pricing": {
+          "embedding_usd_per_million": null,
+          "input_usd_per_million": null,
+          "output_usd_per_million": null
+        },
+        "stages": {
+          "composer": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1547,
+              "prompt_characters": 1547,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.0004785,
+              "known_usd": 0.0004785,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 976.8450420815498,
+            "model_calls": 1,
+            "tokens": {
+              "input": 368,
+              "known_input": 368,
+              "known_output": 45,
+              "known_total": 413,
+              "output": 45,
+              "reported_calls": 1,
+              "total": 413
+            },
+            "tool_calls": 0
+          },
+          "coverage": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 1607,
+              "prompt_characters": 1607,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.000348,
+              "known_usd": 0.000348,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 745.5103340325877,
+            "model_calls": 1,
+            "tokens": {
+              "input": 374,
+              "known_input": 374,
+              "known_output": 15,
+              "known_total": 389,
+              "output": 15,
+              "reported_calls": 1,
+              "total": 389
+            },
+            "tool_calls": 0
+          },
+          "judge": {
+            "context": {
+              "characters": 36753,
+              "chunks": 8,
+              "max_characters": 36753,
+              "max_chunks": 8,
+              "max_prompt_characters": 41495,
+              "prompt_characters": 41495,
+              "unique_chunks": 8,
+              "utf8_bytes": 36989
+            },
+            "cost": {
+              "estimated_usd": 0.011409,
+              "known_usd": 0.011409,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 6940.558374975808,
+            "model_calls": 1,
+            "tokens": {
+              "input": 9872,
+              "known_input": 9872,
+              "known_output": 890,
+              "known_total": 10762,
+              "output": 890,
+              "reported_calls": 1,
+              "total": 10762
+            },
+            "tool_calls": 0
+          },
+          "planner": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 276,
+              "prompt_characters": 276,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 0.00041475,
+              "known_usd": 0.00041475,
+              "priced_calls": 1,
+              "provider_reported_calls": 1,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 1,
+            "latency_ms": 1422.6750419475138,
+            "model_calls": 1,
+            "tokens": {
+              "input": 73,
+              "known_input": 73,
+              "known_output": 80,
+              "known_total": 153,
+              "output": 80,
+              "reported_calls": 1,
+              "total": 153
+            },
+            "tool_calls": 0
+          },
+          "retrieval": {
+            "context": {
+              "characters": 0,
+              "chunks": 0,
+              "max_characters": 0,
+              "max_chunks": 0,
+              "max_prompt_characters": 0,
+              "prompt_characters": 0,
+              "unique_chunks": 0,
+              "utf8_bytes": 0
+            },
+            "cost": {
+              "estimated_usd": 1.4000000000000001e-06,
+              "known_usd": 1.4000000000000001e-06,
+              "priced_calls": 3,
+              "provider_reported_calls": 3,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 0,
+            "latency_ms": 1436.3352920627221,
+            "model_calls": 3,
+            "tokens": {
+              "input": 70,
+              "known_input": 70,
+              "known_output": 0,
+              "known_total": 70,
+              "output": 0,
+              "reported_calls": 3,
+              "total": 70
+            },
+            "tool_calls": 3
+          },
+          "subanswer": {
+            "context": {
+              "characters": 77689,
+              "chunks": 15,
+              "max_characters": 26597,
+              "max_chunks": 5,
+              "max_prompt_characters": 27111,
+              "prompt_characters": 79182,
+              "unique_chunks": 8,
+              "utf8_bytes": 78085
+            },
+            "cost": {
+              "estimated_usd": 0.0155235,
+              "known_usd": 0.0155235,
+              "priced_calls": 3,
+              "provider_reported_calls": 3,
+              "rate_estimated_calls": 0
+            },
+            "exchanges": 3,
+            "latency_ms": 3887.0919591281563,
+            "model_calls": 3,
+            "tokens": {
+              "input": 19588,
+              "known_input": 19588,
+              "known_output": 185,
+              "known_total": 19773,
+              "output": 185,
+              "reported_calls": 3,
+              "total": 19773
+            },
+            "tool_calls": 0
+          }
+        },
+        "tokens": {
+          "input": 30345,
+          "known_input": 30345,
+          "known_output": 1215,
+          "known_total": 31560,
+          "output": 1215,
+          "reported_calls": 10,
+          "total": 31560
+        },
+        "version": 1,
+        "workflow": {
+          "exchanges": 6,
+          "tool_calls": 3
+        }
+      },
+      "performance": {
+        "checks": {
+          "followup_queries": {
+            "limit": 2,
+            "status": "pass",
+            "value": 0
+          },
+          "rag_latency_ms": {
+            "limit": 60000,
+            "status": "pass",
+            "value": 8468.45766925253
+          },
+          "rag_model_calls": {
+            "limit": 12,
+            "status": "pass",
+            "value": 6
+          },
+          "retrievals": {
+            "limit": 7,
+            "status": "pass",
+            "value": 3
+          }
+        },
+        "status": "pass",
+        "version": 1
+      },
+      "retrieval_strategy": "hybrid",
+      "retrieved_chunks": [
+        {
+          "chunk_index": 154,
+          "filename": "DBLP_conf_snapl_2015.pdf",
+          "page": 158,
+          "paper_id": "DBLP_conf_snapl_2015",
+          "rank": 1,
+          "score": 0.6797,
+          "text": "144 Tracking the Flow of Ideas through the Programming Languages Literature\nSection 2.6). Ourfull-text corpuscontains one document for each of the 2,257 POPL and\nPLDI papers that have appeared as of February 2015. We usedpdftotext from the Xpdf\ntool suite5 to convert thepdf ﬁles from the ACM DL to raw text. For each document in\nboth corpora, we separately store metadata, recording its author list along with when and\nwhere it was published.\nOnce we had compiled the raw data for the two corpora, we converted it into a form that\nLDA-C can read: a document ﬁle that represents each document as a “bag of words.” Parsing\nforces us to decide which words are interesting and how to count those words. For example,\nthe word ‘we’ appears many times in academic writing, but it isn’t a meaningful topic word in\nthe way that ‘type’ or ‘ﬂow’ or ‘register’ are. So that we may focus on meaningful words, we\ndrop all words on astopword list from the document. We started with a standard stopword\nlist for English,6 amending it with two lists of words. First, we added words which appeared\nin more than 25% of the documents in our corpus. We also added words that felt irrelevant,\nsuch as ‘easily’, ‘sophisticated’, ‘interesting’, and ‘via’.\nOnce we winnowed out the stopwords, we had to turn each text into a bag of words: a\nlist pairing words with the number of times they occur. This process raises more questions\nrequiring judgment: Are ‘type’ and ‘types’ diﬀerent words? What about ‘typing’ and\n‘typical’? To answer such questions, we counted words as the same when they reduced to\nthe same uninﬂected word via NLTK’s7 WordNet [19] lemmatizer. In this case, ‘type’ and\n‘types’ both reduce to the uninﬂected word ‘type’, but ‘typing’ and ‘typical’ are left alone.\nFinally, we coalesced hyphenated words into single words, e.g., ‘object-oriented’ became\n‘objectoriented’ and ‘call-by-value’ became ‘callbyvalue’.\n2.3 Our topic models\nTopic models are parameterized by a numberk, which represents the desired number of\ntopics; at the moment, no machine learning techniques exist to automatically determine the\nappropriate number of topics. To explore this space, we used LDA-C to build topic models\nfor both corpora fork equal to 20, 50, 100, and 200.\nOn the abstract corpus, a typical run of LDA-C with 20 topics takes about 2 minutes on a\nfour-core 2.8Ghz Intel i7 with 16GB of RAM and a solid-state hard drive; simultaneous runs\nwith 200, 300, and 400 topics take just shy of two hours. On the full-text corpus, generating\nthe topic model fork=50 requires under an hour. It takes roughly 8 hours to generate the\ntopic model fork=200.\nOnce LDA-C has processed our corpus, it produces ﬁles indicating how much each word\nbelongs to a topic and how much each document belongs to each topic. We translate LDA-C’s\noutput to three ﬁles:\na human-readable listing of the top 10 words and top 10 papers for each topic;\na spreadsheet collating the metadata for each document (title, authors, year, and confer-\nence) with that document’s topic weights; and\na spreadsheet aggregating the total topic weights for each year of each conference.\nThe human-readable listing of top words and papers for each topic was a vital check on\nthe sanity of LDA-C’s output as we debugged our process; we also used it to assign names to\nthe topics when we made graphs.\n5 http://www.foolabs.com/xpdf/download.html\n6 https://pypi.python.org/pypi/stop-words/2014.5.26\n7 http://www.nltk.org/",
+          "title": "1st Summit on Advances in Programming Languages (SNAPL’15)"
+        },
+        {
+          "chunk_index": 9,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 10,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 2,
+          "score": 0.653,
+          "text": "TABLE VI\nCOMPARISON BETWEENLINTQ-LLM+COTANDLINTQ-LLM+RAGBY TYPE OF QUANTUM PROGRAMMING PROBLEM.\nQuantum Problem Number of examples available\nin RAG Knowledge base\nLintQ-LLM+CoT LintQ-LLM+RAG RAG Impact (RAG–COT)\nPrec. Rec. F1 Prec. Rec. F1 ∆Prec.∆Rec.∆F1\nOpAfterTransp 4 1.00 1.00 1.00 1.00 1.00 1.00 0.00 0.00 0.00\nGhostCompose 6 1.00 1.00 1.00 1.00 1.00 1.00 0.00 0.00 0.00\nOldIdenGate 10 1.00 1.00 1.00 1.00 1.00 1.00 0.00 0.00 0.00\nCondWoMeas 14 0.83 1.00 0.91 0.64 0.80 0.73 -0.17 -0.20 -0.18\nDoubleMeas 15 0.64 1.00 0.80 0.86 1.00 0.92 0.19 0.00 0.12\nMeasAllAbuse 16 1.00 1.00 1.00 1.00 1.00 1.00 0.00 0.00 0.00\nInsuffClasReg 18 0.09 0.64 0.16 0.22 0.64 0.33 0.13 0.00 0.17\nOversizedCircuit 20 0.11 0.33 0.17 0.11 0.67 0.19 0.00 0.33 0.02\nConstClasBit 25 0.42 1.00 0.59 0.38 1.00 0.55 -0.04 0.00 -0.04\nOpAfterMeas 38 0.69 1.00 0.82 0.69 0.72 0.71 0.0 -0.28 -0.11\nFinally, to construct the Evaluation Corpus and ensure\nadequate representation of extremely rare problems, we in-\njected synthetic quantum programming problems into a sub-\nset of files. While these injections structurally mirrored\ndocumented quantum programming problems, they might\nnot perfectly replicate the complex topologies of organic,\ndeveloper-induced problems. Finally, the semantic retrieval\nmechanism in LintQ-LLM+RAG relies exclusively on the\ntext-embedding-3-largemodel. The choice of the em-\nbedding model and distance metric directly governs the quality\nof the injected one-shot examples. A different embedding\nstrategy could potentially impact the results.\nb) External Validity:While the abstract generative nature\nof LLMs theoretically allows for the analysis of other quantum\nlanguages such as Cirq or Q#, we cannot claim that our\nquantitative results generalize beyond the Qiskit ecosystem [1].\nFinally, we cannot guarantee that our results perfectly gener-\nalize to all quantum programs developed in the wild. Although\nour stratified Evaluation Corpus consists of 55 files covering\nall ten recognized quantum programming problem families, it\nmay not encapsulate the entirety of syntactic and structural\nvariations present in larger-scale quantum repositories. To\npartially mitigate this threat, we provide a replication package\navailable online [21].\nc) Construct Validity:A significant threat to construct\nvalidity lies in how the “ground truth” was established. Specif-\nically, our manual validation was performed by a single human\nannotator. This introduces inherent risks associated with the\nsubjective interpretation of quantum programming problems.\nTo mitigate this threat, the annotator (the first author) strictly\nadhered to the formal problem definitions and code patterns\nexhaustively documented in prior literature [2]. In case of\ndoubts, which never occurred, we planned for the annotator\nto consult with one of the other authors to resolve them.\nWhile Precision, Recall, and F-score are standard metrics,\nthey treat all quantum programming problems equally. That\nis, there could be quantum programming problems less critical\n(e.g., OldIdenGate) than others because they are less detrimen-\ntal, and we did not take this aspect into account.\nVIII. CONCLUSION\nWe explored the feasibility and potential of LLMs to\nact as expert linters for quantum program analysis. Specif-\nically, we introduced and assessed LintQ-LLM+CoT and\nLintQ-LLM+RAG, two variants of the LintQ-LLM proposed\nin prior work [3], by integrating a multi-prompt Chain-\nof-Thought (CoT) pipeline with and without a Retrieval-\nAugmented Generation (RAG) extension grounded in man-\nually verified quantum programming problem examples. To\nevaluate LintQ-LLM+CoT and LintQ-LLM+RAG, we applied\nthem to a comprehensive, stratified Evaluation Corpus of\n55 quantum programs. Our empirical results clearly indicate\nthat transitioning from rigid, deterministic queries to flexible\nLLM-based reasoning yields a massive uplift in detection\ncapabilities. While state-of-the-art static analysis tools like\nLintQ inherently struggle with adaptability, the foundational\nLintQ-LLM+CoT achieved the highest overall capability (F1-\nscore of 0.70) by effectively generalizing across structural\nnuances. Concurrently, LintQ-LLM+RAG demonstrated the\nhighest correctness metric (Precision of 0.56) by seamlessly\nutilizing context-informed, one-shot examples to reject mis-\nleading patterns and actively minimize FP alerts.\nLooking ahead, our study sets the stage for the following\nfuture research directions:\n•AST-Aware Embeddings:Our preliminary testing\nshowed that standard semantic embeddings (like those\nin FAISS) are highly sensitive to syntactic obfuscation.\nFuture efforts must focus on developing structural or\nAbstract Syntax Tree (AST)-aware embedding techniques\nthat withstand code obfuscation while preserving the deep\nsemantic context of quantum operations.\n•Human-Centered Interactions:As LLM-powered lin-\nters mature into IDEs, evaluating the human dimension\nbecomes paramount. Future human-based empirical stud-\nies should explore how developers perceive, interact with,\nand act on LLM-generated explanations compared with\ntraditional linter outputs, and possibly explore hybrid\nsystems that merge strict static tracking with generative\nrecommendations.",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 2,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 3,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 3,
+          "score": 0.6256,
+          "text": "TABLE I\nQUANTUM-SPECIFIC PROGRAMMING PROBLEMS AND THEIR\nDESCRIPTIONS.\nProblem Description\nMeasurement- or Gate-related Problems\nDoubleMeas Two consecutive measurements are performed on\nthe same qubit state.\nOpAfterMeas A gate is applied to a qubit after it has already\nbeen measured.\nMeasAllAbuse Measurement results are stored in a newly and\nimplicitly created register, despite the presence of\nan existing classical register.\nCondWoMeas A conditional gate is applied without measuring\nthe associated register.\nConstClasBit A qubit is measured without undergoing any prior\ntransformation.\nResource Allocation Problems\nInsuffClasReg There are not enough classical bits to store the\nmeasurement results of all qubits.\nOversizedCircuit The quantum register includes qubits that remain\nunused.\nGhostCompose Two circuits are composed, but the resulting com-\nposed circuit is not utilized.\nImplicit API Constraint Violations\nOpAfterOpt A gate is applied to the circuit after transpilation.\nOldIdenGate An identity gate is created using an API that has\nbeen removed.\ndreg = QuantumRegister(1, 'd’)\nnreg = QuantumRegister(2, 'n’)\ncreg = ClassicalRegister(2, 'c’)\ncirc = QuantumCircuit(dreg,nreg,creg)\nwhile found_path == False:\ncirc.h(0)\ncirc.cx(0,1)\ncirc.x(0)\ncirc.cx(0,2)\ncirc.x(0)\ncirc.measure(nreg[:2],creg)\nFig. 1. An example of code affected byOpAfterMeas. The portion of the\nquantum programming affected by this problem is highlighted in the red\nellipse: starting from the second iteration of the while loop, quantum gates\nare applied to qubits that have already been measured.\nOpAfterMeas problem, while Table I summarizes these quan-\ntum programming problems (presented in the LintQ work [2])\nby providing a short description for each of them.\nLintQ [2] is the state-of-the-art static analysis tool specifi-\ncally designed to detect quantum-specific problems in source\ncode written using Qiskit [1]. It introduces a formal set of\nabstractions representing common quantum computing con-\ncepts, such as quantum registers, classical registers, quan-\ntum circuits, gates, qubit usage, and measurements. These\nabstractions provide a high-level representation of the pro-\ngram, enabling LintQ to perform robust static analyses rapidly\nwithout needing to thoroughly process the lower-level Python\nimplementation details.\nBuilt upon these abstractions, LintQ leverages CodeQL [15],\na general-purpose, robust static analysis engine, to execute\nPrompt \ntemplate\nProblem descriptions\nQiskit \nfile \nunder \nanalysis\nProblem examples\nPreprocessing\nPrompt generation\nQiskit file annotated \nwith line numbers\nPrompt instance for one problem\nLLM invocation\n«Repeat for every problem» \nWarnings\nLintQ-LLM\nbuilt-in datadata data flow ActionLegend\nFig. 2. Architecture and data flow overview of LintQ-LLM.\ndeclarative queries over the behavioral representation of the\nQiskit code. Each analysis corresponds to a query verifying\nagainst the ten problems described in Table I. A previous\nempirical evaluation of LintQ on 7568 real-world Qiskit\nprograms achieved an overall precision of 62.5% [2]. While\nthis demonstrated the feasibility and effectiveness of query-\nbased problem detection, LintQ inherently relies on manually\ncrafted deterministic patterns and rules. This architectural\nchoice demands significant manual effort to maintain and lim-\nits the tool’s adaptability to evolving quantum programming\npractices, thus highlighting the need for novel, more adaptable\nsolutions to quality assurance in quantum software.\nC. LLM-based Quantum Problem Detection: LintQ-LLM\nTo overcome the rigid nature of rule-based linters, prior\nwork introduced LintQ-LLM [3], an LLM-based linting ap-\nproach designed to identify quantum programming problems\nin Qiskit source code. The core logic to analyze a Qiskit\ncode fragment relies on querying an LLM independently for\neach type of problem, ensuring high specificity while strictly\nrespecting the operational context window of the model.\nFigure 2 illustrates the overall architecture of LintQ-LLM.\nLintQ-LLM analyzes one file at a time and prepares a separate\nprompt for each type of problem: in each prompt, it inserts\nonly the instructions related to that check (i.e., a description\nof the problem and an example) along with the code to be\nanalyzed. This keeps the context shorter, the code occupies\nmore space in the token budget, and the model does not have\nto handle so many instructions at once, reducing the risk of\nconfusion between the various constraints.\nThe problem detection strategy in LintQ-LLM relies on a\nsingle-prompt interaction. A zero-shot prompt is constructed\nto instruct the model to act as a source code linter with\nexpert knowledge in quantum software. The prompt specifies\nthe exact problem to detect, including its name, a detailed\ndescription, a generic example of the problem, and embeds\nthe target source code to be analyzed. Finally, it mandates",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 0,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 1,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 4,
+          "score": 0.6226,
+          "text": "Beyond Rules: LLM-Powered Linting for Quantum\nPrograms\nPietro Cassieri\nDepartment of Computer Science\nUniversity of Salerno\nSalerno, Italy\npcassieri@unisa.it\nGiuseppe Scanniello\nDepartment of Computer Science\nUniversity of Salerno\nSalerno, Italy\ngscanniello@unisa.it\nSeung Yeob Shin\nUniversity of Luxembourg\nLuxembourg, Luxembourg\nseungyeob.shin@uni.lu\nFabrizio Pastore\nUniversity of Luxembourg\nLuxembourg, Luxembourg\nfabrizio.pastore@uni.lu\nDomenico Bianculli\nUniversity of Luxembourg\nLuxembourg, Luxembourg\ndomenico.bianculli@uni.lu\nAbstract—As quantum computing transitions from theoretical\nexperimentation to its practical application, the reliability of\nquantum software has become a critical bottleneck. Traditional\nstatic analysis techniques for quantum programs—primarily\nrule-based linters—are increasingly inadequate; they struggle to\nkeep pace with rapidly evolving APIs and fail to capture complex,\ncontext-dependent quantum programming problems. This results\nin high maintenance overhead and limited detection capabili-\nties. In this paper, we introduce LintQ-LLM+CoT and LintQ-\nLLM+RAG, novel approaches that redefine the detection of\nquantum programming problems by employing Large Language\nModels (LLMs) specialized, respectively, via Chain-of-Thought\n(CoT) prompting and a Retrieval-Augmented Generation (RAG)\nsystem that grounds the model’s reasoning in a curated knowl-\nedge base of verified quantum programming problems and best\npractices. We conducted a rigorous and manual comparative\nevaluation against the state-of-the-art rule-based tool, LintQ,\nusing a corpus of 55 Qiskit programs. Our results show that\nLLM-based approaches, with and without RAG, outperform\nLintQ in terms of quantum programming problems detection\ncorrectness (precision) and completeness (recall). Overall, LLM-\nbased approaches were more effective than LintQ (F1-score equal\nto 0.70 and 0.68 vs. 0.41). Furthermore, the RAG-enhanced\nvariant demonstrated a slightly superior precision, effectively\nreducing false positives. Our findings suggest that LLMs provide\na scalable and adaptive foundation for the next generation of\nlinters in quantum software engineering.\nIndex Terms—Quantum Software Engineering, Static Analysis,\nLLMs, RAG, Qiskit.\nI. INTRODUCTION\nEnsuring the reliability of quantum software has become a\nparamount challenge as quantum computing transitions from\na theoretical pursuit to a practical engineering discipline. In\nthis evolving landscape, developers increasingly rely on tools\nlike Qiskit [1] to manipulate both quantum and classical bits.\nHowever, the unique principles of quantum mechanics—such\nas superposition, entanglement, and the collapse of quantum\nstates upon measurement—introduce specialized programming\n“anti-patterns” or bugs that traditional classical software anal-\nysis tools are often ill-equipped to detect.\nRecent advances in the quantum research field have iden-\ntified ten common, quantum-specific, programming problems,\ncategorized into families such as gate-related issues, resource\nallocation errors, and implicit API constraint violations. To\naddress these, state-of-the-art static analysis frameworks like\nLintQ [2] have been developed. While LintQ achieves no-\ntable precision by utilizing declarative queries over formal\nabstractions of quantum concepts, it relies heavily on man-\nually crafted deterministic rules [2]. This reliance creates a\nsignificant maintenance burden and limits the tool’s ability to\nadapt to the rapidly evolving nature of quantum APIs [3].\nIn previous work [3], some of the authors of this paper\nintroduced the foundational concepts for LintQ-LLM, an ap-\nproach that leverages Large Language Models (LLMs) to\nautomate the detection of quantum programming problems in\nQiskit programs. This approach was limited to single-prompt\ninteractions and did not fully utilize the reasoning capabilities\nof the models.\nIn this paper, we improve LintQ-LLM by introducing a\nmulti-prompt Chain-of-Thought (CoT) interaction designed to\nguide the model through strategic planning, code understand-\ning, and localizing the problems. By moving away from rigid\nrules and toward the flexible reasoning capabilities of LLMs,\nthis enhanced approach, named LintQ-LLM+CoT, provides\na more adaptable solution to detect programming problems.\nIn addition, we also propose LintQ-LLM+RAG, a variant of\nLintQ-LLM+CoT that uses a Retrieval-Augmented Generation\n(RAG) extension to further bridge the gap between flexible\nreasoning and formal correctness. The overarching goal of this\nvariant is to ground the model’s reasoning in a specialized\nknowledge base of manually verified true positive instances\n(i.e., actual quantum programming problems). By providing\nthe model with “one-shot” learning examples, with semantic\nsimilarity to the analyzed code, we aim to improve the\ncorrectness of the analysis and reduce the hallucination of false\npositives (FPs).\narXiv:2605.03943v1  [cs.SE]  5 May 2026",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 4,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 5,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 5,
+          "score": 0.5713,
+          "text": "You are a source code linter with expert knowledge in quantum software. Your response format must be a single JSON object.\nYou are an **expert Qiskit source-code linter**. Your task is to analyze the provided Qiskit source code and detect all instances of the **[PROBLEM NAME AND SHORT DESCRIPTION]**.\n### Problem Description\nIdentify **every** occurrence of the **[PROBLEM NAME]** issue. Leverage your in-depth knowledge of Qiskit APIs and programming practices to accurately detect such cases.\n**Details / Examples:**\n{PROBLEM LONG DESCRIPTION AND EXAMPLE}\n### Step 1 Strategic Planning\nBegin with a concise checklist (3-1 bullets) outlining the conceptual sub-tasks you will perform to ensure a complete and reproducible linting process. Start by formulating a **detection strategy** tailored to the [PROBLEM\nNAME AND SHORT DESCRIPTION] issue. Include:\n- A concise conceptual overview of this issue in Qiskit.\n- The **primary API elements or code patterns** that may reveal it.\n- The **logical checks or contextual factors** that confirm its presence.\n- A clear, stepwise search and verification plan.\nCreate this as the \"Detection Strategy\" before analyzing the code.\n### Step 2 Code Understanding\nCarefully review the code between `<code>` and `</code>`. Briefly summarize its essential components, including:\n- Definitions of QuantumCircuit, QuantumRegister, and ClassicalRegisterS\n- Core Qiskit operations (e.g., `.measure`, `.h`, `.cx`, `.compose`, `.transpile`, etc.)\n- Significant sequences, control flows, or resets\nCreate a short **\"Code Summary\"** (3-6 bullet points).\n### Step 3 Problem Detection Logic\nApply your **Detection Strategy** to thoroughly inspect the code for every instance of **[PROBLEM NAME AND SHORT DESCRIPTION]**:\n1. Pinpoint relevant function invocations or Qiskit API usages.\n2. Examine the context around each pattern for logical soundness.\n3. Confirm that all criteria for **[PROBLEM NAME]** are satisfied.\n4. Track usage of quantum and classical bits as needed.\n5. Note and document each confirmed occurrence.\nAfter analysis, validate your detection by quickly verifying that findings are directly supported by the Detection Strategy and the observed code; if not, self-correct before reporting.\n### Step 4 Report Results\nFor each detected case, provide an object matching this JSON schema:\n```\n\"snippet\": <string, exact affected line(s) of code>,\n\"lines\": <integer array, 1-based line numbers>,\n\"explanation\": <string, justification based on your reasoning>\n```\n- List each occurrence as a separate object in a JSON array.\n- Always use line numbers that match the input code.\n- If there are no instances, output only: the JSON with a single warning but the warning with all empty fields.\n## Source Code to Analyze\nPlease analyze the following source code for the **[PROBLEM NAME AND SHORT DESCRIPTION]** problem. Each line includes its line number in a comment.\n<code>\n[LINE NUMBERED CODE]\n</code>\nSystem Instructions\nAutomated User Prompt 1\nAutomated User Prompt 2\nFig. 3. The multi-prompt structure used by LintQ-LLM+CoT and LintQ-LLM+RAG. The interaction consists of a system prompt and two sequential automated\nuser prompts designed to first establish a detection strategy with examples and then analyze the target source code.\nFig. 4. Knowledge Base creation process for the RAG integration.\nbedding constraint window. Assuming the valid 8192 bounds\nstand, thetext-embedding-3-largemodel builds a\nvector representation of the current file. Due to the domain\nspecificity of distinct problem types, the system operates\nFig. 5. Retrieval mechanism integration mapped in LintQ-LLM+CoT.\nacross separate FAISS indices designed independently for each\nof the ten investigated problems.\nFor a specific quantum programming problem analysis, the\nframework queries the aligned FAISS index, recovering the\nsingle most semantically similar verified file (k= 1). By",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 5,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 6,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 6,
+          "score": 0.5924,
+          "text": "retrieving a known, mathematically comparable instance con-\ntaining the explicit problem, the LintQ-LLM+RAG architec-\nture dynamically structures a reference snippet. This snippet,\ncoupled with its embedded description of the problem’s exact\nlocation, is then injected into the prompt. Consequently, this\nguides the final LLM validation by grounding its judgment\nin a high-quality, context-aware reference example retrieved\nfrom the FAISS knowledge base.\nIV. EMPIRICALSTUDYDESIGN\nOur overarching goal is to assess whether shifting from\nrule-based static analysis to LLM-driven reasoning provides\nbenefits in the detection of quantum problems in Qiskit\nprograms. Given this goal, we formulate the following two\nresearch questions (RQs):\n•RQ1:How do LintQ-LLM+CoT and LintQ-LLM+RAG\ncompare to LintQ in terms of effectiveness, correctness,\nand completeness in detecting quantum programming\nproblems?\nIt focuses on a comparative evaluation against the current\nstate of the art, aiming to determine whether the proposed\nLLM-based techniques represent a meaningful advance-\nment over traditional rule-based static analysis.\n•RQ2:To what extent does LintQ-LLM+RAG enhance\nLintQ-LLM+CoT’s ability to detect quantum program-\nming problems with respect to correctness, completeness,\nand effectiveness?\nThis RQ narrows the focus to the individual LLM-based\napproaches, specifically investigating the contribution of\nRAG (if any) in improving detection performance (cor-\nrectness, completeness, and effectiveness).\nThe rest of this section describes the experimental setup,\nthe construction of the evaluation corpus, and the protocol\nfollowed to assess the efficacy of LintQ-LLM+CoT and LintQ-\nLLM+RAG. Figure 6 provides an overview of the used design.\nA. Evaluation Corpus Construction\nTo address our RQs, we constructed a balanced stratified\nevaluation corpus. The process began with the original LintQ\ncorpus consisting of 7568 Qiskit files. We first excluded the\n157 files manually verified by Paltenghi et al. [2] and already\nincorporated into the RAG knowledge base. The remaining\nsubset, consisting of 7411 files, was further filtered to include\nonly those with a token count within the 8192 limit of the\nchosen embedding model, ensuring that the RAG retrieval\nmechanism could operate on the entire file content.\nFrom this filtered subset, we performed a stratified selection\nfocused on potential quantum problems identified by unveri-\nfied LintQ reports. Our objective was to curate a balanced\ndataset of 55 files: up to five files for each of the ten supported\nquantum problem categories and five files flagged as clean\n(zero warnings) to serve as a control group. At this stage, the\nactual presence of the problems was unknown, as the selection\nrelied on the original tool’s unverified output.\nFor categories where the filtered subset contained fewer\nthan five eligible files (i.e., extremely rare problem types),\nTABLE III\nCOMPOSITION OF THEEVALUATIONCORPUS ACROSS ALL QUANTUM\nPROBLEM CATEGORIES.\nQuantum Problem Real Files Injected Files Total\nClean Files 5 0 5\nCondWoMeas 3 2 5\nConstClasBit 5 0 5\nDoubleMeas 5 0 5\nGhostCompose 1 4 5\nInsuffClasReg 5 0 5\nMeasAllAbuse 4 1 5\nOldIdenGate 5 0 5\nOpAfterMeas 5 0 5\nOversizedCircuit 5 0 5\nOpAfterTransp 0 5 5\nTotal 43 12 55\nwe utilized problem injection [20]. We manually introduced\nspecific quantum problems into verified clean files following\nthe patterns documented by Paltenghi et al. [2]. Concretely,\nwe first analyzed the formal definitions and example instances\nof each problem provided in the LintQ work [2], and then\nreproduced those patterns by modifying existing circuits that\ndid not originally exhibit the problem. This process resulted\nin a final Evaluation Corpus composed of 43 real-world files\nand 12 synthetic (injected) files, as detailed in Table III. Some\nof the files selected had multiple instances of different LintQ\nwarnings; in fact, at the end of the sampling, and after the\nanalysis of the synthetic files with LintQ, we had a total of\n77 warnings across the 55 files.\nB. Experimental Procedure\nThe effectiveness of the proposed approaches was evaluated\nthrough four parallel identification actions performed on the\nEvaluation Corpus:\n1)Manual Validation: A human annotator (the first author)\nconducted a line-by-line analysis of all 55 files to identify\nevery occurrence of each quantum problem, establishing\nthe Ground Truth for the study.\n2)Baseline Tool Execution: We retrieved the original LintQ\nwarnings for the 43 real-world files from the primary re-\nports. For the 12 synthetic files, we executed the original\nrule-based LintQ to generate the baseline warnings.\n3)LintQ-LLM+CoT Inference: The 55 files were analyzed\nby LintQ-LLM+CoT to generate warnings.\n4)LintQ-LLM+RAG Inference: The Evaluation Corpus\nwas processed by the retrieval-enhanced approach to\ngenerate warnings.\nFinally, the outputs from LintQ, LintQ-LLM+CoT, and LintQ-\nLLM+RAG were compared against the established Ground\nTruth to calculate classification metrics.\nC. Evaluation Metrics\nTo compute the metrics needed to study our RQs, we had\nto determine:",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        },
+        {
+          "chunk_index": 153,
+          "filename": "DBLP_conf_snapl_2015.pdf",
+          "page": 157,
+          "paper_id": "DBLP_conf_snapl_2015",
+          "rank": 7,
+          "score": 0.5791,
+          "text": "M. Greenberg, K. Fisher, and D. Walker 143\nFigure 2LDA inference for 20 topics run on a corpus of 4,355 titles and abstracts from SIGPLAN\nconferences and applied to the example paper “Gradual Typing.” The probability distribution at\nthe left shows the inferred topic mixture for the paper. The boxes at the right show the 10 most\nprobable words for the four topics present in the paper.\nOf course the purpose of topic modeling is not to generate random documents but rather\nto automatically discover the topics present in a corpus. Weobserve the documents, but the\ntopic structure ishidden, including the set of topics, the topic distribution for each document,\nand the per-document, per-word topic assignment. The challenge of this area of research is\nto reconstruct the hidden topic structure from an observed corpus, essentially running the\ngenerative process backward, attempting to answer the question: What fully-deﬁned topic\nmodel most likely explains the given corpus?\nWe ran David Blei’s LDA-C2 over a corpus of 4,355 titles and abstracts from ICFP,\nOOPSLA, PLDI, and POPL papers that are available in the ACM Digital Library, having\nset the number of topics at 20.3 This process produced a topic modelM, judged to be\nthe most likely 20-topic model to explain the SIGPLAN corpus given a set of 20 “seed”\npapers, randomly selected by LDA. We then appliedM to the “Gradual Typing” paper\nto impute the topic distribution that best explains the content of that paper. The results\nappear in Figure 2. This histogram on the left shows that althoughM could have assigned\nany probability distribution to the twenty topics, it selected only four. The right side of\nthe ﬁgure shows the most likely words associated with those four topics. Looking at these\nwords, we can see that three of the topics correspond to the ones we higlighted in Figure 1:\nComponents, Type Systems, and OOP. LDA identiﬁed a fourth topic, whose words suggest it\nmight be called “Language Design.” Note that LDA does not produce the titles for the topics;\nwe manually came up with names for them based on the most likely words (see Section 2.4).\nAutomatically inferring such titles is an open research problem.\n2.2 The corpora\nWe used the SIGPLAN research papers stored in the ACM Digital Library (DL)4 to build\ntwo distinct corpora for this project. Ourabstract corpus contains one “document” for\nevery paper from every available year of ICFP (1996–2014), OOPSLA (1986–89,1991–2014),\nPLDI (1988–2014), and POPL (1973,1975–2015). Each such document is comprised of the\nconcantenation of the paper title, its author list, and its abstract. The scraping process we\nused to build this corpus is imperfect – it doesn’t ﬁnd every paper listed in the DL (see\n2 http://www.cs.princeton.edu/~blei/lda-c/\n3 One of the limitations of LDA is that it will not help decide how many topics appear in a corpus. The\nuser must decide in advance and seed the inference mechanism with the chosen number.\n4 http://dl.acm.org/; SIGPLAN conferences are available fromhttp://dl.acm.org/sig.cfm?id=SP946\nSNAPL 2015",
+          "title": "1st Summit on Advances in Programming Languages (SNAPL’15)"
+        },
+        {
+          "chunk_index": 1,
+          "filename": "DBLP_series_natosec_40.pdf",
+          "page": 2,
+          "paper_id": "DBLP_series_natosec_40",
+          "rank": 8,
+          "score": 0.5619,
+          "text": "We also conducted a comprehensive empirical evaluation\nof both LintQ-LLM+CoT and LintQ-LLM+RAG in terms of\ndetection correctness (precision), completeness (recall), and\neffectiveness (F1-score) of quantum programming problems.\nSpecifically, we performed a manual, rigorous comparative\nevaluation of LintQ-LLM+CoT and LintQ-LLM+RAG against\nthe state-of-the-art rule-based tool, LintQ, using a corpus of 55\nQiskit programs, including both real-world code and synthetic\nfault-injected files.\nOur results show that LintQ-LLM+CoT, with and with-\nout RAG, outperforms LintQ in terms of correctness and\ncompleteness. Also, the effectiveness of the LLM-based ap-\nproaches is higher than that of LintQ (0.70 and 0.68 vs. 0.41).\nFurthermore, the RAG-enhanced variant yielded a slightly\nsuperior precision, effectively reducing FPs. In summary, our\nresults suggest that LLMs provide a scalable and adaptive\nfoundation for the next generation of quantum software quality\nassurance tools (e.g., linters).\nTo summarize, this paper makes the following contributions:\n•A multi-prompt CoT pipeline for LintQ-LLM, namely\nLintQ-LLM+CoT, which enhances the foundational\nLLM-based linting concept introduced in prior work [3],\nas well as LintQ-LLM+RAG, a variant of LintQ-\nLLM+CoT that uses RAG to ground reasoning in verified\nquantum programming problem examples.\n•A rigorous empirical assessment of LintQ, LintQ-\nLLM+CoT, and LintQ-LLM+RAG in terms of effec-\ntiveness as well as correctness and completeness of the\ndetected quantum programming problems.\nII. BACKGROUND ANDRELATEDWORK\nThis section establishes the foundational concepts and re-\nlated literature framing our work.\nA. Quantum Software Testing and Analysis\nSeveral automated approaches have been proposed to en-\nsure the correctness of quantum compilers and simulators.\nOne prominent example is QDiff [4], which adapts differ-\nential testing to quantum software. It generates semantically\nequivalent program variants through source-to-source trans-\nformations and compares their outputs across different back-\nends and optimization levels using statistical tests such as\nthe Kolmogorov–Smirnov test. Similarly, MorphQ [5] applies\nmetamorphic testing to the Qiskit toolchain by transforming\ncircuits—for instance, by changing basis gates or converting\nto and from OpenQASM—and checking whether expected re-\nlationships between outputs hold. More recently, Fuzz4All [6]\nexplores universal fuzzing for quantum systems by leveraging\nLLMs to generate and mutate diverse, syntactically valid\nprograms that can stress-test quantum platforms.\nTesting quantum software poses challenges distinct from\nthose in classical computing, as highlighted by Miranskyy et\nal. [7]. Quantum programs are inherently probabilistic, quan-\ntum states cannot be copied due to the no-cloning theorem,\nand any measurement irreversibly collapses the state. Together,\nthese properties make it difficult to observe, reproduce, and\nvalidate program behavior, complicating the entire testing\nprocess. Testing has largely focused on dynamic techniques\nthat can handle probabilistic outputs. Quito, proposed by Ali et\nal. [8], introduces input and output coverage criteria combined\nwith statistical oracles, such as the Wilcoxon signed-rank\ntest, to assess whether a test passes or fails over multiple\nexecutions. In a similar vein, QuanFuzz [9] uses search-\nbased techniques, including genetic algorithms, to generate\ninputs that maximize coverage of quantum-relevant behaviors,\nparticularly around measurement operations.\nResearchers have also proposed runtime assertion mecha-\nnisms to address the intrinsic difficulty of inspecting interme-\ndiate quantum states. For example, Huang and Martonosi [10]\nintroduced statistical assertions based on Chi-square tests\nto check whether observed measurement distributions match\nexpected outcomes. Differently, Li et al. [11] proposed Proq,\na projection-based approach grounded in Birkhoff–von Neu-\nmann quantum logic. By representing predicates as projections\nonto subspaces, Proq enables partial verification of inter-\nmediate states using local measurements and ancilla qubits,\nreducing the risk of collapsing the entire quantum state.\nDespite their shown effectiveness, dynamic approaches gen-\nerally require repeated program execution. This can be costly\nin terms of time and resources, especially when running on\nnoisy intermediate-scale quantum (NISQ) hardware, where\nresults are affected by noise and limited qubit fidelity. These\nlimitations have motivated increasing interest in static analysis\ntechniques. In fact, static analysis avoids execution altogether,\nsidestepping both measurement-related issues and hardware\nconstraints. For example, QSmell [12] identifies quantum-\nspecific code smells—such as overly long circuits or mis-\naligned qubit mappings—that may degrade performance or\nreliability. QChecker [13] focuses on problem detection by\nconstructing specialized abstract syntax trees (ASTs) and\nmatching extracted properties against known problem pat-\nterns from the Bugs4Q benchmark. Meanwhile, QCPG [14]\nextends classical code property graphs to the quantum do-\nmain, integrating ASTs, control-flow graphs, and program-\ndependence graphs to model quantum constructs like qubits,\ngates, and measurements, enabling problem detection through\ngraph queries. Unlike these dynamic and rule-based static\napproaches, our work leverages LLM to perform quantum\nlinting. By employing multi-prompt CoT reasoning and RAG,\nwe provide a more flexible approach that generalizes across\nevolving APIs without requiring manually crafted rules.\nB. Quantum Problem Detection: LintQ\nQuantum programming problems frequently arise when\ndevelopers misuse quantum constructs or misunderstand the\nunderlying quantum properties. Recently, studies have cata-\nloged these issues to aid in the development of automated\nanalysis tools. In particular, ten common quantum-specific\nprogramming problems have been identified and categorized\ninto three main families: measurement- or gate-related prob-\nlems, resource allocation problems, and implicit API constraint\nviolations [2]. In Figure 1, we show an example of the",
+          "title": "Beyond Rules: LLM-Powered Linting for Quantum Programs"
+        }
+      ]
+    }
+  ],
+  "schema": "rag-evaluation-results",
+  "schema_version": 3,
+  "summary": {
+    "failed": 0,
+    "succeeded": 2,
+    "total": 2
+  }
+}

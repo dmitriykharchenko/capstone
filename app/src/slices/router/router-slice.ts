@@ -4,6 +4,7 @@ import type { StoreAction, StoreReducerFunction } from "@augmentcode/themis/type
 import { initialRouterState, type AppRoute, type RouterState } from "./router-types";
 
 export const navigateTo = createAction<[route: AppRoute]>("router/navigate");
+export const replaceWith = createAction<[route: AppRoute]>("router/replace");
 export const routeChanged = createAction<[route: AppRoute]>("router/changed");
 
 export const routerReducer: StoreReducerFunction<RouterState> =

@@ -13,6 +13,7 @@ import {
   initialEvaluationState,
   recordEvaluationCase,
   startEvaluationCase,
+  startEvaluationRetryRound,
   type EvaluationState,
 } from "./evaluation-types";
 
@@ -25,6 +26,7 @@ export const evaluationStarted = createAction<
 export const evaluationCaseStarted = createAction<[caseIndex: number]>(
   "evaluation/caseStarted",
 );
+export const evaluationRetryRoundStarted = createAction<[round: number, pending: number]>("evaluation/retryRoundStarted");
 export const evaluationCaseSucceeded = createAction<
   [result: EvaluationCaseResult, completed: number, total: number]
 >("evaluation/caseSucceeded");
@@ -74,6 +76,10 @@ export const evaluationReducer: StoreReducerFunction<EvaluationState> =
       evaluationCaseStarted,
       (state: EvaluationState, action: StoreAction<[number]>) =>
         startEvaluationCase(state, action.payload[0]),
+    )
+    .with(
+      evaluationRetryRoundStarted,
+      (state: EvaluationState, action: StoreAction<[number, number]>) => startEvaluationRetryRound(state, ...action.payload),
     )
     .with(
       evaluationCaseSucceeded,

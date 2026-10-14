@@ -5,11 +5,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { orchestrationApi } from "./orchestration-api";
 export type { OrchestrationEvent, SnapshotEvent, TurnIdentity } from "./orchestration-api";
-import {
-  parseGraphNeighborhoodPayload,
-  type GraphNeighborhoodResponse,
-} from "./graph-types";
-
 import type {
   EvaluationStreamEvent,
   EvaluationTestCase,
@@ -31,18 +26,14 @@ export type {
   EvaluationStreamEvent,
   EvaluationTestCase,
 } from "./evaluation-types";
-export type {
-  GraphEdge,
-  GraphEdgeKind,
-  GraphNeighborhoodResponse,
-  GraphNode,
-  GraphNodeKind,
-} from "./graph-types";
 
 export interface PaperInfo {
   id: string;
   filename: string;
-  title: string;
+  title: string | null;
+  authors: string[];
+  topics: string[];
+  metadata_status: "available" | "missing" | "unavailable";
   size_bytes: number;
 }
 
@@ -51,6 +42,32 @@ export interface PdfData {
   filename: string;
   mime_type: string;
   bytes: number[];
+}
+
+// One persisted per-paper indexing outcome, returned by `paper_statuses` so the
+// UI can restore indicators after a restart.
+export interface PaperStatusInfo {
+  paper_id: string;
+  filename: string;
+  status: string;
+  chunk_count: number;
+  error: string | null;
+  updated_at: string;
+}
+
+// Coverage of the persisted BM25 lexical index, returned by `bm25_status`. The
+// UI marks a paper's BM25 dot as indexed when its id appears in `paper_ids`.
+export interface Bm25StatusInfo {
+  built: boolean;
+  chunk_count: number;
+  paper_ids: string[];
+}
+
+// Outcome of `reset_all_indices`: which of the three paper indexes were wiped
+// (Chroma vectors, the BM25 file, and the SQLite per-paper status table).
+export interface ResetIndicesResult {
+  ok: boolean;
+  reset: { vector: boolean; bm25: boolean; statuses: boolean };
 }
 
 export interface SessionInfo {
@@ -63,6 +80,7 @@ export interface SessionInfo {
 export interface ChatMessage {
   role: string;
   content: string;
+  exchange_id?: number;
   sources?: ChatSource[];
 }
 
@@ -91,23 +109,6 @@ export interface PaperMatch {
   page: number | null;
   snippet: string;
   score: number;
-}
-
-export interface HealthInfo {
-  ok: boolean;
-  chat_mode: string;
-  search_enabled: boolean;
-  database_path: string;
-  papers_directory: string;
-  chroma_directory: string;
-}
-
-export interface ChatResult {
-  session_id: string;
-  reply: string;
-  chat_mode: string;
-  indexed: boolean;
-  sources: ChatSource[];
 }
 
 export interface ChatSubquery {
@@ -160,6 +161,13 @@ export type ChatStreamEvent =
 export type IndexStreamEvent =
   | { event: "start"; completed: number; total: number }
   | {
+      event: "started";
+      completed: number;
+      total: number;
+      paperId: string;
+      filename: string;
+    }
+  | {
       event: "progress";
       completed: number;
       total: number;
@@ -176,17 +184,14 @@ export type IndexStreamEvent =
       indexed: number;
       empty: number;
       failed: number;
+      skipped: number;
     }
   | { event: "error"; message: string };
 
 export const api = {
   ...orchestrationApi,
   listPapers: () => invoke<PaperInfo[]>("list_papers"),
-  getPaper: (paperId: string) => invoke<PaperInfo>("get_paper", { paperId }),
   readPdf: (paperId: string) => invoke<PdfData>("read_pdf", { paperId }),
-  health: () => invoke<HealthInfo>("health"),
-  chat: (sessionId: string, message: string) =>
-    invoke<ChatResult>("chat", { sessionId, message }),
   // Stream a chat turn: each token delta and the terminal event are delivered
   // to `onEvent` via a Tauri Channel; the returned promise settles when the
   // backend command finishes (or throws on a bridge/spawn failure).
@@ -217,20 +222,16 @@ export const api = {
       "search_papers",
       { query, limit },
     ),
-  // Fetch one bounded, allow-listed graph neighborhood. The parser validates
-  // the unknown sidecar payload before it can enter application state.
-  graphNeighborhood: async (
-    nodeId: string,
-    maxDepth = 1,
-  ): Promise<GraphNeighborhoodResponse> =>
-    parseGraphNeighborhoodPayload(
-      await invoke<unknown>("graph_neighborhood", { nodeId, maxDepth }),
-    ),
-  // Index (or re-index) every PDF in the papers directory into Chroma.
-  indexPapers: () =>
-    invoke<{ enabled: boolean; indexed: number; reason?: string }>(
-      "index_papers",
-    ),
+  // Persisted per-paper indexing outcomes (SQLite) used to hydrate indicators
+  // on startup so an already-indexed paper stays marked after a restart.
+  paperStatuses: () =>
+    invoke<{ statuses: PaperStatusInfo[] }>("paper_statuses"),
+  // Coverage of the persisted BM25 index, used to render the per-paper BM25 dot
+  // alongside the vector-index dot.
+  bm25Status: () => invoke<Bm25StatusInfo>("bm25_status"),
+  // Wipe every paper index (Chroma vectors, BM25 file, SQLite statuses) so the
+  // next run re-indexes from scratch.
+  resetAllIndices: () => invoke<ResetIndicesResult>("reset_all_indices"),
   // Streaming index: each `start`/`progress`/`done`/`error` event is delivered
   // to `onEvent` via a Tauri Channel so the UI can show determinate progress;
   // the returned promise settles when the backend command finishes.

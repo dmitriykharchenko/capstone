@@ -18,8 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from .config import CLIConfig, load_dotenv_if_present
-from .dispatcher import dispatch
-from .runtime import stream_command
 
 
 def handle_chat_stream(config: CLIConfig, request: dict[str, Any]) -> Any:
@@ -68,35 +66,28 @@ def main() -> int:
             _emit(control(config, request))
             return 0
         except Exception:
-            from ..orchestration_wire import ERROR
+            from ..orchestration.wire import ERROR
 
             _emit({"ok": False, "error": ERROR})
             return 1
     if request.get("command") == "chat" and request.get("stream"):
-        return _run_stream(
-            stream_command("chat", request, lambda: handle_chat_stream(config, request))
-        )
+        return _run_stream(handle_chat_stream(config, request), secret=config.api_key)
     if request.get("command") == "index_papers" and request.get("stream"):
-        return _run_stream(
-            stream_command(
-                "index_papers", request, lambda: handle_index_papers_stream(config)
-            )
-        )
+        return _run_stream(handle_index_papers_stream(config), secret=config.api_key)
     if request.get("command") == "evaluate" and request.get("stream"):
         return _run_stream(
-            _persisted_evaluation_stream(
-                stream_command(
-                    "evaluate",
-                    request,
-                    lambda: handle_evaluation_stream(config, request),
-                )
-            ),
-            safe_error="Evaluation transport failed. Check backend logs and retry.",
+            _persisted_evaluation_stream(handle_evaluation_stream(config, request)),
+            secret=config.api_key,
         )
+    from .commands import dispatch
+
     try:
         result = dispatch(request.get("command"), config, request)
     except Exception as exc:  # noqa: BLE001 - surfaced as JSON to the caller
-        _emit({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
+        error = _error_payload(exc, config.api_key)
+        if getattr(exc, "retryable", False) is True:
+            error["retryable"] = True
+        _emit(error)
         return 1
     if "ok" not in result:
         result = {"ok": True, **result}
@@ -104,17 +95,23 @@ def main() -> int:
     return 0
 
 
-def _run_stream(events: Any, *, safe_error: str | None = None) -> int:
+def _error_payload(exc: Exception, secret: str | None) -> dict[str, Any]:
+    """Describe ``exc`` for the caller with the configured API key removed."""
+
+    message = str(exc) or type(exc).__name__
+    if secret and secret.strip():
+        message = message.replace(secret.strip(), "[redacted]")
+    return {"ok": False, "error": message, "error_type": type(exc).__name__}
+
+
+def _run_stream(events: Any, *, secret: str | None = None) -> int:
     """Emit an iterator of newline-delimited JSON events."""
 
     try:
         for event in events:
             _emit(event)
     except Exception as exc:  # noqa: BLE001 - surfaced as JSON to the caller
-        if safe_error is None:
-            _emit({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
-        else:
-            _emit({"ok": False, "error": safe_error})
+        _emit(_error_payload(exc, secret))
         return 1
     return 0
 
@@ -124,20 +121,21 @@ def _persisted_evaluation_stream(
 ) -> Any:
     """Persist a completed evaluation before forwarding its terminal event."""
 
-    from ..evaluation_results import (
+    from ..evaluation.results import (
         DEFAULT_EVALUATION_RESULTS_PATH,
         persist_evaluation_results,
     )
 
     input_cases = []
-    results = []
+    results = {}
     try:
         for event in events:
             event_type = event.get("event")
             if event_type == "case_start":
                 input_cases.append(event["input"])
-            elif event_type in {"case_success", "case_failure"}:
-                results.append(event["result"])
+            elif event_type in {"case_success", "case_failure", "case_retry_result"}:
+                result = event["result"]
+                results[result["case_index"]] = result
             if event_type == "complete":
                 persist_evaluation_results(
                     DEFAULT_EVALUATION_RESULTS_PATH
@@ -145,7 +143,9 @@ def _persisted_evaluation_stream(
                     else results_path,
                     input_cases=input_cases,
                     retrieval_strategy=event["retrieval_type"],
-                    results=results,
+                    results=[
+                        results[index] for index in range(1, len(input_cases) + 1)
+                    ],
                     aggregate_scores=event["aggregate_scores"],
                     succeeded=event["succeeded"],
                     failed=event["failed"],
@@ -163,5 +163,23 @@ def _emit(payload: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
+def _exit_when_orphaned(interval: float = 1.0) -> None:
+    """Exit once the launching process is gone so no orphan keeps store locks."""
+
+    import os
+    import threading
+    import time
+
+    parent = os.getppid()
+
+    def watch() -> None:
+        while os.getppid() == parent:
+            time.sleep(interval)
+        os._exit(1)
+
+    threading.Thread(target=watch, name="capstone-parent-watch", daemon=True).start()
+
+
 if __name__ == "__main__":
+    _exit_when_orphaned()
     raise SystemExit(main())

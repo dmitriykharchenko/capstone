@@ -17,7 +17,7 @@ export interface PaperSearchCollection {
 
 export interface PaperSearchState {
   query: string;
-  collections: Collection<PaperSearchCollection, "id">;
+  searchResultsCollection: Collection<PaperSearchCollection, "id">;
   searching: boolean;
   enabled: boolean;
   reason: string | null;
@@ -27,7 +27,7 @@ export interface PaperSearchState {
 
 export const initialPaperSearchState: PaperSearchState = {
   query: "",
-  collections: createCollection<PaperSearchCollection, "id">("id"),
+  searchResultsCollection: createCollection<PaperSearchCollection, "id">("id"),
   searching: false,
   enabled: true,
   reason: null,

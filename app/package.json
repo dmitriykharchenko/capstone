@@ -8,12 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "tauri"
+    "tauri": "CAPSTONE_PYTHON=\"${CAPSTONE_PYTHON:-$(prefix=$(conda run -n ragcourse printenv CONDA_PREFIX 2>/dev/null) && [ -n \"$prefix\" ] && echo \"$prefix/bin/python\")}\" tauri"
   },
   "dependencies": {
     "@augmentcode/themis": "^0.2.5",
-    "@tauri-apps/api": "^2.11.1",
-    "@xyflow/svelte": "^1.6.6"
+    "@tauri-apps/api": "^2.11.1"
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.4",

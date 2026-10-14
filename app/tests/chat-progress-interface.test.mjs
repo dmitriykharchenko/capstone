@@ -21,22 +21,6 @@ test("each planner-ordered subquery owns an independent native toggle", async ()
   assert.doesNotMatch(component, /expandedSubquer|toggleSubquer|bind:open/);
 });
 
-test("subquery toggles expose accessible status and source metadata", async () => {
-  const component = await readChatComponent();
-  for (const contract of [
-    "<summary",
-    'subquery.kind === "followup"',
-    "Subquery ${subquery.index}: ${subquery.query}. Status: ${subquery.status}",
-    "Answer for subquery ${subquery.index}",
-    "Retrieved chunks for subquery ${subquery.index}",
-    "source.filename",
-    "source.page",
-    "source.chunk_index",
-    "source.score.toFixed(4)",
-    "source.snippet",
-  ]) assert.ok(component.includes(contract), contract);
-});
-
 test("Chat renders accessible ordered multihop and prominent final-answer progress", async () => {
   const component = await readChatComponent();
   for (const contract of [

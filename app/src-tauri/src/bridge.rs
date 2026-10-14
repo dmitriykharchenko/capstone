@@ -237,6 +237,7 @@ where
         .take()
         .ok_or_else(|| CommandError::Bridge("child stdout unavailable".to_string()))?;
 
+    let mut python_error = None;
     for line in BufReader::new(stdout).lines() {
         let line = line.map_err(|e| CommandError::Bridge(format!("failed to read line: {e}")))?;
         let trimmed = line.trim();
@@ -245,11 +246,17 @@ where
         }
         let value: Value = serde_json::from_str(trimmed)
             .map_err(|e| CommandError::InvalidResponse(format!("{e}: {trimmed}")))?;
+        if value.get("ok").and_then(Value::as_bool) == Some(false) {
+            python_error = value.get("error").and_then(Value::as_str).map(str::to_string);
+        }
         on_line(value);
     }
 
     let status = process.wait()?;
     let stderr = process.finish_stderr()?;
+    if let (false, Some(message)) = (status.success(), python_error) {
+        return Err(CommandError::Bridge(message));
+    }
     if !status.success() {
         return Err(CommandError::Bridge(format!(
             "python exited with {status}; stderr: {}",
@@ -323,6 +330,23 @@ mod tests {
         assert!(message.contains("useful failure marker"));
         assert!(message.contains("stderr truncated"));
         assert!(message.len() < STDERR_CAPTURE_LIMIT + 256);
+    }
+
+    #[test]
+    fn reports_python_error_line_on_nonzero_exit() {
+        let script = executable_script(
+            "#!/usr/bin/env python3\nprint('{\"ok\": false, \"error\": \"paper indexer unavailable\"}', flush=True)\nraise SystemExit(1)\n",
+        );
+
+        let error =
+            call_streaming_with_executable(Path::new("."), &script, serde_json::json!({}), |_| {})
+                .expect_err("non-zero child must fail");
+        let _ = fs::remove_file(script);
+
+        assert_eq!(
+            error.to_string(),
+            "python bridge failed: paper indexer unavailable"
+        );
     }
 
     #[test]

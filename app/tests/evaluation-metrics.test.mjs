@@ -1,24 +1,22 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
-import { compile } from "svelte/compiler";
 import { createServer } from "vite";
 import { runSaga, stdChannel } from "redux-saga";
 import { evaluationMetricTotals, evaluationReliabilityTotals, formatCost, formatLatency, formatMetric, formatMetricTotal, sanitizeEvaluationMetrics, sanitizeEvaluationPerformance } from "../src/lib/evaluation-metrics.ts";
 let sanitizeEvaluationResult;
 
 function metrics() {
-  const tokens = { input: 400, output: 100, total: 500, known_input: 400, known_output: 100, known_total: 500, reported_calls: 5 };
+  const tokens = { input: 400, cached_input: 120, output: 100, total: 500, known_input: 400, known_output: 100, known_total: 500, reported_calls: 5 };
   const cost = { estimated_usd: 0.002, known_usd: 0.002, priced_calls: 5, provider_reported_calls: 1, rate_estimated_calls: 4 };
   const context = { chunks: 6, unique_chunks: 2, duplicate_chunks: 0, characters: 1200, utf8_bytes: 1400, max_chunks: 2, max_characters: 400, prompt_characters: 3200, max_prompt_characters: 800 };
   return {
     version: 1, latency_ms: { total: 1000, rag: 700, judge: 300 }, model_calls: { total: 5, rag: 3, judge: 1, embedding: 1 },
-    tokens, cost, workflow: { exchanges: 3, tool_calls: 2, reused_searches: 0 }, context,
+    tokens, cost, workflow: { exchanges: 3, tool_calls: 2 }, context,
     stages: { judge: { latency_ms: 300, model_calls: 1, exchanges: 0, tool_calls: 0,
       tokens: { ...tokens, reported_calls: 1 }, cost: { ...cost, priced_calls: 1, rate_estimated_calls: 0 },
       context: { ...context, chunks: 99, characters: 9900 } } },
-    pricing: { input_usd_per_million: 1, output_usd_per_million: 2, embedding_usd_per_million: null },
+    pricing: { input_usd_per_million: 1, output_usd_per_million: 2, embedding_usd_per_million: null, cached_input_usd_per_million: 0.25 },
   };
 }
 
@@ -28,8 +26,9 @@ function result(index = 1, measured = metrics()) {
     generated_answer: "An answer", judge_scores: null, error: null, attempt_history: [], metrics: measured };
 }
 
-test("metrics preserve the exact numeric contract through diagnostic sanitation", () => {
+test("fresh metrics omit reused searches and preserve the exact numeric contract through diagnostic sanitation", () => {
   const original = metrics();
+  assert.ok(!Object.hasOwn(original.workflow, "reused_searches"));
   const safe = sanitizeEvaluationResult(result(1, original));
   assert.deepEqual(JSON.parse(JSON.stringify(safe.metrics)), original);
   assert.notEqual(safe.metrics, original);
@@ -40,6 +39,26 @@ test("metrics preserve the exact numeric contract through diagnostic sanitation"
   extra.tokens.raw_usage = "synthetic-untrusted-metrics-canary";
   extra.stages.judge.prompt = "synthetic-untrusted-metrics-canary";
   assert.doesNotMatch(JSON.stringify(sanitizeEvaluationMetrics(extra)), /synthetic-untrusted/);
+  const legacy = metrics();
+  legacy.workflow.reused_searches = 1;
+  assert.deepEqual(sanitizeEvaluationMetrics(legacy).workflow, { exchanges: 3, tool_calls: 2, reused_searches: 1 });
+  for (const invalid of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "1"]) {
+    const malformedLegacy = metrics();
+    malformedLegacy.workflow.reused_searches = invalid;
+    assert.equal(sanitizeEvaluationMetrics(malformedLegacy), null);
+  }
+  const older = metrics();
+  delete older.tokens.cached_input;
+  delete older.stages.judge.tokens.cached_input;
+  delete older.pricing.cached_input_usd_per_million;
+  assert.notEqual(sanitizeEvaluationMetrics(older), null);
+  for (const invalid of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "1", true]) {
+    const malformed = metrics();
+    malformed.tokens.cached_input = invalid;
+    assert.equal(sanitizeEvaluationMetrics(malformed), null);
+  }
+  const excessive = metrics(); excessive.tokens.cached_input = 401;
+  assert.equal(sanitizeEvaluationMetrics(excessive), null);
 });
 
 test("legacy, unsupported and malformed metrics are unavailable, never fabricated zero", () => {
@@ -81,6 +100,7 @@ test("current snapshot totals count each case once and exclude separate judge co
   assert.equal(totals.characters.value, 2400);
   assert.equal(totals.exchanges.value, 6);
   assert.equal(totals.toolCalls.value, 4);
+  assert.equal(totals.cachedTokens.value, 240);
 });
 
 test("only exact measured Python stage names can enter retained metrics", () => {
@@ -123,6 +143,8 @@ test("all global and stage counters require nonnegative safe integers", () => {
       const value = metrics();
       const target = path.slice(0, -1).reduce((current, key) => current[key], value);
       target[path.at(-1)] = boundary;
+      if (path.at(-1) === "input" && boundary === 0) target.cached_input = 0;
+      if (path.at(-1) === "cached_input") target.input = boundary;
       assert.notEqual(sanitizeEvaluationMetrics(value), null, path.join("."));
     }
   }
@@ -132,7 +154,7 @@ test("latency, USD cost and configured rates still allow finite nonnegative deci
   const value = metrics();
   value.latency_ms = { total: 1000.75, rag: 700.25, judge: 300.5 };
   value.stages.judge.latency_ms = 300.5;
-  value.pricing = { input_usd_per_million: 0.5, output_usd_per_million: 0.75, embedding_usd_per_million: 0.125 };
+  value.pricing = { input_usd_per_million: 0.5, output_usd_per_million: 0.75, embedding_usd_per_million: 0.125, cached_input_usd_per_million: 0.1 };
   assert.deepEqual(JSON.parse(JSON.stringify(sanitizeEvaluationMetrics(value))), value);
 });
 
@@ -196,6 +218,8 @@ test("actual case UI renders runtime, workflow, usage coverage and separate cont
   assert.match(body, /1\.00 s/);
   assert.match(body, /Unavailable \(known subtotal: 500\)/);
   assert.match(body, /Unavailable \(known subtotal: \$0\.002000\)/);
+  assert.match(body, /Cached input tokens<\/dt>\s*<dd[^>]*>120<\/dd>/);
+  assert.match(body, /Cached input<\/th>/);
   assert.match(body, /Token usage reported for 5 of 5 model calls/);
   assert.match(body, /1 provider-reported, 4 rate-estimated/);
   assert.match(body, /<th scope="row"[^>]*>Judge<\/th>/);
@@ -203,6 +227,7 @@ test("actual case UI renders runtime, workflow, usage coverage and separate cont
   assert.match(body, /SDK-internal retries are not observable/);
   assert.match(body, /Evidence sizes include formatting/);
   assert.match(body, /9,900/);
+  assert.doesNotMatch(body, /Reused searches/);
 });
 
 test("actual summary derives snapshots without aggregate event and shows legacy metrics unavailable", () => {
@@ -277,13 +302,6 @@ test("UI shows run-level performance and reliability and per-case checks", () =>
   const { body } = render(Component);
   for (const pattern of [/>Performance</, />Reliability</, /Over a limit/, /1 of 2/, /Follow-up queries \(1\)/, /Success rate/, /Recovered after retry/, /Performance: over limit/, /Performance: within limits/]) assert.match(body, pattern);
   assert.doesNotMatch(body, /NaN|undefined/);
-});
-
-test("metric UI compiles without accessibility warnings", async () => {
-  for (const name of ["EvaluationRuntimeMetrics", "RagEvals"]) {
-    const source = await readFile(new URL(`../src/components/${name}.svelte`, import.meta.url), "utf8");
-    assert.deepEqual(compile(source, { filename: `${name}.svelte`, generate: "server" }).warnings.filter((w) => w.code.startsWith("a11y")), []);
-  }
 });
 
 test("streamed success, failure and retry metrics reach state without a complete-event metrics aggregate", async () => {

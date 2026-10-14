@@ -8,11 +8,13 @@ REST server; search queries the Chroma-backed chat-history index.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from typing import Any, Iterator
 
-from ..agent_loop import (
+from ..chat.agent_loop import (
     AgentIncompleteResponseError,
     MultihopCompletedEvent,
     MultihopCoverageCompletedEvent,
@@ -22,9 +24,12 @@ from ..agent_loop import (
     MultihopHopStartedEvent,
     MultihopPlanEvent,
 )
-from ..chat_logger import log_chat
-from ..retrieval_logger import log_retrieval
-from ..sqlite_history import SQLiteHistoryStore
+from ..retrieval.bm25_index import BM25Index
+from ..chat.chat_logger import log_chat
+from ..storage.chroma_persistence import DEFAULT_COLLECTION_NAME, create_client
+from ..retrieval.paper_search import DEFAULT_BM25_INDEX_FILENAME
+from ..chat.retrieval_logger import log_retrieval
+from ..storage.sqlite_history import SQLiteHistoryStore
 from .config import CLIConfig
 from .models import (
     build_agent_loop,
@@ -34,6 +39,7 @@ from .models import (
     build_paper_indexer,
     build_paper_search_index,
     chromadb_available,
+    stop_graph_store_owner,
 )
 
 
@@ -252,11 +258,10 @@ def handle_sessions(config: CLIConfig) -> dict[str, Any]:
     try:
         if not _table_exists(connection, "messages"):
             return {"sessions": []}
-        message_counts = dict(
-            connection.execute(
-                "SELECT session_id, COUNT(*) FROM messages GROUP BY session_id"
-            ).fetchall()
-        )
+        session_rows = connection.execute(
+            "SELECT session_id, COUNT(*), MAX(id) FROM messages "
+            "GROUP BY session_id ORDER BY MAX(id) DESC, session_id ASC"
+        ).fetchall()
         first_user_messages = dict(
             connection.execute(
                 "SELECT session_id, content FROM messages WHERE id IN ("
@@ -280,7 +285,7 @@ def handle_sessions(config: CLIConfig) -> dict[str, Any]:
             "message_count": int(count),
             "exchange_count": int(exchange_counts.get(session_id, 0)),
         }
-        for session_id, count in sorted(message_counts.items())
+        for session_id, count, _last_message_id in session_rows
     ]
     return {"sessions": sessions}
 
@@ -354,10 +359,15 @@ def handle_index_papers(config: CLIConfig) -> dict[str, Any]:
             "papers": [],
             "reason": "paper indexer unavailable",
         }
+    store = _open_status_store(config)
     try:
-        report = indexer.index_directory()
+        report = indexer.index_directory(_already_indexed_ids(store))
     except NotADirectoryError as exc:
         return {"enabled": True, "indexed": 0, "papers": [], "reason": str(exc)}
+    finally:
+        if store is not None:
+            store.close()
+    _refresh_bm25_index(config)
     papers = [
         {
             "paper_id": outcome.paper_id,
@@ -373,16 +383,186 @@ def handle_index_papers(config: CLIConfig) -> dict[str, Any]:
 
 
 def handle_index_papers_stream(config: CLIConfig) -> Iterator[dict[str, Any]]:
-    """Stream determinate progress through the pull-driven indexing graph."""
+    """Stream determinate progress while indexing the configured PDF directory.
+
+    Each paper's terminal outcome is persisted to SQLite as it completes so the
+    frontend can restore per-paper indicators after an app restart. Papers that
+    are already indexed are skipped (not re-extracted or re-embedded); they emit
+    a ``"skipped"`` outcome and keep their existing persisted record.
+    """
 
     from .stream_workflows import index_events
 
+    stop_graph_store_owner(config)
     indexer = build_paper_indexer(config)
     if indexer is None:
         raise RuntimeError("paper indexer unavailable")
-    yield from index_events(
-        indexer.iter_directory(), counts={"indexed": 0, "empty": 0, "failed": 0}
+
+    store = _open_status_store(config)
+    skip_paper_ids = _already_indexed_ids(store)
+    counts = {"indexed": 0, "empty": 0, "failed": 0, "skipped": 0}
+    try:
+        yield from index_events(
+            indexer.iter_directory(skip_paper_ids),
+            counts=counts,
+            started_events=True,
+            persist=lambda outcome: _persist_paper_status(store, outcome),
+            refresh=lambda: _refresh_bm25_index(config),
+        )
+    finally:
+        if store is not None:
+            store.close()
+
+
+def handle_paper_statuses(config: CLIConfig) -> dict[str, Any]:
+    """Return persisted per-paper indexing outcomes for frontend hydration."""
+
+    path = config.database_path
+    if not path.exists():
+        return {"statuses": []}
+    with SQLiteHistoryStore(path) as store:
+        records = store.get_paper_statuses()
+    return {
+        "statuses": [
+            {
+                "paper_id": record.paper_id,
+                "filename": record.filename,
+                "status": record.status,
+                "chunk_count": record.chunk_count,
+                "error": record.error,
+                "updated_at": record.updated_at,
+            }
+            for record in records
+        ]
+    }
+
+
+def handle_bm25_status(config: CLIConfig) -> dict[str, Any]:
+    """Report which papers the persisted BM25 lexical index currently covers.
+
+    The frontend renders a per-paper BM25 indicator from ``paper_ids`` next to
+    the vector-index dot. Degrades to an empty, unbuilt result when the index
+    file is absent or unreadable so the indicators simply read "not indexed".
+    """
+
+    index = BM25Index.load(config.chroma_directory / DEFAULT_BM25_INDEX_FILENAME)
+    if index is None:
+        return {"built": False, "chunk_count": 0, "paper_ids": []}
+    paper_ids = sorted(
+        {
+            candidate["paper_id"]
+            for candidate in index.candidates
+            if isinstance(candidate.get("paper_id"), str) and candidate["paper_id"]
+        }
     )
+    return {"built": True, "chunk_count": index.chunk_count, "paper_ids": paper_ids}
+
+
+def handle_reset_all_indices(config: CLIConfig) -> dict[str, Any]:
+    """Wipe every paper index: Chroma vectors, the BM25 file, and statuses.
+
+    Each step is best-effort and independent so a failure in one still clears
+    the others; the returned ``reset`` map reports what was cleared so the
+    frontend can surface a partial failure.
+    """
+
+    reset = {"vector": False, "bm25": False, "statuses": False}
+    stop_graph_store_owner(config)
+
+    if chromadb_available():
+        try:
+            client = create_client(config.chroma_directory)
+            try:
+                client.delete_collection(name=DEFAULT_COLLECTION_NAME)
+            except Exception:  # noqa: BLE001 - an absent collection is already reset
+                pass
+            reset["vector"] = True
+        except Exception:  # noqa: BLE001 - client construction failed; reset best-effort
+            pass
+
+    bm25_path = config.chroma_directory / DEFAULT_BM25_INDEX_FILENAME
+    try:
+        bm25_path.unlink(missing_ok=True)
+        reset["bm25"] = True
+    except Exception:  # noqa: BLE001 - reset is best-effort
+        pass
+
+    database_path = config.database_path
+    if not database_path.exists():
+        reset["statuses"] = True
+    else:
+        try:
+            with SQLiteHistoryStore(database_path) as store:
+                store.clear_paper_statuses()
+            reset["statuses"] = True
+        except Exception:  # noqa: BLE001 - reset is best-effort
+            pass
+
+    return {"ok": True, "reset": reset}
+
+
+def _open_status_store(config: CLIConfig) -> SQLiteHistoryStore | None:
+    """Open the SQLite store for status persistence, degrading to ``None``."""
+
+    try:
+        return build_history_store(config)
+    except Exception:  # noqa: BLE001 - status persistence is best-effort
+        return None
+
+
+def _refresh_bm25_index(config: CLIConfig) -> None:
+    """Rebuild the persisted BM25 index after indexing, best-effort.
+
+    Runs once the corpus is fully written so the lexical index reflects every
+    chunk (including papers skipped as already indexed). Any failure leaves the
+    query path to fall back to on-the-fly BM25, so this never breaks indexing.
+    """
+
+    if not chromadb_available():
+        return
+    try:
+        index = build_paper_search_index(config)
+        if index is not None:
+            index.refresh_bm25_index()
+    except Exception:  # noqa: BLE001 - BM25 index refresh is best-effort
+        pass
+
+
+def _already_indexed_ids(store: SQLiteHistoryStore | None) -> set[str]:
+    """Return paper ids previously recorded as ``"indexed"`` for skip decisions.
+
+    Only successfully indexed papers are skipped; ``empty`` and ``failed``
+    outcomes are re-attempted on the next run. Degrades to an empty set so a
+    read failure simply re-indexes everything.
+    """
+
+    if store is None:
+        return set()
+    try:
+        return {
+            record.paper_id
+            for record in store.get_paper_statuses()
+            if record.status == "indexed"
+        }
+    except Exception:  # noqa: BLE001 - skip optimization is best-effort
+        return set()
+
+
+def _persist_paper_status(store: SQLiteHistoryStore | None, outcome: Any) -> None:
+    """Best-effort persist one paper's terminal indexing outcome."""
+
+    if store is None:
+        return
+    try:
+        store.record_paper_status(
+            outcome.paper_id,
+            outcome.filename,
+            outcome.status,
+            chunk_count=outcome.chunk_count,
+            error=outcome.error,
+        )
+    except Exception:  # noqa: BLE001 - status persistence is best-effort
+        pass
 
 
 def handle_evaluation_stream(
@@ -398,33 +578,10 @@ def handle_evaluation_stream(
 
 
 def _sanitize_evaluation_result(result: Mapping[str, Any]) -> dict[str, Any]:
-    """Replace backend exception details with a fixed stage-aware UI message."""
+    """Rebuild failure diagnostics before they reach stream state or the wire."""
+    from ..evaluation.diagnostics import sanitize_result_diagnostics
 
-    sanitized = dict(result)
-    error = result.get("error")
-    if error is not None:
-        stage = error.get("stage") if isinstance(error, Mapping) else None
-        safe_stage = (
-            stage
-            if stage
-            in {
-                "planner",
-                "retrieval",
-                "subanswer",
-                "coverage",
-                "followup_retrieval",
-                "followup_subanswer",
-                "composer",
-                "model",
-                "judge",
-            }
-            else "evaluation"
-        )
-        sanitized["error"] = {
-            "stage": safe_stage,
-            "message": _evaluation_error_message(safe_stage),
-        }
-    return sanitized
+    return sanitize_result_diagnostics(dict(result))
 
 
 def _evaluation_error_message(stage: str) -> str:
@@ -496,6 +653,106 @@ def handle_search_papers(config: CLIConfig, request: dict[str, Any]) -> dict[str
     return {"enabled": True, "matches": match_payloads}
 
 
+def handle_paper_metadata(config: CLIConfig, request: dict[str, Any]) -> dict[str, Any]:
+    """Read already-indexed paper metadata without importing optional Chroma."""
+
+    paper_ids = _require_paper_ids(request.get("paper_ids"))
+    if not paper_ids:
+        return {"available": True, "papers": []}
+    database = config.chroma_directory / "chroma.sqlite3"
+    if not database.is_file():
+        return {
+            "available": False,
+            "papers": [],
+            "reason": "indexed paper metadata unavailable",
+        }
+    placeholders = ",".join("?" for _ in paper_ids)
+    try:
+        with closing(
+            sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)
+        ) as connection:
+            rows = connection.execute(
+                "SELECT paper.string_value, title.string_value, "
+                "authors.string_value, topics.string_value "
+                "FROM embedding_metadata AS paper "
+                "JOIN embedding_metadata AS title ON title.id = paper.id AND title.key = 'title' "
+                "JOIN embedding_metadata AS authors ON authors.id = paper.id AND authors.key = 'authors' "
+                "JOIN embedding_metadata AS topics ON topics.id = paper.id AND topics.key = 'topics' "
+                f"WHERE paper.key = 'paper_id' AND paper.string_value IN ({placeholders}) "
+                "ORDER BY paper.id",
+                paper_ids,
+            )
+            metadata = _unique_paper_metadata(rows)
+    except sqlite3.Error:
+        return {
+            "available": False,
+            "papers": [],
+            "reason": "indexed paper metadata unavailable",
+        }
+    return {
+        "available": True,
+        "papers": [metadata[paper_id] for paper_id in paper_ids if paper_id in metadata],
+    }
+
+
+def _require_paper_ids(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > 4096:
+        raise ValueError("paper_ids must be an array of at most 4096 identifiers")
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("paper_ids must contain non-empty strings")
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return tuple(result)
+
+
+def _unique_paper_metadata(rows: Any) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    conflicts: set[str] = set()
+    for paper_id, title, authors_json, topics_json in rows:
+        try:
+            authors = _metadata_names(authors_json)
+            topics = _metadata_names(topics_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            conflicts.add(paper_id)
+            continue
+        if not isinstance(title, str) or not title.strip():
+            conflicts.add(paper_id)
+            continue
+        value = {
+            "paper_id": paper_id,
+            "title": title.strip(),
+            "authors": authors,
+            "topics": topics,
+        }
+        if paper_id in result and result[paper_id] != value:
+            conflicts.add(paper_id)
+        else:
+            result[paper_id] = value
+    for paper_id in conflicts:
+        result.pop(paper_id, None)
+    return result
+
+
+def _metadata_names(value: Any) -> list[str]:
+    if not isinstance(value, str):
+        raise TypeError("metadata must be JSON text")
+    decoded = json.loads(value)
+    if not isinstance(decoded, list) or not decoded:
+        raise ValueError("metadata must be a non-empty array")
+    names: list[str] = []
+    for item in decoded:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("metadata names must be non-empty strings")
+        normalized = item.strip()
+        if normalized not in names:
+            names.append(normalized)
+    return names
+
+
 def dispatch(
     command: Any, config: CLIConfig, request: dict[str, Any]
 ) -> dict[str, Any]:
@@ -508,7 +765,11 @@ def dispatch(
         "messages": lambda: handle_messages(config, request),
         "search": lambda: handle_search(config, request),
         "search_papers": lambda: handle_search_papers(config, request),
+        "paper_metadata": lambda: handle_paper_metadata(config, request),
         "index_papers": lambda: handle_index_papers(config),
+        "paper_statuses": lambda: handle_paper_statuses(config),
+        "bm25_status": lambda: handle_bm25_status(config),
+        "reset_all_indices": lambda: handle_reset_all_indices(config),
     }
     handler = handlers.get(command)
     if handler is None:
@@ -537,6 +798,8 @@ def _source_payload(source: Any) -> dict[str, Any]:
 
 def _message_payload(record: Any) -> dict[str, Any]:
     payload = {"role": record.role, "content": record.content}
+    if record.exchange_id is not None:
+        payload["exchange_id"] = record.exchange_id
     if record.sources:
         payload["sources"] = [_source_payload(source) for source in record.sources]
     return payload
@@ -575,6 +838,7 @@ __all__ = [
     "handle_index_papers",
     "handle_index_papers_stream",
     "handle_messages",
+    "handle_paper_statuses",
     "handle_search",
     "handle_search_papers",
     "handle_sessions",

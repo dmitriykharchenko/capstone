@@ -13,7 +13,7 @@ An evaluation case supplies a question, grading notes, and reference source file
 | Tauri application in `app/` | Svelte upload UI → `api.runEvaluation` → `evaluate_stream` → Python `src.cli` | Python stage checkpoints, two deferred retry rounds, structured failure diagnostics, artifact schema v2 |
 | Python library | `EvaluationRunner.run`, `run_file`, `start_case`, `resume_case` | Returns results; library calls alone do not publish an artifact |
 
-The UI labels the sole retrieval choice **Multihop Hybrid**. Its identifier is `multihop-hybrid`, while the wire value is `hybrid`; see `EVALUATION_RETRIEVAL_TYPE` and `EVALUATION_WIRE_RETRIEVAL_TYPE` in [evaluation-types.ts](../app/src/lib/evaluation-types.ts).
+The UI has no retrieval selector; it always runs **Multihop Hybrid**. Its identifier is `multihop-hybrid`, while the wire value is `hybrid`; see `EVALUATION_RETRIEVAL_TYPE` and `EVALUATION_WIRE_RETRIEVAL_TYPE` in [evaluation-types.ts](../app/src/lib/evaluation-types.ts).
 
 Evaluation is stateless with respect to conversations: it uses no session history as model input and writes no chat exchanges or history vectors. It reads retrieval stores, may call providers, and publishes a completed-run artifact through the CLI transport wrapper. Treat a live run as potentially paid, not a health check.
 
@@ -21,7 +21,7 @@ Evaluation is stateless with respect to conversations: it uses no session histor
 
 ### Case shape
 
-[`EvaluationCase`, `validate_test_cases`, `parse_test_cases`, and `load_test_cases`](../src/evaluation_runner.py) define the Python input contract:
+[`EvaluationCase`, `validate_test_cases`, `parse_test_cases`, and `load_test_cases`](../src/evaluation/runner.py) define the Python input contract:
 
 | Field | Requirement | Use |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ Shape example, using a fictitious filename rather than claiming corpus membershi
 ````
 </augment_code_snippet>
 
-[`parseEvaluationTestCases`](../app/src/lib/evaluation-upload.ts) performs the equivalent nonempty-array/string/source-list checks in the Tauri renderer. [`RagEvals.svelte`](../app/src/components/RagEvals.svelte) checks the `.json` extension and file-read errors before parsing, then immediately dispatches `runEvaluation(parsed.testCases)`. Uploading a valid test file starts evaluation; there is no separate preview-and-confirm stage in this component. The file input and retrieval selector are disabled while a run is active.
+[`parseEvaluationTestCases`](../app/src/lib/evaluation-upload.ts) performs the equivalent nonempty-array/string/source-list checks in the Tauri renderer. [`RagEvals.svelte`](../app/src/components/RagEvals.svelte) checks the `.json` extension and file-read errors before parsing, then immediately dispatches `runEvaluation(parsed.testCases)`. Uploading a valid test file starts evaluation; there is no separate preview-and-confirm stage in this component. Before any run, the upload button sits in the centre of the page; once a run starts it moves to the top. The file input and button are disabled while a run is active.
 
 ### Current checked-in datasets
 
@@ -50,31 +50,31 @@ Shape example, using a fictitious filename rather than claiming corpus membershi
 | --- | --- |
 | [`tests/eval_questions.json`](../tests/eval_questions.json) | 60 cases; Python repository dataset and a file a user may upload |
 | [`tests/judge.md`](../tests/judge.md) | Python default judge template, read by `_load_judge_template` |
-| [`tests/eval_questions_performance.json`](../tests/eval_questions_performance.json) | 10 performance, efficiency, and reliability cases; performance and efficiency cases carry `performance_budget` limits |
+| [`tests/eval_questions_performance.json`](../tests/eval_questions_performance.json) | 10 performance, efficiency, and reliability cases; the LiveCodeBench, VIPER, and LINC single-paper lookups limit retrieval to two searches with `performance_budget` |
 
 The visible upload workflow supplies its own cases; the checked-in dataset is not automatically started.
 
 The 60-case dataset contains untagged cases and category markers inside `grading_notes`, keeping the three-field schema. Tagged families cover enumeration, nonexistent-source questions, partially supported lists, multi-hop reasoning, contradictions, precise quotes, and boundary/precision questions. Enumeration cases span 2, 4, and 11 unique works; multi-hop cases explicitly specify 2, 3, and 4 hops. Source filenames and aliases are ground-truth annotations, not permission for the retriever to manufacture evidence for an absent title.
 
-[`tests/test_eval_questions.py`](../tests/test_eval_questions.py) checks `test_curated_dataset_stays_at_sixty_questions`, production-loader round trips, exact three-field dataset shape, normalized question uniqueness, unique source lists, PDF basenames, category coverage, enumeration cardinality, hop annotations, and verbatim quotes. Source existence checks depend on local corpus availability; quote checks explicitly skip when the local PDFs or `pypdf` are absent. These tests are source references, not a statement that PDF checks ran during this documentation pass.
+[`tests/test_eval_questions.py`](../tests/test_eval_questions.py) checks production-loader round trips, exact three-field dataset shape, normalized question uniqueness, unique source lists, PDF basenames, category coverage, enumeration cardinality, hop annotations, and verbatim quotes. Source existence checks depend on local corpus availability; quote checks explicitly skip when the local PDFs or `pypdf` are absent. These tests are source references, not a statement that PDF checks ran during this documentation pass.
 
 ## 3. Python construction and retrieval semantics
 
 [`build_evaluation_runner`](../src/cli/models.py) obtains `build_paper_search_index(config)`, fails if unavailable, and constructs `EvaluationRunner`. With configured provider credentials, the runner lazily creates its chat model using `ChatOpenAIConfig`; otherwise the factory uses `MockChatModel`. A configured system prompt overrides the default. No credential values belong in evaluation input or these docs; see [configuration](configuration.md).
 
-`EvaluationRunner` accepts an injected retriever with `retrieve_chunks`, an optional model with `invoke`, a configuration object, judge-template path, system prompt, and optional `PlannerRetryPolicy`. Its lazily constructed evaluation model explicitly has SDK `max_retries=0`, so SDK retries do not multiply the runner's own planner budget. An externally injected model owns its own retry policy.
+`EvaluationRunner` accepts an injected retriever with `retrieve_chunks`, an optional model with `invoke`, a configuration object, judge-template path, system prompt, and optional `PlannerRetryPolicy`. Its lazily constructed evaluation model explicitly has SDK `max_retries=0`, so SDK retries do not multiply the runner's own planner budget. An externally injected model owns its own retry policy. Direct OpenAI judge calls also receive the stable `rag-eval-judge` prompt cache key; OpenRouter, other compatible endpoints, and injected models do not. The fixed judge system instruction remains the first message and is unchanged. Provider caching is automatic, so this improves cache affinity but does not guarantee a hit without live provider telemetry.
 
 ### Strategy labels are not interchangeable retrieval experiments
 
 Python `EvaluationRunner.run(payload, strategy)` and the CLI validate `vector`, `bm25`, or `hybrid` because those values remain in `EVALUATION_RETRIEVAL_STRATEGIES`. However, the current stage pipeline calls `_retrieve_multihop`, which calls `retrieve_chunks(subquery, n_results=5)` **without** a `strategy` keyword. The standard `PaperSearchIndex` therefore uses its ordinary chat hybrid path; the chosen runner strategy is recorded as metadata, not forwarded as a retriever switch.
 
-[`PaperSearchIndex.retrieve_evaluation_chunks(query, strategy, n_results=5)`](../src/paper_search.py) remains a separate explicit strategy API. Supplying `strategy` to `retrieve_chunks` delegates there. It supports vector, BM25 and full-corpus hybrid ranking, but the standard multihop evaluator does not select that path. A low-level `vector` label is not proof of vector-only retrieval. The UI adapter sends `hybrid`.
+[`PaperSearchIndex.retrieve_evaluation_chunks(query, strategy, n_results=5)`](../src/retrieval/paper_search.py) remains a separate explicit strategy API. Supplying `strategy` to `retrieve_chunks` delegates there. It supports vector, BM25 and full-corpus hybrid ranking, but the standard multihop evaluator does not select that path. A low-level `vector` label is not proof of vector-only retrieval. The UI adapter sends `hybrid`.
 
 Reference sources and grading notes are passed to the judge, not into planner/retrieval/subanswer prompts as an answer shortcut. See [retrieval and chat](retrieval-and-chat.md), [paper indexing](paper-indexing.md), and [knowledge graph](knowledge-graph.md) for indexed evidence and provenance.
 
 ## 4. Python stage pipeline and checkpoint boundaries
 
-[`EvaluationStages`](../src/evaluation_stages.py) reuses bounded multihop helpers from [`src/agent_loop.py`](../src/agent_loop.py) while holding an evaluation-only in-memory cursor. It is not the durable SQLite specialist runtime from [orchestration](orchestration.md).
+[`EvaluationStages`](../src/evaluation/stages.py) reuses bounded multihop helpers from [`src/chat/agent_loop.py`](../src/chat/agent_loop.py) while holding an evaluation-only in-memory cursor. It is not the durable SQLite specialist runtime from [orchestration](orchestration.md).
 
 | Stage | Work | Checkpointed output before advancing |
 | --- | --- | --- |
@@ -87,11 +87,11 @@ Reference sources and grading notes are passed to the judge, not into planner/re
 | `composer` | Aggregate/deduplicate chunks; compose from ordered subanswers with empty history | Final answer and ranked aggregate chunks |
 | `judge` | Render the reference/rubric prompt and validate seven scores | Final result; cursor becomes `done` |
 
-Current constants are 2–5 initial subqueries, at most 2 follow-ups, at most 7 total hops, 5 chunks per hop, and at most 35 aggregate source records. Retrieval requests five plus the number of earlier chunks, then uses the first five unseen excerpts. A search with no unseen excerpts answers from its own deduplicated top excerpts and is recorded as reused; that is the only permitted repeated evidence. Retrieval with no chunks is a stage failure; it does not generate an unsupported answer. Coverage review is a single bounded pass, not an unlimited search loop.
+Current constants are 1–5 initial subqueries, at most 2 follow-ups, at most 7 total hops, 5 chunks per hop, and at most 35 aggregate source records. A single fact from one paper uses exactly one initial search and is never split into reworded searches. Retrieval requests five plus the number of earlier chunks, then uses the first five unseen excerpts. A search with no unseen excerpts answers from its own deduplicated top excerpts and is recorded as reused; that is the only permitted repeated evidence. Retrieval with no chunks is a stage failure; it does not generate an unsupported answer. Coverage review is a single bounded pass, not an unlimited search loop.
 
 `EvaluationStages.advance` executes exactly one non-judge stage. Successful validated outputs are committed to the run-local object before advancing. Failed calls leave the cursor and prior successful work intact. The object retains public query/context/chunk/answer state, not provider handles, raw exception objects, rejected model output, or chat stores.
 
-`EvaluationCaseState` in [`src/evaluation_runner.py`](../src/evaluation_runner.py) adds one-based case index, strategy, judge template, current result, last retry round, stage/hop attempt counters, and safe failure history. `start_case` allocates this state without provider/retrieval work. `resume_case` advances until completion or one failed stage.
+`EvaluationCaseState` in [`src/evaluation/runner.py`](../src/evaluation/runner.py) adds one-based case index, strategy, judge template, current result, last retry round, stage/hop attempt counters, and safe failure history. `start_case` allocates this state without provider/retrieval work. `resume_case` advances until completion or one failed stage.
 
 ## 5. Two retry layers, with different rules
 
@@ -108,7 +108,7 @@ Current constants are 2–5 initial subqueries, at most 2 follow-ups, at most 7 
 
 ### Immediate planner attempts
 
-[`PlannerRetryPolicy`](../src/planner_retry.py) applies only inside evaluation planner-stage executions. The normal chat planner gets no policy by default and retains its single-attempt behavior.
+[`PlannerRetryPolicy`](../src/chat/planner_retry.py) applies only inside evaluation planner-stage executions. The normal chat planner gets no policy by default and retains its single-attempt behavior.
 
 | Policy | Current behavior |
 | --- | --- |
@@ -140,7 +140,9 @@ Each Python case result contains:
 | `metrics` | Numeric latency, call, token, cost, workflow, and context snapshot |
 | `performance` | Deterministic budget checks over `metrics` (below) |
 
-`check_performance` in [`src/evaluation_metrics.py`](../src/evaluation_metrics.py) compares RAG-only values (judge work excluded; retried work counts again) with the runner's `PerformanceBudget` merged with the case's `performance_budget`:
+`check_performance` in [`src/evaluation/metrics.py`](../src/evaluation/metrics.py) compares RAG-only values (judge work excluded; retried work counts again) with the runner's `PerformanceBudget` merged with the case's `performance_budget`:
+
+Token metrics include nullable `cached_input` counts from provider usage metadata. Missing or malformed cache details remain unavailable rather than becoming zero. Explicit `CAPSTONE_EVAL_CACHED_INPUT_USD_PER_MILLION` pricing discounts only reported cached input tokens; without that rate all input retains the normal input price. Provider-reported cost always takes precedence, and no rate or cache capability is inferred from a model name.
 
 | Check | Value | Default limit |
 | --- | --- | --- |
@@ -150,13 +152,13 @@ Each Python case result contains:
 | `followup_queries` | Coverage-review follow-up subqueries | 2 |
 | `rag_tokens` | Provider-reported RAG tokens | Off |
 | `rag_cost_usd` | Estimated RAG cost | Off |
-| `duplicate_chunks` | Repeated non-reused excerpts sent to RAG subanswers | 0 |
+| `duplicate_chunks` | Repeated excerpts within one model prompt | 0 |
 
-Each check is `pass`, `fail`, or `unknown` (value not reported or not yet reached). The case `status` is `fail` if any check fails, otherwise `incomplete` if any check is unknown or the case did not finish, otherwise `pass`. `aggregate_metrics.performance` counts `pass`/`fail`/`incomplete` cases and failures per check. Metrics also report `workflow.reused_searches`, while `context.duplicate_chunks` excludes allowed reuse and judge context. Performance checks are reported alongside judge scores; they do not change judge scores or case success.
+Each check is `pass`, `fail`, or `unknown` (value not reported or not yet reached). The case `status` is `fail` if any check fails, otherwise `incomplete` if any check is unknown or the case did not finish, otherwise `pass`. `aggregate_metrics.performance` counts `pass`/`fail`/`incomplete` cases and failures per check. `context.duplicate_chunks` counts repeated excerpts within an individual RAG or judge prompt, not excerpt reuse across searches. Performance checks are reported alongside judge scores; they do not change judge scores or case success.
 
 Chunk fields are `rank`, `text`, `score`, `paper_id`, `chunk_index`, `filename`, `title`, and `page`. `_serialize_chunks` requires 1–35 chunks, consecutive ranks from 1, finite non-boolean scores, nonempty identity/display/text strings, zero-based nonnegative chunk index, and positive page. Pre-judge failed results can show no published chunks even when useful retrieval work remains in an internal checkpoint. A judge failure keeps the generated answer and chunks for diagnosis.
 
-[`src/evaluation_diagnostics.py`](../src/evaluation_diagnostics.py) defines `classify_failure`, `failure_record`, `valid_record`, `sanitize_record`, and `sanitize_result_diagnostics`. Structured failures use exactly:
+[`src/evaluation/diagnostics.py`](../src/evaluation/diagnostics.py) defines `classify_failure`, `failure_record`, `valid_record`, `sanitize_record`, and `sanitize_result_diagnostics`. Structured failures use exactly:
 
 | Diagnostic field | Constraint |
 | --- | --- |
@@ -215,7 +217,7 @@ The CLI request is `command: evaluate`, `stream: true`, `retrieval_type`, and `t
 
 The graph stores results by original case index. `completed` counts distinct cases with a result, not attempts, so it remains at total throughout deferred retries. Retry progress is separately tracked. A compatibility evaluator that exposes only `.run` rather than `start_case`/`resume_case` uses the fallback runner interface; exact-stage resume guarantees describe the production `EvaluationRunner`, not arbitrary injected fakes.
 
-[`app/src-tauri/src/lib.rs`](../app/src-tauri/src/lib.rs) implements `evaluate_stream`, sends the request through the Python bridge, and requires a terminal event. [`app/src-tauri/src/evaluation.rs`](../app/src-tauri/src/evaluation.rs) parses/sanitizes event and result DTOs, preserving nested snake_case fields while exposing camelCase event/envelope fields to TypeScript. Invalid or failed transport uses safe errors rather than raw provider details.
+[`app/src-tauri/src/evaluation/mod.rs`](../app/src-tauri/src/evaluation/mod.rs) implements `evaluate_stream`, sends the request through the Python bridge, requires a terminal event, and parses/sanitizes event and result DTOs, preserving nested snake_case fields while exposing camelCase event/envelope fields to TypeScript. A failed run shows Python's own error message (with the configured API key replaced by `[redacted]`); the generic "Evaluation transport failed" text is used only when no message is available.
 
 [`evaluationSaga`](../app/src/slices/evaluation/sagas/evaluation-saga.ts) uses `takeLeading` to prevent overlapping UI runs and an expanding event-channel buffer to retain synchronous event bursts. It sanitizes results, ignores events after a terminal frame, detects a promise settling without completion, and dispatches case/retry/aggregate updates. [`evaluation-types.ts`](../app/src/slices/evaluation/evaluation-types.ts) holds results in original input positions and replaces an earlier failure when a retry succeeds.
 
@@ -227,7 +229,7 @@ The Tauri [RagEvals component](../app/src/components/RagEvals.svelte) shows dist
 
 [`_persisted_evaluation_stream`](../src/cli/__main__.py) accumulates initial case inputs and latest results by one-based index. On the sole `complete` event, it invokes `persist_evaluation_results` **before** forwarding terminal completion to stdout. The artifact contains exactly one result per input in input order. Per-case failure is still a completed run and produces an artifact, even if every case fails. A validation/transport/cancellation failure before terminal completion does not produce a completed-run artifact.
 
-[`src/evaluation_results.py`](../src/evaluation_results.py) defines:
+[`src/evaluation/results.py`](../src/evaluation/results.py) defines:
 
 | Item | Value or behavior |
 | --- | --- |
@@ -252,12 +254,12 @@ These test paths are maintained behavior references, not historical pass counts 
 | Area | Relevant tests and exact symbols |
 | --- | --- |
 | Input/judge/generation contracts | [`tests/test_evaluation_runner.py`](../tests/test_evaluation_runner.py) |
-| Exact-stage recovery and bounded rounds | [`tests/test_evaluation_stages.py`](../tests/test_evaluation_stages.py): `test_every_stage_and_hop_resumes_without_replaying_validated_work`, `test_advancing_failure_resumes_new_stage_on_next_round_and_preserves_history`, `test_no_round_three_and_new_run_starts_fresh` |
-| Immediate planner policy | [`tests/test_evaluation_planner_retry.py`](../tests/test_evaluation_planner_retry.py): `test_mixed_schema_and_provider_failures_use_one_shared_budget`, `test_non_evaluation_callers_keep_one_attempt`, `test_default_evaluation_disables_sdk_retries_without_changing_chat` |
-| Safe diagnostic handling | [`tests/test_evaluation_diagnostics.py`](../tests/test_evaluation_diagnostics.py): `test_unknown_errors_never_stringified_or_duck_typed`, `test_402_at_every_stage_retains_three_ordered_attempts`, `test_artifact_boundary_sanitizes_untrusted_history` |
-| Stream and artifact boundary | [`tests/test_cli_evaluation_stream.py`](../tests/test_cli_evaluation_stream.py), [`tests/test_cli_stream_workflows.py`](../tests/test_cli_stream_workflows.py), [`tests/test_evaluation_results.py`](../tests/test_evaluation_results.py) |
+| Exact-stage recovery and bounded rounds | [`tests/test_evaluation_stages.py`](../tests/test_evaluation_stages.py) |
+| Immediate planner policy | [`tests/test_evaluation_planner_retry.py`](../tests/test_evaluation_planner_retry.py): `test_default_evaluation_disables_sdk_retries_without_changing_chat` |
+| Safe diagnostic handling | [`tests/test_evaluation_diagnostics.py`](../tests/test_evaluation_diagnostics.py): `test_402_at_every_stage_retains_three_ordered_attempts`, `test_artifact_boundary_sanitizes_untrusted_history` |
+| Stream and artifact boundary | [`tests/test_cli_evaluation_stream.py`](../tests/test_cli_evaluation_stream.py), [`tests/test_cli_stream_workflows.py`](../tests/test_cli_stream_workflows.py) |
 | Dataset integrity | [`tests/test_eval_questions.py`](../tests/test_eval_questions.py) |
-| Tauri UI/API/state/diagnostics | [`app/tests/evaluation-api.test.mjs`](../app/tests/evaluation-api.test.mjs), [`evaluation-saga.test.mjs`](../app/tests/evaluation-saga.test.mjs), [`evaluation-state.test.mjs`](../app/tests/evaluation-state.test.mjs), [`evaluation-diagnostics.test.mjs`](../app/tests/evaluation-diagnostics.test.mjs), [`evaluation-interface.test.mjs`](../app/tests/evaluation-interface.test.mjs), [`evaluation-score.test.mjs`](../app/tests/evaluation-score.test.mjs) |
+| Tauri UI/API/state/diagnostics | [`evaluation-saga.test.mjs`](../app/tests/evaluation-saga.test.mjs), [`evaluation-state.test.mjs`](../app/tests/evaluation-state.test.mjs), [`evaluation-diagnostics.test.mjs`](../app/tests/evaluation-diagnostics.test.mjs), [`evaluation-interface.test.mjs`](../app/tests/evaluation-interface.test.mjs), [`evaluation-score.test.mjs`](../app/tests/evaluation-score.test.mjs) |
 
 Update and run focused offline tests before a live evaluation. A new stage needs cursor/commit semantics, failure classification, attempt accounting, transport validation and UI handling. Retry/diagnostic changes need both producer and desktop consumer tests. A real strategy comparison must change retrieval, not just labels.
 

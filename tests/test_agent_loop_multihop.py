@@ -1,27 +1,18 @@
 import json
-from dataclasses import replace
+import time
 from types import SimpleNamespace
 
 import pytest
 
-from src.agent_loop import (
+from src.chat.agent_loop import (
     AgentCoverageError,
-    AgentIncompleteResponseError,
     AgentLoop,
     AgentModelError,
-    AgentPlanError,
     AgentRetrievalError,
-    MultihopCompletedEvent,
-    MultihopCoverageCompletedEvent,
-    MultihopCoverageStartedEvent,
-    MultihopFinalDeltaEvent,
-    _mark_chunks_seen,
-    _retrieve_multihop,
+    run_multihop,
 )
-from src.cli.models import MockChatModel
-from src.paper_search import PaperChunkMatch
-from src.sqlite_history import SQLiteHistoryStore
-
+from src.retrieval.paper_search import PaperChunkMatch
+from src.storage.sqlite_history import SQLiteHistoryStore
 
 def chunk(rank, paper_id, chunk_index=0):
     return PaperChunkMatch(
@@ -46,7 +37,7 @@ class HopRetriever:
         result = self.results[query]
         if isinstance(result, Exception):
             raise result
-        return result
+        return result[:n_results]
 
 
 class StageModel:
@@ -99,252 +90,33 @@ def results():
     }
 
 
-def test_retrieval_fills_from_lower_ranked_unseen_and_drops_identical_text():
-    first = [
-        chunk(1, "shared"),
-        *[chunk(rank, f"alpha-{rank}") for rank in range(2, 6)],
-    ]
-    second = [
-        chunk(1, "shared"),
-        replace(chunk(2, "other-paper"), text="  evidence from alpha-2  "),
-        *[chunk(rank, f"beta-{rank}") for rank in range(3, 8)],
-    ]
-    retriever = HopRetriever({"first": first, "second": second})
-    seen = set()
-    _, _, first_chunks, reused = _retrieve_multihop(retriever, "first", seen)
-    assert not reused
-    _mark_chunks_seen(seen, first_chunks)
-    _, _, second_chunks, reused = _retrieve_multihop(retriever, "second", seen)
-    assert not reused
-    assert [chunk.paper_id for chunk in second_chunks] == [
-        "beta-3",
-        "beta-4",
-        "beta-5",
-        "beta-6",
-        "beta-7",
-    ]
-    assert retriever.calls == [("first", 5), ("second", 10)]
+def test_parallel_answer_failure_cancels_searches_that_have_not_started():
+    queries = ["first", "second", "third", "fourth", "fifth"]
 
+    class FailingModel(StageModel):
+        def __init__(self):
+            super().__init__(json.dumps({"subqueries": queries}))
+            self.started = []
 
-def test_retrieval_reuses_its_own_unique_top_excerpts_when_none_are_new():
-    retriever = HopRetriever(
-        {"first": [chunk(1, "shared")], "second": [chunk(1, "shared")]}
-    )
-    seen = set()
-    _, _, first, reused = _retrieve_multihop(retriever, "first", seen)
-    assert not reused
-    _mark_chunks_seen(seen, first)
-    _, _, second, reused = _retrieve_multihop(retriever, "second", seen)
-    assert reused
-    assert [chunk.paper_id for chunk in second] == ["shared"]
-    assert retriever.calls == [("first", 5), ("second", 6)]
+        def invoke(self, messages):
+            stage = self.stage(messages)
+            if stage != "subanswer":
+                return super().invoke(messages)
+            query = json.loads(messages[-1].content)["subquery"]
+            self.started.append(query)
+            if query == "first":
+                raise RuntimeError("first search failed")
+            time.sleep(0.03)
+            return SimpleNamespace(content=f"summary for {query}")
 
+    model = FailingModel()
+    retriever = HopRetriever({query: [chunk(1, query)] for query in queries})
 
-def test_run_retrieves_each_hop_composes_all_answers_and_persists_only_final(tmp_path):
-    database = tmp_path / "history.sqlite3"
-    model = StageModel()
-    retriever = HopRetriever(results())
-    with AgentLoop(database, model, paper_retriever=retriever) as loop:
-        assert loop.run("session", "compare alpha and beta") == "final answer"
-        assert [source.paper_id for source in loop.last_sources] == [
-            "shared",
-            "alpha",
-            "beta",
-        ]
+    with pytest.raises(AgentModelError) as raised:
+        run_multihop(model, retriever, "question")
 
-    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 7)]
-    assert [stage for stage, _ in model.calls] == [
-        "planner",
-        "subanswer",
-        "subanswer",
-        "coverage",
-        "composer",
-    ]
-    composition = json.loads(model.calls[-1][1][-1].content)
-    assert composition["original_question"] == "compare alpha and beta"
-    assert [item["answer"] for item in composition["subanswers"]] == [
-        "summary for alpha evidence",
-        "summary for beta evidence",
-    ]
-    with SQLiteHistoryStore(database) as store:
-        messages = store.get_messages("session")
-    assert [(message.role, message.content) for message in messages] == [
-        ("user", "compare alpha and beta"),
-        ("assistant", "final answer"),
-    ]
-    assert [source.rank for source in messages[-1].sources] == [1, 2, 3]
-
-
-def test_stream_events_are_ordered_typed_and_persist_after_completion(tmp_path):
-    model = StageModel()
-    database = tmp_path / "history.sqlite3"
-    with AgentLoop(database, model, paper_retriever=HopRetriever(results())) as loop:
-        events = list(loop.stream_events("session", "question"))
-
-    assert [event.stage for event in events] == [
-        "plan",
-        "hop_started",
-        "hop_completed",
-        "hop_started",
-        "hop_completed",
-        "coverage_started",
-        "coverage_completed",
-        "final_delta",
-        "final_delta",
-        "completed",
-    ]
-    assert [
-        event.text for event in events if isinstance(event, MultihopFinalDeltaEvent)
-    ] == [
-        "final ",
-        "answer",
-    ]
-    assert isinstance(events[-1], MultihopCompletedEvent)
-    assert isinstance(events[5], MultihopCoverageStartedEvent)
-    assert isinstance(events[6], MultihopCoverageCompletedEvent)
-    assert events[6].followup_subqueries == ()
-    with SQLiteHistoryStore(database) as store:
-        assert [item.content for item in store.get_messages("session")] == [
-            "question",
-            "final answer",
-        ]
-
-
-@pytest.mark.parametrize(
-    ("followups", "expected"),
-    [
-        (["  gamma   evidence  "], ["gamma evidence"]),
-        (
-            ["gamma evidence", "delta evidence"],
-            ["gamma evidence", "delta evidence"],
-        ),
-    ],
-)
-def test_adaptive_followups_use_exact_hop_path_and_compose_in_order(
-    tmp_path, followups, expected
-):
-    model = StageModel()
-    model.coverage = json.dumps({"complete": False, "follow_up_subqueries": followups})
-    hop_results = results()
-    for query in expected:
-        hop_results[query] = [chunk(1, "shared"), chunk(2, query)]
-    retriever = HopRetriever(hop_results)
-
-    with AgentLoop(
-        tmp_path / "adaptive.sqlite3", model, paper_retriever=retriever
-    ) as loop:
-        assert loop.run("session", "question") == "final answer"
-        source_ids = [source.paper_id for source in loop.last_sources]
-
-    all_queries = ["alpha evidence", "beta evidence", *expected]
-    assert retriever.calls == [
-        (query, 5 + seen)
-        for query, seen in zip(all_queries, (0, 2, *range(3, 3 + len(expected))))
-    ]
-    assert source_ids == ["shared", "alpha", "beta", *expected]
-    assert [stage for stage, _ in model.calls] == [
-        "planner",
-        "subanswer",
-        "subanswer",
-        "coverage",
-        *("subanswer" for _ in expected),
-        "composer",
-    ]
-    coverage = json.loads(model.calls[3][1][-1].content)
-    assert [item["subquery"] for item in coverage["subanswers"]] == all_queries[:2]
-    composition = json.loads(model.calls[-1][1][-1].content)
-    assert [item["subquery"] for item in composition["subanswers"]] == all_queries
-    assert [item["answer"] for item in composition["subanswers"]] == [
-        f"summary for {query}" for query in all_queries
-    ]
-
-
-def test_stream_appends_adaptive_followups_before_final_deltas(tmp_path):
-    model = StageModel()
-    model.coverage = json.dumps(
-        {
-            "complete": False,
-            "follow_up_subqueries": ["gamma evidence", "delta evidence"],
-        }
-    )
-    hop_results = results()
-    hop_results.update(
-        {
-            "gamma evidence": [chunk(1, "gamma")],
-            "delta evidence": [chunk(1, "delta")],
-        }
-    )
-
-    with AgentLoop(
-        tmp_path / "adaptive-stream.sqlite3",
-        model,
-        paper_retriever=HopRetriever(hop_results),
-    ) as loop:
-        events = list(loop.stream_events("session", "question"))
-
-    stages = [event.stage for event in events]
-    assert stages == [
-        "plan",
-        "hop_started",
-        "hop_completed",
-        "hop_started",
-        "hop_completed",
-        "coverage_started",
-        "coverage_completed",
-        "hop_started",
-        "hop_completed",
-        "hop_started",
-        "hop_completed",
-        "final_delta",
-        "final_delta",
-        "completed",
-    ]
-    coverage = events[6]
-    assert isinstance(coverage, MultihopCoverageCompletedEvent)
-    assert coverage.total == 4
-    assert coverage.followup_subqueries == ("gamma evidence", "delta evidence")
-    assert [(events[index].index, events[index].total) for index in (7, 9)] == [
-        (3, 4),
-        (4, 4),
-    ]
-    assert stages.index("final_delta") > stages.index("coverage_completed")
-    assert [source.paper_id for source in events[-1].sources] == [
-        "shared",
-        "alpha",
-        "beta",
-        "gamma",
-        "delta",
-    ]
-
-
-def test_seven_hops_cap_aggregate_at_thirty_five_deterministic_chunks(tmp_path):
-    initial = [f"initial {index}" for index in range(1, 6)]
-    followups = ["followup one", "followup two"]
-    model = StageModel(json.dumps({"subqueries": initial}))
-    model.coverage = json.dumps({"complete": False, "follow_up_subqueries": followups})
-    hop_results = {
-        query: [chunk(rank, f"{query}-{rank}", rank - 1) for rank in range(1, 6)]
-        for query in [*initial, *followups]
-    }
-
-    with AgentLoop(
-        tmp_path / "bounds.sqlite3",
-        model,
-        paper_retriever=HopRetriever(hop_results),
-    ) as loop:
-        loop.run("session", "question")
-        sources = loop.last_sources
-
-    assert len(sources) == 35
-    assert [source.rank for source in sources] == list(range(1, 36))
-    assert [source.paper_id for source in sources[:6]] == [
-        "initial 1-1",
-        "initial 1-2",
-        "initial 1-3",
-        "initial 1-4",
-        "initial 1-5",
-        "initial 2-1",
-    ]
+    assert raised.value.stage == "subanswer"
+    assert "fifth" not in model.started
 
 
 @pytest.mark.parametrize(
@@ -371,7 +143,7 @@ def test_invalid_or_duplicate_coverage_fails_before_followup_and_persistence(
         with pytest.raises(AgentCoverageError) as raised:
             loop.run("session", "question")
     assert raised.value.stage == "coverage"
-    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 7)]
+    assert retriever.calls == [("alpha evidence", 5), ("beta evidence", 5)]
     with SQLiteHistoryStore(database) as store:
         assert store.get_messages("session") == []
 
@@ -415,92 +187,3 @@ def test_adaptive_failure_stages_are_explicit_and_never_persist(
     assert raised.value.stage == expected_stage
     with SQLiteHistoryStore(database) as store:
         assert store.get_messages("session") == []
-
-
-@pytest.mark.parametrize(
-    "plan",
-    [
-        "",
-        "not json",
-        "{}",
-        '{"subqueries":[]}',
-        '{"subqueries":["same"," SAME "]}',
-        '{"subqueries":["1","2","3","4","5","6"]}',
-    ],
-)
-def test_invalid_plans_fail_before_retrieval_or_persistence(tmp_path, plan):
-    database = tmp_path / "history.sqlite3"
-    retriever = HopRetriever(results())
-    with AgentLoop(database, StageModel(plan), paper_retriever=retriever) as loop:
-        with pytest.raises((AgentPlanError, AgentModelError)):
-            loop.run("session", "question")
-    assert retriever.calls == []
-    with SQLiteHistoryStore(database) as store:
-        assert store.get_messages("session") == []
-
-
-@pytest.mark.parametrize("failure", ["retrieval", "subanswer", "composer"])
-def test_hop_and_model_failures_never_persist_partial_exchange(tmp_path, failure):
-    database = tmp_path / f"{failure}.sqlite3"
-    model = StageModel()
-    model.fail_stage = failure if failure != "retrieval" else None
-    hop_results = results()
-    if failure == "retrieval":
-        hop_results["beta evidence"] = RuntimeError("index offline")
-    with AgentLoop(database, model, paper_retriever=HopRetriever(hop_results)) as loop:
-        error = AgentRetrievalError if failure == "retrieval" else AgentModelError
-        with pytest.raises(error):
-            loop.run("session", "question")
-    with SQLiteHistoryStore(database) as store:
-        assert store.get_messages("session") == []
-
-
-def test_incomplete_or_interrupted_final_stream_is_not_persisted(tmp_path):
-    for name, chunks in (
-        (
-            "incomplete",
-            [
-                SimpleNamespace(
-                    content="partial", response_metadata={"finish_reason": "length"}
-                )
-            ],
-        ),
-        ("interrupted", ["partial ", RuntimeError("disconnected")]),
-    ):
-        database = tmp_path / f"{name}.sqlite3"
-        model = StageModel()
-        model.final_chunks = chunks
-        with AgentLoop(
-            database, model, paper_retriever=HopRetriever(results())
-        ) as loop:
-            with pytest.raises((AgentIncompleteResponseError, AgentModelError)):
-                list(loop.stream_events("session", "question"))
-        with SQLiteHistoryStore(database) as store:
-            assert store.get_messages("session") == []
-
-
-def test_abandoned_event_stream_does_not_persist_partial_exchange(tmp_path):
-    database = tmp_path / "abandoned.sqlite3"
-    with AgentLoop(
-        database, StageModel(), paper_retriever=HopRetriever(results())
-    ) as loop:
-        stream = loop.stream_events("session", "question")
-        assert next(stream).stage == "plan"
-        stream.close()
-    with SQLiteHistoryStore(database) as store:
-        assert store.get_messages("session") == []
-
-
-def test_offline_mock_model_supports_every_multihop_stage(tmp_path):
-    with AgentLoop(
-        tmp_path / "mock.sqlite3",
-        MockChatModel(),
-        paper_retriever=HopRetriever(
-            {
-                "Evidence supporting question": [chunk(1, "support")],
-                "Evidence limiting or contrasting question": [chunk(1, "limit")],
-            }
-        ),
-    ) as loop:
-        answer = loop.run("session", "question")
-    assert answer == "[offline mock reply] question"

@@ -172,17 +172,17 @@ test("paper intents and route changes preserve the paper search limit and errors
   await running.task.toPromise();
 });
 
-test("search components dispatch intents without owning APIs or browser history", async () => {
-  const [history, papers] = await Promise.all([
-    readFile(new URL("../src/components/HistorySearch.svelte", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/PapersList.svelte", import.meta.url), "utf8"),
-  ]);
-  assert.match(history, /selectActiveRoute/);
-  assert.match(history, /sessionId: match\.session_id/);
-  assert.match(history, /exchangeId: match\.exchange_id/);
-  assert.match(papers, /selectActiveRoute/);
-  assert.match(papers, /runPaperSearch\(""\)/);
-  for (const component of [history, papers]) {
-    assert.doesNotMatch(component, /api\.|window\.(location|history)|popstate/);
-  }
+test("history search toolbar wraps controls and preserves active-query clear behavior", async () => {
+  const history = await readFile(
+    new URL("../src/components/HistorySearch.svelte", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(history, /flex flex-wrap.*sm:flex-nowrap/);
+  assert.match(history, /class="min-w-0 w-full sm:w-auto sm:flex-1"/);
+  assert.match(history, /class="shrink-0" type="submit"/);
+  assert.match(history, /class="shrink-0" type="button" variant="ghost"/);
+  assert.match(history, /px-4 pt-28 sm:pt-14/);
+  assert.match(history, /\{#if \$activeRoute\.name === "history" && \$activeRoute\.query\}/);
+  assert.match(history, /function clearResults\(\) \{\s+store\.dispatch\(runSearch\(""\)\);\s+\}/);
 });

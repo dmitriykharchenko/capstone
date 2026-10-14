@@ -5,9 +5,6 @@ import {
 import { store } from "../../store";
 import { chatHistorySearchId } from "./search-types";
 
-export const selectSearchQuery = store.createSelector(
-  (state) => state.search.query,
-);
 export const selectSearchMatches = store.createSelector(
   (state) => {
     const route = state.router.activeRoute;
@@ -15,12 +12,15 @@ export const selectSearchMatches = store.createSelector(
       return [];
     }
     return (
-      getItem(state.search.collections, chatHistorySearchId(route.query ?? ""))?.results ?? []
+      getItem(
+        state.search.searchResultsCollection,
+        chatHistorySearchId(route.query ?? ""),
+      )?.results ?? []
     );
   },
 );
 export const selectSearchCollections = store.createSelector(
-  (state) => getItems(state.search.collections),
+  (state) => getItems(state.search.searchResultsCollection),
 );
 export const selectSearching = store.createSelector(
   (state) => state.search.searching,

@@ -16,6 +16,7 @@ import {
   loadPapers,
   openPaper,
   paperIndexFailed,
+  paperIndexPaperStarted,
   paperIndexProgress,
   paperIndexStarted,
   paperIndexSucceeded,
@@ -23,7 +24,12 @@ import {
   papersLoading,
   pdfFailed,
   pdfLoading,
+  resetIndices,
+  resetIndicesFailed,
+  resetIndicesSucceeded,
   runPaperIndex,
+  setBm25Statuses,
+  setPaperStatuses,
   setPapers,
   setPdfUrl,
 } from "../papers-slice";
@@ -49,6 +55,23 @@ export function* papersSaga() {
     try {
       const papers = yield* call(api.listPapers);
       yield* put(setPapers(papers));
+      // Hydrate per-paper indicators from persisted outcomes so an already
+      // indexed paper stays marked after a restart. Best-effort: a failure
+      // here must not surface as a papers-load error.
+      try {
+        const { statuses } = yield* call(api.paperStatuses);
+        yield* put(setPaperStatuses(statuses));
+      } catch {
+        // Ignore; indicators simply fall back to "not indexed".
+      }
+      // Hydrate the per-paper BM25 dot from the persisted lexical index.
+      // Best-effort: a failure leaves every BM25 dot as "not indexed".
+      try {
+        const bm25 = yield* call(api.bm25Status);
+        yield* put(setBm25Statuses(bm25.paper_ids));
+      } catch {
+        // Ignore; BM25 dots simply fall back to "not indexed".
+      }
     } catch (error) {
       yield* put(papersFailed(String(error)));
     }
@@ -83,13 +106,17 @@ export function* papersSaga() {
         const event = yield* take(channel);
         if (event.event === "start") {
           yield* put(paperIndexStarted(event.total));
+        } else if (event.event === "started") {
+          yield* put(paperIndexPaperStarted(event.paperId, event.filename));
         } else if (event.event === "progress") {
           yield* put(
             paperIndexProgress(
               event.completed,
               event.total,
+              event.paperId,
               event.filename,
               event.status,
+              event.error,
             ),
           );
         } else if (event.event === "done") {
@@ -100,14 +127,36 @@ export function* papersSaga() {
               event.indexed,
               event.empty,
               event.failed,
+              event.skipped,
             ),
           );
+          // The BM25 index is rebuilt at the end of the run; refresh the
+          // per-paper BM25 dots to reflect the new coverage. Best-effort.
+          try {
+            const bm25 = yield* call(api.bm25Status);
+            yield* put(setBm25Statuses(bm25.paper_ids));
+          } catch {
+            // Ignore; the dots keep their previous coverage.
+          }
         } else if (event.event === "error") {
           yield* put(paperIndexFailed(event.message));
         }
       }
     } catch (error) {
       yield* put(paperIndexFailed(String(error)));
+    }
+  });
+
+  // Reset every paper index, then reload papers so all indicators re-hydrate
+  // from the now-empty persisted state. `takeLeading` ignores duplicate clicks
+  // while a reset is in flight.
+  yield* takeLeading(resetIndices, function* () {
+    try {
+      yield* call(api.resetAllIndices);
+      yield* put(resetIndicesSucceeded());
+      yield* put(loadPapers());
+    } catch (error) {
+      yield* put(resetIndicesFailed(String(error)));
     }
   });
 }

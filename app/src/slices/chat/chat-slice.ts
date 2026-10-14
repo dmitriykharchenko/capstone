@@ -12,6 +12,7 @@ import { initialChatState, type ChatState, type ChatTurnProgress } from "./chat-
 // User asked to send a message; the saga performs the invoke and dispatches the
 // outcome actions below.
 export const sendMessage = createAction<[text: string]>("chat/sendMessage");
+export const activateChat = createAction("chat/activate");
 export const selectSession = createAction<[sessionId: string]>("chat/selectSession");
 export const createSession = createAction("chat/createSession");
 export const setSessionId = createAction<[sessionId: string]>("chat/setSessionId");

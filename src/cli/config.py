@@ -21,6 +21,7 @@ DEFAULT_RETRIEVAL_LOG_PATH = PROJECT_ROOT / "data" / "retrieval_logs.txt"
 DEFAULT_CHAT_BASE_URL = "https://api.openai.com/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_CHAT_MODEL = "openai/gpt-5.4-mini"
+DEFAULT_INDEX_MAX_WORKERS = 4
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class CLIConfig:
     log_path: Path = DEFAULT_LOG_PATH
     retrieval_log_path: Path = DEFAULT_RETRIEVAL_LOG_PATH
     chat_max_tokens: int | None = None
+    index_max_workers: int = DEFAULT_INDEX_MAX_WORKERS
 
     def __post_init__(self) -> None:
         if self.chat_max_tokens is not None and (
@@ -47,6 +49,12 @@ class CLIConfig:
             or self.chat_max_tokens < 1
         ):
             raise ValueError("chat_max_tokens must be a positive integer")
+        if (
+            isinstance(self.index_max_workers, bool)
+            or not isinstance(self.index_max_workers, int)
+            or self.index_max_workers < 1
+        ):
+            raise ValueError("index_max_workers must be a positive integer")
 
     @property
     def has_api_key(self) -> bool:
@@ -88,9 +96,7 @@ class CLIConfig:
             ),
             chat_model=os.getenv("CAPSTONE_CHAT_MODEL", default_chat_model),
             chat_base_url=chat_base_url,
-            embedding_model=os.getenv(
-                "CAPSTONE_EMBED_MODEL", "text-embedding-3-small"
-            ),
+            embedding_model=os.getenv("CAPSTONE_EMBED_MODEL", "text-embedding-3-small"),
             embedding_base_url=embedding_base_url,
             api_key=api_key,
             system_prompt=system_prompt or None,
@@ -101,6 +107,10 @@ class CLIConfig:
                 )
             ),
             chat_max_tokens=_optional_positive_int("CAPSTONE_CHAT_MAX_TOKENS"),
+            index_max_workers=(
+                _optional_positive_int("CAPSTONE_INDEX_MAX_WORKERS")
+                or DEFAULT_INDEX_MAX_WORKERS
+            ),
         )
 
 

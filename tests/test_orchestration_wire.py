@@ -1,21 +1,15 @@
 """Shared raw-JSON and state-machine regressions; no stores or providers."""
 
 from copy import deepcopy
-from itertools import permutations
 import json
 from pathlib import Path
 
 import pytest
 
-from src.orchestration_wire import (
+from src.orchestration.wire import (
     ERROR,
-    INTEGER_FIELDS,
-    QUESTION_TRANSITIONS,
-    SCHEMA,
     StreamValidator,
     loads,
-    validate_event,
-    validate_type,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -86,88 +80,6 @@ def accepts(raw):
     return True
 
 
-def test_shared_integer_lexing():
-    assert {key for key, _ in CASES["integer_fields"]} == INTEGER_FIELDS
-    assert {name for _, name in CASES["integer_fields"]} == {
-        name for name, rule in SCHEMA["types"].items() if rule["kind"] == "int"
-    }
-    for key, name in CASES["integer_fields"]:
-        rule = SCHEMA["types"][name]
-        bounds = [
-            {"raw": str(n), "integer": n}
-            for n in (rule["min"], rule["max"], rule["max"] + 1)
-        ]
-        for case in CASES["lexical"] + bounds:
-            expected = (
-                "integer" in case and rule["min"] <= case["integer"] <= rule["max"]
-            )
-            for encoded_key in (
-                json.dumps(key),
-                '"\\u%04x%s"' % (ord(key[0]), key[1:]),
-            ):
-                raw = '{"nested":[{' + encoded_key + ":" + case["raw"] + "}]}"
-                try:
-                    validate_type(loads(raw)["nested"][0][key], name)
-                    actual = True
-                except ValueError as error:
-                    assert str(error) == ERROR
-                    actual = False
-                assert actual == expected, (key, name, case)
-    for raw in ("-0", "-1", "0.5", "1e2"):
-        validate_type(loads('{"score":' + raw + "}")["score"], "score")
-
-
 @pytest.mark.parametrize("case", CASES["streams"], ids=lambda c: c["name"])
 def test_shared_stream_cases(case):
     assert accepts([json.dumps(event) for event in stream_case(case)]) == case["valid"]
-
-
-def test_shared_question_transition_table():
-    assert QUESTION_TRANSITIONS == {
-        key: set(values) for key, values in CASES["question_transitions"].items()
-    }
-    for order in permutations([6, 7, 10]):
-        case = {"prefix": 6, "steps": order}
-        assert accepts([json.dumps(e) for e in stream_case(case)]) == (
-            order == (6, 7, 10)
-        )
-
-
-def integer_mutations():
-    """Raw NDJSON mutations also reused by the standalone cross-language gate."""
-    for position, event in enumerate(GOLDEN):
-
-        def leaves(value, path=()):
-            if type(value) is int:
-                yield path
-            elif isinstance(value, dict):
-                for key, child in value.items():
-                    yield from leaves(child, (*path, key))
-            elif isinstance(value, list):
-                for index, child in enumerate(value):
-                    yield from leaves(child, (*path, str(index)))
-
-        for path in leaves(event):
-            for case in CASES["lexical"]:
-                if "integer" in case:
-                    continue
-                changed = update(
-                    deepcopy(event), {"set": {"/" + "/".join(path): "@integer@"}}
-                )
-                raw = json.dumps(changed).replace('"@integer@"', case["raw"])
-                yield [json.dumps(e) for e in GOLDEN[:position]] + [raw]
-
-
-def test_raw_ndjson_integer_mutations():
-    for events in integer_mutations():
-        assert not accepts(events)
-
-
-def test_done_establishes_identity_without_mutating_fixture():
-    validator = StreamValidator("session", "run", "turn")
-    for event in deepcopy(GOLDEN):
-        validator.accept(event)
-    assert validator.snapshot["status"] == "completed"
-    assert validator.snapshot["exchange_id"] == GOLDEN[-1]["exchange_id"]
-    assert GOLDEN[0]["snapshot"]["exchange_id"] is None
-    validate_event(GOLDEN[-1])

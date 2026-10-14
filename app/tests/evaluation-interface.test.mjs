@@ -36,14 +36,10 @@ test("RAG Evals source contract auto-starts and renders every required state", a
   const dispatched = component.indexOf("store.dispatch(runEvaluation", parsed);
   assert.ok(parsed >= 0 && dispatched > parsed, "validation must precede auto-start dispatch");
   assert.match(component, /accept="\.json"/);
-  assert.deepEqual(
-    [...component.matchAll(/<SelectItem value="([^"]+)" label="([^"]+)"/g)].map((m) => m.slice(1)),
-    [["multihop-hybrid", "Multihop Hybrid"]],
-  );
-  assert.match(component, /const retrievalType: EvaluationRetrievalType = EVALUATION_RETRIEVAL_TYPE/);
+  assert.doesNotMatch(component, /<Select/);
   assert.match(component, /store\.dispatch\(runEvaluation\(parsed\.testCases\)\)/);
   assert.doesNotMatch(component, /value="(?:vector|bm25|hybrid)"|>Hybrid</);
-  assert.ok((component.match(/disabled=\{\$running\}/g) ?? []).length >= 3);
+  assert.ok((component.match(/disabled=\{\$running\}/g) ?? []).length >= 2);
   for (const contract of [
     'role="alert"',
     'role="progressbar"',
@@ -71,12 +67,4 @@ test("RAG Evals source contract auto-starts and renders every required state", a
     "Evaluation error",
   ]) assert.ok(component.includes(contract), contract);
   assert.doesNotMatch(component, /window\.(location|history)|popstate|api\.runEvaluation/);
-});
-
-test("App exposes RAG Evals as the fourth saga-routed tab", async () => {
-  const app = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
-  const tabIds = [...app.matchAll(/\{ id: "([^"]+)", label:/g)].map((match) => match[1]);
-  assert.deepEqual(tabIds, ["chat", "history", "papers", "evals"]);
-  assert.match(app, /store\.dispatch\(navigateTo\(routeForName\(routeName\)\)\)/);
-  assert.match(app, /<RagEvals \/>/);
 });

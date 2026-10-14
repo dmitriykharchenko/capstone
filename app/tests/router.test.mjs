@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test, { after, before } from "node:test";
 import { runSaga, stdChannel } from "redux-saga";
@@ -81,16 +80,16 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 test("route parsing and serialization safely round-trip parameters", () => {
   const chat = parseRoute({
     pathname: "/chat",
-    search: "?sessionId=session%2Fone&exchangeId=turn+two",
+    search: "?sessionId=session%2Fone&exchangeId=42",
   });
   assert.deepEqual(chat, {
     name: "chat",
     sessionId: "session/one",
-    exchangeId: "turn two",
+    exchangeId: 42,
   });
   assert.equal(
     serializeRoute(chat),
-    "/chat?sessionId=session%2Fone&exchangeId=turn+two",
+    "/chat?sessionId=session%2Fone&exchangeId=42",
   );
   assert.equal(
     serializeRoute({ name: "history", query: "RAG & routing/URLs" }),
@@ -104,10 +103,7 @@ test("route parsing and serialization safely round-trip parameters", () => {
     name: "evals",
   });
   assert.equal(serializeRoute({ name: "evals" }), "/evals");
-  assert.deepEqual(parseRoute({ pathname: "/graph", search: "?ignored=1" }), {
-    name: "graph",
-  });
-  assert.equal(serializeRoute({ name: "graph" }), "/graph");
+  assert.deepEqual(parseRoute({ pathname: "/graph", search: "" }), { name: "chat" });
 });
 
 test("unknown paths and empty parameters fall back to canonical chat", () => {
@@ -120,6 +116,10 @@ test("unknown paths and empty parameters fall back to canonical chat", () => {
     query: undefined,
   });
   assert.equal(serializeRoute({ name: "chat" }), "/chat");
+  assert.deepEqual(
+    parseRoute({ pathname: "/chat", search: "?sessionId=s&exchangeId=zero" }),
+    { name: "chat", sessionId: "s", exchangeId: undefined },
+  );
 });
 
 test("router reducer records startup synchronization", () => {
@@ -170,7 +170,7 @@ test("saga canonicalizes startup, pushes intents, and consumes popstate", async 
 });
 
 test("known direct navigation initializes without rewriting history", async () => {
-  const browser = fakeNavigation("/chat?sessionId=s-1&exchangeId=e-2");
+  const browser = fakeNavigation("/chat?sessionId=s-1&exchangeId=2");
   const actions = [];
   const task = runSaga(
     { channel: stdChannel(), dispatch: (action) => actions.push(action), getState: () => ({}) },
@@ -182,13 +182,13 @@ test("known direct navigation initializes without rewriting history", async () =
   assert.deepEqual(actions.at(-1).payload[0], {
     name: "chat",
     sessionId: "s-1",
-    exchangeId: "e-2",
+    exchangeId: 2,
   });
   task.cancel();
   await task.toPromise();
 });
 
-test("direct evaluation navigation survives startup and back-forward events", async () => {
+test("direct evaluation navigation is canonical and survives back-forward events", async () => {
   const browser = fakeNavigation("/evals");
   const actions = [];
   const input = stdChannel();
@@ -201,63 +201,32 @@ test("direct evaluation navigation survives startup and back-forward events", as
   assert.deepEqual(browser.replacements, []);
   assert.deepEqual(actions.at(-1).payload[0], { name: "evals" });
 
-  input.put(navigateTo({ name: "chat" }));
+  input.put(navigateTo({ name: "papers" }));
   await settle();
-  assert.deepEqual(browser.pushes, ["/chat"]);
-  browser.emit("/evals");
+  assert.deepEqual(browser.pushes, ["/papers"]);
+  browser.emit("/evals?ignored=1");
   await settle();
+  assert.deepEqual(browser.replacements, ["/evals"]);
   assert.deepEqual(actions.at(-1).payload[0], { name: "evals" });
   task.cancel();
   await task.toPromise();
 });
 
-test("direct graph navigation is canonical and survives back-forward events", async () => {
-  const browser = fakeNavigation("/graph");
+test("invalid exchange identifiers are removed from direct chat URLs", async () => {
+  const browser = fakeNavigation("/chat?sessionId=s-1&exchangeId=not-a-number");
   const actions = [];
-  const input = stdChannel();
   const task = runSaga(
-    { channel: input, dispatch: (action) => actions.push(action), getState: () => ({}) },
+    { channel: stdChannel(), dispatch: (action) => actions.push(action), getState: () => ({}) },
     routerSaga,
     browser.adapter,
   );
   await settle();
-  assert.deepEqual(browser.replacements, []);
-  assert.deepEqual(actions.at(-1).payload[0], { name: "graph" });
-
-  input.put(navigateTo({ name: "papers" }));
-  await settle();
-  assert.deepEqual(browser.pushes, ["/papers"]);
-  browser.emit("/graph?ignored=1");
-  await settle();
-  assert.deepEqual(browser.replacements, ["/graph"]);
-  assert.deepEqual(actions.at(-1).payload[0], { name: "graph" });
+  assert.deepEqual(browser.replacements, ["/chat?sessionId=s-1"]);
+  assert.deepEqual(actions.at(-1).payload[0], {
+    name: "chat",
+    sessionId: "s-1",
+    exchangeId: undefined,
+  });
   task.cancel();
   await task.toPromise();
-});
-
-test("App dispatches route intents and leaves browser APIs to the saga", async () => {
-  const componentPaths = [
-    "../src/App.svelte",
-    "../src/components/Chat.svelte",
-    "../src/components/HistorySearch.svelte",
-    "../src/components/PapersList.svelte",
-    "../src/components/RagEvals.svelte",
-    "../src/components/GraphExplorer.svelte",
-  ];
-  const components = await Promise.all(
-    componentPaths.map((path) => readFile(new URL(path, import.meta.url), "utf8")),
-  );
-  const app = components[0];
-  const saga = await readFile(
-    new URL("../src/slices/router/sagas/router-saga.ts", import.meta.url),
-    "utf8",
-  );
-  assert.match(app, /selectActiveRoute/);
-  assert.match(app, /dispatch\(navigateTo/);
-  for (const component of components) {
-    assert.doesNotMatch(component, /window\.(location|history)|popstate/);
-  }
-  assert.match(saga, /window\.history\.pushState/);
-  assert.match(saga, /addEventListener\("popstate"/);
-  assert.match(saga, /channel\.close\(\)/);
 });

@@ -32,7 +32,7 @@ export const searchReducer: StoreReducerFunction<SearchState> =
         action: StoreAction<[string, SearchMatch[], boolean, string | null]>,
       ) => {
         const id = chatHistorySearchId(action.payload[0]);
-        const collections = upsertItem(state.collections, {
+        const searchResultsCollection = upsertItem(state.searchResultsCollection, {
           id,
           results: action.payload[1],
         });
@@ -40,7 +40,7 @@ export const searchReducer: StoreReducerFunction<SearchState> =
           ...state,
           searching: false,
           hasSearched: true,
-          collections,
+          searchResultsCollection,
           enabled: action.payload[2],
           reason: action.payload[3],
         };
@@ -54,5 +54,5 @@ export const searchReducer: StoreReducerFunction<SearchState> =
     }))
     .with(clearSearch, (state: SearchState) => ({
       ...initialSearchState,
-      collections: state.collections,
+      searchResultsCollection: state.searchResultsCollection,
     }));

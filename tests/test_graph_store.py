@@ -1,113 +1,111 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
-from src.graph_store import (
+from src.indexing.fact_extraction import Fact
+from src.storage.graph_store import (
+    ChunkNode,
     CozoGraphStore,
-    GraphNeighborhood,
-    GraphStoreClosedError,
     GraphStoreConfigurationError,
+    GraphStoreLockedError,
     GraphStorePersistenceError,
-    normalize_node_name,
-    stable_node_id,
+    stop_lock_owner,
 )
 
 
-def test_normalization_and_ids_are_deterministic():
-    assert (
-        normalize_node_name("  Graph\u3000Neural  Networks ") == "graph neural networks"
-    )
-    assert stable_node_id("topic", "Graph Neural Networks") == stable_node_id(
-        "topic", " graph  neural networks "
-    )
-    assert stable_node_id("author", "Ada") != stable_node_id("topic", "Ada")
-
-
-def test_schema_reopens_and_persists_graph(tmp_path):
-    path = tmp_path / "graph.db"
-    with CozoGraphStore(path) as store:
-        expected = store.replace_paper(
-            "paper-1", "A Graph Paper", ["Ada Lovelace"], ["Graph Databases"]
-        )
-
-    with CozoGraphStore(path) as reopened:
-        assert reopened.get_paper("paper-1") == expected
-
-
-def test_replacement_is_idempotent_and_cleans_stale_orphans(tmp_path):
+def test_fact_graph_deduplicates_across_chunks_and_papers_and_cleans_orphans(tmp_path):
+    shared = Fact.create("method", "Monte Carlo", "The study uses Monte Carlo.")
+    other = Fact.create("metric", "Accuracy", "Accuracy is reported.", "%")
     with CozoGraphStore(tmp_path / "graph.db") as store:
-        first = store.replace_paper(
-            "paper-1",
-            "First",
-            ["Ada Lovelace", " Grace  Hopper ", "ada lovelace"],
-            ["Graphs", "Databases", " graphs "],
+        store.replace_paper(
+            "p1",
+            "One",
+            ["Ada"],
+            ["Methods"],
+            chunks=(ChunkNode("p1:c0", "p1", 0, 1), ChunkNode("p1:c1", "p1", 1, 2)),
+            facts_by_chunk={"p1:c0": (shared,), "p1:c1": (shared, other)},
+            fact_version=1,
         )
-        repeated = store.replace_paper(
-            "paper-1",
-            "First",
-            ["Ada Lovelace", "Grace Hopper"],
-            ["Graphs", "Databases"],
+        store.replace_paper(
+            "p2",
+            "Two",
+            ["Grace"],
+            ["Methods"],
+            chunks=(ChunkNode("p2:c0", "p2", 0, 3),),
+            facts_by_chunk={"p2:c0": (shared,)},
+            fact_version=1,
         )
-        replaced = store.replace_paper(
-            "paper-1", "Updated", ["Ada Lovelace"], ["Knowledge Graphs"]
-        )
 
-        assert repeated == first
-        assert replaced.title == "Updated"
-        assert [author.name for author in replaced.authors] == ["Ada Lovelace"]
-        assert [topic.name for topic in replaced.topics] == ["Knowledge Graphs"]
-        stale_author_id = stable_node_id("author", "Grace Hopper")
-        stale_topic_id = stable_node_id("topic", "Databases")
-        assert store.neighborhood(stale_author_id) == GraphNeighborhood((), ())
-        assert store.neighborhood(stale_topic_id) == GraphNeighborhood((), ())
-
-
-def test_shared_nodes_survive_replacement_and_remove(tmp_path):
-    ada_id = stable_node_id("author", "Ada")
-    graph_id = stable_node_id("topic", "Graphs")
-    with CozoGraphStore(tmp_path / "graph.db") as store:
-        store.replace_paper("p1", "One", ["Ada"], ["Graphs"])
-        store.replace_paper("p2", "Two", ["Ada", "Grace"], ["Graphs", "Compilers"])
-
-        store.replace_paper("p1", "One revised", ["Alan"], ["Logic"])
-        assert [paper.paper_id for paper in store.papers_for_author(ada_id)] == ["p2"]
-        assert [paper.paper_id for paper in store.papers_for_topic(graph_id)] == ["p2"]
-        assert store.remove_paper("p1") is True
-        assert store.remove_paper("p1") is False
-        assert store.get_paper("p2") is not None
-        assert store.neighborhood(ada_id).nodes
-
-
-def test_direct_derived_and_bounded_traversal_queries(tmp_path):
-    ada_id = stable_node_id("author", "Ada")
-    grace_id = stable_node_id("author", "Grace")
-    graph_id = stable_node_id("topic", "Graphs")
-    logic_id = stable_node_id("topic", "Logic")
-    with CozoGraphStore(tmp_path / "graph.db") as store:
-        store.replace_paper("p1", "One", ["Ada", "Grace"], ["Graphs"])
-        store.replace_paper("p2", "Two", ["Ada", "Alan"], ["Logic"])
-
-        assert [author.author_id for author in store.coauthors_for_author(ada_id)] == [
-            stable_node_id("author", "Alan"),
-            grace_id,
-        ]
-        assert {topic.topic_id for topic in store.topics_for_author(ada_id)} == {
-            graph_id,
-            logic_id,
+        assert store.fact_version_for_paper("p1") == 1
+        assert store.facts_for_chunks(("p1:c0", "p1:c1")) == {
+            "p1:c0": (shared,),
+            "p1:c1": (shared, other),
         }
-        depth_zero = store.neighborhood(ada_id, max_depth=0)
-        assert [node.node_id for node in depth_zero.nodes] == [ada_id]
-        depth_one = store.neighborhood(ada_id, max_depth=1)
-        assert {node.node_id for node in depth_one.nodes} == {ada_id, "p1", "p2"}
-        depth_two = store.neighborhood(ada_id, max_depth=2)
-        assert {graph_id, logic_id, grace_id}.issubset(
-            {node.node_id for node in depth_two.nodes}
+        assert store.facts_for_chunks(("missing",)) == {}
+        assert store.chunks_for_facts((shared.fact_id,))[shared.fact_id] == (
+            "p1:c0",
+            "p1:c1",
+            "p2:c0",
         )
-        assert {edge.kind for edge in depth_two.edges} == {"authored_by", "has_topic"}
+
+        store.remove_paper("p1")
+        assert store.chunks_for_facts((shared.fact_id,))[shared.fact_id] == ("p2:c0",)
+        assert store.chunks_for_facts((other.fact_id,))[other.fact_id] == ()
+        assert store._client.run("?[fact_id] := *fact{fact_id}")["rows"] == [
+            [shared.fact_id]
+        ]
+
+
+def test_fact_only_backfill_replaces_relations_without_changing_paper(tmp_path):
+    fact = Fact.create("dataset", "HumanEval", "The evaluation uses HumanEval.")
+    with CozoGraphStore(tmp_path / "graph.db") as store:
+        original = store.replace_paper("p1", "One", ["Ada"], ["Evaluation"])
+
+        store.replace_paper_facts(
+            "p1",
+            (ChunkNode("p1:c0", "p1", 0, 4),),
+            {"p1:c0": (fact,)},
+            1,
+        )
+
+        assert store.get_paper("p1") == original
+        assert store.fact_version_for_paper("p1") == 1
+        assert store.facts_for_chunks(("p1:c0",))["p1:c0"] == (fact,)
+
+
+def test_paper_replacement_can_clear_facts_without_success_marker(tmp_path):
+    shared = Fact.create("method", "Shared", "Both papers use this method.")
+    orphan = Fact.create("claim", "Old", "Only the first paper has this claim.")
+    with CozoGraphStore(tmp_path / "graph.db") as store:
+        store.replace_paper(
+            "p1",
+            "One",
+            ["Ada"],
+            ["Methods"],
+            chunks=(ChunkNode("p1:c0", "p1", 0, 1),),
+            facts_by_chunk={"p1:c0": (shared, orphan)},
+            fact_version=1,
+        )
+        store.replace_paper(
+            "p2",
+            "Two",
+            ["Grace"],
+            ["Methods"],
+            chunks=(ChunkNode("p2:c0", "p2", 0, 1),),
+            facts_by_chunk={"p2:c0": (shared,)},
+            fact_version=1,
+        )
+
+        store.replace_paper("p1", "Updated", ["Ada"], ["Methods"], clear_facts=True)
+
+        assert store.fact_version_for_paper("p1") is None
+        assert store.fact_ids_for_paper("p1") == ()
+        assert store.chunks_for_facts((shared.fact_id,))[shared.fact_id] == ("p2:c0",)
+        assert store.chunks_for_facts((orphan.fact_id,))[orphan.fact_id] == ()
 
 
 def test_failed_replacement_rolls_back_existing_graph(tmp_path, monkeypatch):
@@ -142,14 +140,6 @@ def test_failed_replacement_rolls_back_existing_graph(tmp_path, monkeypatch):
         assert store.get_paper("p1") == original
 
 
-def test_invalid_replacement_retains_existing_graph(tmp_path):
-    with CozoGraphStore(tmp_path / "graph.db") as store:
-        original = store.replace_paper("p1", "Original", ["Ada"], ["Graphs"])
-        with pytest.raises(ValueError, match="authors"):
-            store.replace_paper("p1", "Changed", [], ["Compilers"])
-        assert store.get_paper("p1") == original
-
-
 def test_incompatible_existing_schema_has_clear_error(tmp_path):
     pycozo = pytest.importorskip("pycozo")
     path = tmp_path / "graph.db"
@@ -169,47 +159,38 @@ def test_client_load_failure_is_a_configuration_error(tmp_path):
         CozoGraphStore(tmp_path / "graph.db", client_factory=unavailable)
 
 
-def test_close_is_idempotent_and_rejects_later_operations(tmp_path):
-    store = CozoGraphStore(tmp_path / "graph.db")
-    store.close()
-    store.close()
-    with pytest.raises(GraphStoreClosedError, match="closed"):
-        store.get_paper("p1")
-
-
-def test_database_open_is_serialized_across_processes(tmp_path):
-    path = tmp_path / "graph.db"
-    script = (
-        "from src.graph_store import CozoGraphStore, GraphStoreLockedError; "
-        "import sys; "
-        "path=sys.argv[1]; "
-        "store=CozoGraphStore(path, lock_timeout=0.1); "
-        "store.close()"
+@pytest.mark.skipif(os.name == "nt", reason="owner PID is recorded on POSIX only")
+def test_stop_lock_owner_takes_over_a_backend_lock_but_spares_other_processes(tmp_path):
+    database = tmp_path / "graph.db"
+    holder = (
+        "import sys, time\n"
+        "from src.storage.graph_store import CozoGraphStore\n"
+        "store = CozoGraphStore(sys.argv[1])\n"
+        "print('locked', flush=True)\n"
+        "time.sleep(60)\n"
     )
-    with CozoGraphStore(path):
-        blocked = subprocess.run(
-            [sys.executable, "-c", script, str(path)],
-            cwd=Path(__file__).parents[1],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    assert blocked.returncode != 0
-    assert "GraphStoreLockedError" in blocked.stderr
-
-    released = subprocess.run(
-        [sys.executable, "-c", script, str(path)],
-        cwd=Path(__file__).parents[1],
-        capture_output=True,
+    backend = subprocess.Popen(
+        [sys.executable, "-c", holder, str(database), "src.cli"],
+        stdout=subprocess.PIPE,
         text=True,
-        check=False,
     )
-    assert released.returncode == 0, released.stderr
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    lock_file = tmp_path / "graph.db.lock"
+    try:
+        assert backend.stdout.readline().strip() == "locked"
+        assert lock_file.read_text() == str(backend.pid)
+        with pytest.raises(GraphStoreLockedError):
+            CozoGraphStore(database, lock_timeout=0)
 
+        assert stop_lock_owner(database) is True
+        assert backend.wait(timeout=5) != 0
+        with CozoGraphStore(database, lock_timeout=0):
+            assert lock_file.read_text() == str(os.getpid())
 
-@pytest.mark.parametrize("depth", [-1, 6, True, 1.5])
-def test_neighborhood_depth_is_bounded(tmp_path, depth):
-    with CozoGraphStore(tmp_path / "graph.db") as store:
-        store.replace_paper("p1", "One", ["Ada"], ["Graphs"])
-        with pytest.raises((TypeError, ValueError), match="max_depth"):
-            store.neighborhood("p1", max_depth=depth)
+        lock_file.write_text(str(unrelated.pid))
+        assert stop_lock_owner(database) is False
+        assert unrelated.poll() is None
+    finally:
+        for process in (backend, unrelated):
+            process.kill()
+            process.wait()

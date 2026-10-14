@@ -98,6 +98,7 @@ export interface EvaluationCaseError {
 
 export interface EvaluationTokenMetrics {
   input: number | null;
+  cached_input?: number | null;
   output: number | null;
   total: number | null;
   known_input: number;
@@ -142,13 +143,14 @@ export interface EvaluationMetrics {
   model_calls: { total: number; rag: number; judge: number; embedding: number };
   tokens: EvaluationTokenMetrics;
   cost: EvaluationCostMetrics;
-  workflow: { exchanges: number; tool_calls: number; reused_searches: number };
+  workflow: { exchanges: number; tool_calls: number; reused_searches?: number };
   context: EvaluationContextMetrics;
   stages: Record<string, EvaluationStageMetrics>;
   pricing: {
     input_usd_per_million: number | null;
     output_usd_per_million: number | null;
     embedding_usd_per_million: number | null;
+    cached_input_usd_per_million?: number | null;
   };
 }
 
