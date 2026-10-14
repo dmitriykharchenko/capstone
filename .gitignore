@@ -34,8 +34,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Research paper PDFs (local library, not versioned)
-ResearchPapers/**/*.pdf
+# Research paper library and extracted artifacts (local, not versioned)
+ResearchPapers/
 
 # Server runtime data
 data/
