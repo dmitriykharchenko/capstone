@@ -37,6 +37,9 @@ __pycache__/
 # Research paper library and extracted artifacts (local, not versioned)
 ResearchPapers/
 
+# Course checkpoint worksheets (local, not versioned)
+Required_Capstone_Checkpoint_*
+
 # Server runtime data
 data/
 *.sqlite3
